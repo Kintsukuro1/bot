@@ -50,35 +50,6 @@ Este bot de Discord ofrece una variedad de comandos y funcionalidades, incluyend
    start_bot.bat
    ```
 
-2. Para detener el bot y Lavalink:
-   ```
-   stop_bot.bat
-   ```
-
-#### Para PowerShell
-
-1. Ejecuta el script `start_bot.ps1` para iniciar automáticamente el servidor Lavalink y luego el bot:
-   ```
-   .\start_bot.ps1
-   ```
-
-2. Para detener el bot y Lavalink:
-   ```
-   .\stop_bot.ps1
-   ```
-
-### Método manual
-
-1. Inicia el servidor Lavalink:
-   ```
-   java -jar src/utils/Lavalink.jar
-   ```
-
-2. En otra terminal, inicia el bot:
-   ```
-   python -m src.bot
-   ```
-
 ## Solución de problemas
 
 ### El bot no se conecta a Discord
