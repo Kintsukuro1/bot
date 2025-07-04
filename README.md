@@ -72,7 +72,4 @@ Este bot de Discord ofrece una variedad de comandos y funcionalidades, incluyend
   - `db.py` - Funciones de base de datos
   - `bot.py` - Archivo principal del bot
 - `start_bot.bat` - Script para iniciar el bot y Lavalink automáticamente (Windows CMD)
-- `stop_bot.bat` - Script para detener el bot y Lavalink (Windows CMD)
-- `start_bot.ps1` - Script para iniciar el bot y Lavalink automáticamente (PowerShell)
-- `stop_bot.ps1` - Script para detener el bot y Lavalink (PowerShell)
-#
+
