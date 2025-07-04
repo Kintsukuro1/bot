@@ -57,10 +57,6 @@ Este bot de Discord ofrece una variedad de comandos y funcionalidades, incluyend
 - Verifica que el token en el archivo `.env` sea válido y esté actualizado.
 - Asegúrate de tener habilitados los Intents privilegiados (SERVER MEMBERS y MESSAGE CONTENT) en el [Portal de Desarrolladores de Discord](https://discord.com/developers/applications).
 
-### Error "Port already in use" o "Address already in use"
-
-- Utiliza el script `stop_bot.bat` o `stop_bot.ps1` para cerrar correctamente los procesos existentes.
-- Los scripts de inicio ahora detectan y cierran automáticamente procesos previos que podrían estar utilizando los mismos puertos.
 
 ### Las funciones de música no funcionan
 
