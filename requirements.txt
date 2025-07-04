@@ -1,0 +1,4 @@
+discord.py
+wavelink
+pyodbc 
+python-dotenv 
