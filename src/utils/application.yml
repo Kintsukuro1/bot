@@ -1,5 +1,0 @@
-server:
-  port: 2444
-lavalink:
-  server:
-    password: "youshallnotpass"

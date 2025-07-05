@@ -75,7 +75,7 @@ def get_energia(user_id: int) -> int:
         
         if not result:
             # Usuario no existe, crearlo con energía completa
-            ensure_user(user_id, f"User_{user_id}")
+            ensure_user(user_id)  # No establecemos nombre para evitar sobrescribir
             tiempo_actual = int(time.time())
             cursor.execute("""
                 UPDATE Users 
@@ -147,7 +147,7 @@ def set_energia(user_id: int, nueva_energia: int):
     
     try:
         # Asegurar que el usuario existe
-        ensure_user(user_id, f"User_{user_id}")
+        ensure_user(user_id)  # No establecemos nombre para evitar sobrescribir
         
         # Validar rango de energía
         nueva_energia = max(0, min(100, nueva_energia))

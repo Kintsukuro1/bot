@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from typing import Optional
+import configparser
 
 # Agregar el directorio raíz al PYTHONPATH para permitir importaciones absolutas desde 'src'
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,11 +72,57 @@ bot = commands.Bot(
     help_command=None
 )
 
+# Leer configuración desde config.ini
+config = configparser.ConfigParser()
+config_file = os.path.join(BASE_DIR, 'config.ini')
+
+# Si el archivo de configuración existe, leerlo
+if os.path.exists(config_file):
+    config.read(config_file)
+    logger.info(f"[CONFIG] Cargando configuración desde: {config_file}")
+else:
+    logger.warning(f"[CONFIG] No se encontró el archivo de configuración: {config_file}")
+
+# La configuración de módulos ahora se carga en load_cogs()
+
 async def load_cogs():
     """Carga automática de cogs con manejo de errores mejorado."""
     cogs_dir = os.path.join(os.path.dirname(__file__), 'commands')
     loaded_count = 0
     failed_count = 0
+    
+    # Cargar configuración de módulos
+    config = configparser.ConfigParser()
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
+    
+    # Módulos activos por defecto
+    enabled_modules = {
+        "general": True,
+        "economy": True, 
+        "moderation": True,
+        "music": False,  # Música desactivada por defecto
+        "shop": True,
+        "casino": True,
+        "actions": True
+    }
+    
+    # Intentar cargar la configuración
+    try:
+        if os.path.exists(config_path):
+            config.read(config_path)
+            if 'modules' in config:
+                for module, enabled in config['modules'].items():
+                    enabled_modules[module] = enabled.lower() in ('true', 'yes', '1')
+                logger.info(f"[CONFIG] Módulos configurados desde {config_path}")
+        else:
+            logger.warning(f"[CONFIG] No se encontró el archivo {config_path}, usando configuración por defecto")
+    except Exception as e:
+        logger.error(f"[CONFIG] Error leyendo configuración: {e}")
+    
+    # Mostrar módulos activados/desactivados
+    for module, enabled in enabled_modules.items():
+        status = "✅ ACTIVADO" if enabled else "❌ DESACTIVADO"
+        logger.info(f"[MODULES] Módulo '{module}': {status}")
     
     # Archivos a excluir (módulos auxiliares)
     exclude_files = {
@@ -88,6 +135,7 @@ async def load_cogs():
     category_dirs = [
         d for d in os.listdir(cogs_dir) 
         if os.path.isdir(os.path.join(cogs_dir, d)) and not d.startswith('__')
+        and d in enabled_modules and enabled_modules[d]  # Solo cargar módulos activados
     ]
     
     for category in category_dirs:
@@ -104,6 +152,8 @@ async def load_cogs():
                 if file.endswith('.py') and file not in exclude_files and not file.startswith('__'):
                     cog_name = f"src.commands.{category}.{file[:-3]}"
                     try:
+                        # No es necesario verificar de nuevo, ya que la categoría completa fue filtrada previamente
+                        
                         await bot.load_extension(cog_name)
                         loaded_count += 1
                         logger.info(f"[LOAD] Cog cargado: {cog_name}")
@@ -144,44 +194,8 @@ async def on_ready():
     user_count = len(unique_user_ids)
     logger.info(f"[USERS] Sirviendo a {user_count} usuarios únicos")
 
-    # Sincronizar comandos slash
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"[SYNC] {len(synced)} comandos slash sincronizados")
-    except Exception as e:
-        logger.error(f"[ERROR] Error sincronizando slash commands: {e}")
-        if DEBUG:
-            import traceback
-            logger.error(traceback.format_exc())
     
-    # Inicializar wavelink después de que el bot esté listo
-    try:
-        import wavelink
-        logger.info("[LAVALINK] Intentando conectar a Lavalink...")
-        
-        # Verificar si Lavalink está disponible antes de intentar conectar
-        import socket
-        lavalink_port = 2444
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1)
-        result = s.connect_ex(('127.0.0.1', lavalink_port))
-        s.close()
-        
-        if result != 0:
-            logger.warning("[LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales no estarán disponibles.")
-            logger.warning("[LAVALINK] Para usar comandos de música, debes iniciar Lavalink primero.")
-        else:
-            # Usar el puerto correcto según application.yml
-            node = wavelink.Node(uri='http://localhost:2444', password='youshallnotpass')
-            await wavelink.Pool.connect(client=bot, nodes=[node])
-            logger.info("[LAVALINK] Conectado exitosamente a servidor Lavalink")
-    except ImportError:
-        logger.info("[LAVALINK] wavelink no está instalado. Las funciones musicales no estarán disponibles.")
-    except ConnectionRefusedError:
-        logger.warning("[LAVALINK] No se pudo conectar al servidor Lavalink. Las funciones musicales no estarán disponibles.")
-    except Exception as e:
-        logger.warning(f"[LAVALINK] Error inicializando Wavelink: {e}")
-        logger.warning("[LAVALINK] Las funciones musicales no estarán disponibles.")
+    # No se inicializa Lavalink - Funcionalidad de música desactivada
     
     logger.info("=" * 50)
     logger.info("[STATUS] Bot listo y funcionando")
@@ -268,8 +282,7 @@ async def on_slash_error(interaction: discord.Interaction, error):
         ephemeral=True
     )
 
-# Eliminar el setup_hook que podría estar causando problemas
-# Manejaremos la inicialización de wavelink en el evento on_ready
+# No se necesita inicialización de wavelink ya que no usaremos funciones de música
 
 async def main():
     """Función principal con manejo de reconexión."""
@@ -284,20 +297,7 @@ async def main():
         
     logger.info(f"[CONFIG] Prefix: {PREFIX}, Debug: {DEBUG}")
     
-    # Verificar si Lavalink está disponible
-    try:
-        import socket
-        lavalink_port = 2444  # Puerto según application.yml
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1)
-        result = s.connect_ex(('127.0.0.1', lavalink_port))
-        s.close()
-        if result == 0:
-            logger.info("[LAVALINK] Servidor Lavalink detectado en puerto 2444")
-        else:
-            logger.warning("[LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales pueden no estar disponibles.")
-    except Exception as e:
-        logger.warning(f"[LAVALINK] No se pudo verificar el estado del servidor Lavalink: {e}")
+    # No verificamos Lavalink ya que no lo usaremos
     
     max_retries = 3
     retry_delay = 5

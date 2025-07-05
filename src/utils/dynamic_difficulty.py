@@ -74,8 +74,8 @@ class DynamicDifficulty:
         cursor = conn.cursor()
         
         try:
-            # Asegurar que el usuario existe
-            ensure_user(user_id, f"User_{user_id}")
+            # Asegurar que el usuario existe sin sobrescribir el nombre
+            ensure_user(user_id)
             
             # Obtener estadísticas del usuario
             cursor.execute("""

@@ -1,7 +1,12 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, agregar_item_usuario, usuario_tiene_item, get_black_market_items
+from src.commands.shop.black_market_items import BLACK_MARKET  # Importamos directamente la lista de mejoras
+from src.db import (
+    get_balance, set_balance, ensure_user, registrar_transaccion, 
+    agregar_item_usuario, usuario_tiene_item,
+    get_user_items
+)
 
 class ComprarMejora(commands.Cog):
     """Cog para comprar mejoras permanentes del black market."""
@@ -15,20 +20,30 @@ class ComprarMejora(commands.Cog):
         user_name = interaction.user.name
         ensure_user(user_id, user_name)
         balance = get_balance(user_id)
-        items = get_black_market_items()
-        item = next((i for i in items if i["id"] == mejora_id), None)
+        item = next((i for i in BLACK_MARKET if i["id"] == mejora_id), None)
         if not item:
             await interaction.response.send_message("❌ Mejora no encontrada.", ephemeral=True)
             return
         if balance < item["precio"]:
             await interaction.response.send_message("❌ No tienes suficiente saldo para comprar esta mejora.", ephemeral=True)
             return
-        if usuario_tiene_item(user_id, 1000 + item["id"]):
+        
+        # Las mejoras permanentes tienen un ID especial: 1000 + item_id
+        item_id_db = 1000 + item["id"]
+        if usuario_tiene_item(user_id, item_id_db):
             await interaction.response.send_message("❌ Ya tienes esta mejora permanente.", ephemeral=True)
             return
+            
+        # Intentamos realizar la compra
+        if not agregar_item_usuario(user_id, item_id_db, quantity=1):
+            await interaction.response.send_message("❌ Error al procesar la compra. Tu saldo no ha sido afectado.", ephemeral=True)
+            return
+            
+        # Si la compra fue exitosa, actualizamos el saldo y registramos la transacción
         set_balance(user_id, balance - item["precio"])
-        registrar_transaccion(user_id, -item["precio"], f"Compra blackmarket: {item['nombre']}")
-        agregar_item_usuario(user_id, 1000 + item["id"], cantidad=1)
+        # Crear descripción más corta para evitar el error de truncamiento
+        item_id_corto = f"BM-{item['id']}"  # BM-1, BM-2, etc.
+        registrar_transaccion(user_id, -item["precio"], f"Black Market: {item_id_corto}")
         embed = discord.Embed(
             title="✅ Mejora adquirida",
             description=f"¡Has comprado **{item['nombre']}**! {item['descripcion']}",

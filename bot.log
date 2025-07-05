@@ -1,0 +1,837 @@
+2025-07-03 07:03:27,805 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:03:27,806 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:03:27,811 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: Extension 'commands.actions.daily' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,842 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.regalar: Extension 'commands.actions.regalar' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,850 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.blackjack: Extension 'commands.casino.blackjack' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,867 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.coinflip: Extension 'commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,919 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.crash: Extension 'commands.casino.crash' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,941 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.higher_lower: Extension 'commands.casino.higher_lower' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,946 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.slots: Extension 'commands.casino.slots' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,987 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: Extension 'commands.economy.energia' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:27,994 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.plata: Extension 'commands.economy.plata' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,039 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: Extension 'commands.economy.trabajo' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,045 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:03:28,047 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:03:28,068 - discord_bot - ERROR - [ERROR] Error cargando commands.general.difficulty_stats: Extension 'commands.general.difficulty_stats' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,074 - discord_bot - ERROR - [ERROR] Error cargando commands.general.historial: Extension 'commands.general.historial' has no 'setup' function.
+2025-07-03 07:03:28,078 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:03:28,081 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:03:28,083 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:03:28,088 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:03:28,090 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:03:28,095 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:03:28,097 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:03:28,099 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:03:28,101 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:03:28,104 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:03:28,106 - discord_bot - ERROR - [ERROR] Error cargando commands.music.clear: Extension 'commands.music.clear' has no 'setup' function.
+2025-07-03 07:03:28,109 - discord_bot - ERROR - [ERROR] Error cargando commands.music.leave: Extension 'commands.music.leave' has no 'setup' function.
+2025-07-03 07:03:28,113 - discord_bot - ERROR - [ERROR] Error cargando commands.music.loop: Extension 'commands.music.loop' has no 'setup' function.
+2025-07-03 07:03:28,225 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:03:28,228 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: Extension 'commands.music.play' raised an error: AttributeError: loop attribute cannot be accessed in non-async contexts. Consider using either an asynchronous main function and passing it to asyncio.run or using asynchronous initialisation hooks such as Client.setup_hook
+2025-07-03 07:03:28,253 - discord_bot - ERROR - [ERROR] Error cargando commands.music.playlist: Extension 'commands.music.playlist' has no 'setup' function.
+2025-07-03 07:03:28,256 - discord_bot - ERROR - [ERROR] Error cargando commands.music.remove: Extension 'commands.music.remove' has no 'setup' function.
+2025-07-03 07:03:28,260 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:03:28,261 - discord_bot - ERROR - [ERROR] Error cargando commands.music.shuffle: Extension 'commands.music.shuffle' has no 'setup' function.
+2025-07-03 07:03:28,265 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:03:28,267 - discord_bot - ERROR - [ERROR] Error cargando commands.music.song: Extension 'commands.music.song' has no 'setup' function.
+2025-07-03 07:03:28,270 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:03:28,274 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.blackmarket: Extension 'commands.shop.blackmarket' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,278 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.black_market_items: Extension 'commands.shop.black_market_items' has no 'setup' function.
+2025-07-03 07:03:28,282 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.comprar_mejora: Extension 'commands.shop.comprar_mejora' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,288 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.tienda: Extension 'commands.shop.tienda' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 07:03:28,291 - discord_bot - INFO - [STATUS] Cogs cargados: 16 | Fallidos: 24
+2025-07-03 07:03:28,291 - discord.client - INFO - logging in using static token
+2025-07-03 07:03:29,533 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: c5db677051f4e8340e44fafd35ac30cd).
+2025-07-03 07:03:32,336 - discord_bot - INFO - [SYNC] 13 comandos slash sincronizados
+2025-07-03 07:03:32,336 - discord_bot - INFO - ==================================================
+2025-07-03 07:15:04,357 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:25:19,789 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:25:19,790 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:25:19,818 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: Extension 'commands.actions.daily' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,833 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.regalar: Extension 'commands.actions.regalar' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,854 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:25:19,868 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.coinflip: Extension 'commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,880 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.crash: Extension 'commands.casino.crash' raised an error: ImportError: cannot import name 'database' from partially initialized module 'utils' (most likely due to a circular import) (C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\utils\__init__.py)
+2025-07-03 07:25:19,899 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.higher_lower: Extension 'commands.casino.higher_lower' raised an error: ImportError: cannot import name 'database' from partially initialized module 'utils' (most likely due to a circular import) (C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\utils\__init__.py)
+2025-07-03 07:25:19,929 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:25:19,942 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: Extension 'commands.economy.energia' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,955 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.plata: Extension 'commands.economy.plata' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,970 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: Extension 'commands.economy.trabajo' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:19,982 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:25:19,990 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:25:20,000 - discord_bot - ERROR - [ERROR] Error cargando commands.general.difficulty_stats: Extension 'commands.general.difficulty_stats' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:25:20,010 - discord_bot - ERROR - [ERROR] Error cargando commands.general.historial: Extension 'commands.general.historial' has no 'setup' function.
+2025-07-03 07:25:20,019 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:25:20,027 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:25:20,038 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:25:20,074 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:25:20,081 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:25:20,089 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:25:20,097 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:25:20,105 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:25:20,113 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:25:20,120 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:25:20,129 - discord_bot - ERROR - [ERROR] Error cargando commands.music.clear: Extension 'commands.music.clear' has no 'setup' function.
+2025-07-03 07:25:20,137 - discord_bot - ERROR - [ERROR] Error cargando commands.music.leave: Extension 'commands.music.leave' has no 'setup' function.
+2025-07-03 07:25:20,146 - discord_bot - ERROR - [ERROR] Error cargando commands.music.loop: Extension 'commands.music.loop' has no 'setup' function.
+2025-07-03 07:25:20,166 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:25:20,175 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: Extension 'commands.music.play' raised an error: AttributeError: loop attribute cannot be accessed in non-async contexts. Consider using either an asynchronous main function and passing it to asyncio.run or using asynchronous initialisation hooks such as Client.setup_hook
+2025-07-03 07:25:20,186 - discord_bot - ERROR - [ERROR] Error cargando commands.music.playlist: Extension 'commands.music.playlist' has no 'setup' function.
+2025-07-03 07:25:20,195 - discord_bot - ERROR - [ERROR] Error cargando commands.music.remove: Extension 'commands.music.remove' has no 'setup' function.
+2025-07-03 07:25:20,204 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:25:20,212 - discord_bot - ERROR - [ERROR] Error cargando commands.music.shuffle: Extension 'commands.music.shuffle' has no 'setup' function.
+2025-07-03 07:25:20,221 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:25:20,228 - discord_bot - ERROR - [ERROR] Error cargando commands.music.song: Extension 'commands.music.song' has no 'setup' function.
+2025-07-03 07:25:20,238 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:25:20,293 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:25:20,300 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.black_market_items: Extension 'commands.shop.black_market_items' has no 'setup' function.
+2025-07-03 07:25:20,376 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:25:20,384 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:25:20,384 - discord_bot - INFO - [STATUS] Cogs cargados: 21 | Fallidos: 19
+2025-07-03 07:25:20,384 - discord.client - INFO - logging in using static token
+2025-07-03 07:25:21,455 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: f6e1c9d696330bd4683c1433ae108870).
+2025-07-03 07:25:24,094 - discord_bot - INFO - [SYNC] 19 comandos slash sincronizados
+2025-07-03 07:25:24,094 - discord_bot - INFO - ==================================================
+2025-07-03 07:29:12,056 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:29:13,925 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:29:13,927 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:29:13,965 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: Extension 'commands.actions.daily' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:13,979 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.regalar: Extension 'commands.actions.regalar' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,007 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:29:14,025 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.coinflip: Extension 'commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,032 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.crash: Extension 'commands.casino.crash' raised an error: ImportError: cannot import name 'database' from partially initialized module 'utils' (most likely due to a circular import) (C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\utils\__init__.py)
+2025-07-03 07:29:14,048 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.higher_lower: Extension 'commands.casino.higher_lower' raised an error: ImportError: cannot import name 'database' from partially initialized module 'utils' (most likely due to a circular import) (C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\utils\__init__.py)
+2025-07-03 07:29:14,054 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:29:14,073 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: Extension 'commands.economy.energia' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,087 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.plata: Extension 'commands.economy.plata' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,099 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: Extension 'commands.economy.trabajo' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,112 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:29:14,113 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:29:14,122 - discord_bot - ERROR - [ERROR] Error cargando commands.general.difficulty_stats: Extension 'commands.general.difficulty_stats' raised an error: ModuleNotFoundError: No module named 'src'
+2025-07-03 07:29:14,126 - discord_bot - ERROR - [ERROR] Error cargando commands.general.historial: Extension 'commands.general.historial' has no 'setup' function.
+2025-07-03 07:29:14,129 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:29:14,130 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:29:14,131 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:29:14,143 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:29:14,144 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:29:14,146 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:29:14,147 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:29:14,148 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:29:14,149 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:29:14,150 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:29:14,159 - discord_bot - ERROR - [ERROR] Error cargando commands.music.clear: Extension 'commands.music.clear' has no 'setup' function.
+2025-07-03 07:29:14,161 - discord_bot - ERROR - [ERROR] Error cargando commands.music.leave: Extension 'commands.music.leave' has no 'setup' function.
+2025-07-03 07:29:14,163 - discord_bot - ERROR - [ERROR] Error cargando commands.music.loop: Extension 'commands.music.loop' has no 'setup' function.
+2025-07-03 07:29:14,177 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:29:14,180 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: Extension 'commands.music.play' raised an error: AttributeError: loop attribute cannot be accessed in non-async contexts. Consider using either an asynchronous main function and passing it to asyncio.run or using asynchronous initialisation hooks such as Client.setup_hook
+2025-07-03 07:29:14,184 - discord_bot - ERROR - [ERROR] Error cargando commands.music.playlist: Extension 'commands.music.playlist' has no 'setup' function.
+2025-07-03 07:29:14,186 - discord_bot - ERROR - [ERROR] Error cargando commands.music.remove: Extension 'commands.music.remove' has no 'setup' function.
+2025-07-03 07:29:14,189 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:29:14,190 - discord_bot - ERROR - [ERROR] Error cargando commands.music.shuffle: Extension 'commands.music.shuffle' has no 'setup' function.
+2025-07-03 07:29:14,192 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:29:14,193 - discord_bot - ERROR - [ERROR] Error cargando commands.music.song: Extension 'commands.music.song' has no 'setup' function.
+2025-07-03 07:29:14,196 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:29:14,204 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:29:14,205 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.black_market_items: Extension 'commands.shop.black_market_items' has no 'setup' function.
+2025-07-03 07:29:14,208 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:29:14,209 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:29:14,209 - discord_bot - INFO - [STATUS] Cogs cargados: 21 | Fallidos: 19
+2025-07-03 07:29:14,209 - discord.client - INFO - logging in using static token
+2025-07-03 07:29:15,190 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 3a25a452b474f8ecffc65044d0013f2d).
+2025-07-03 07:29:17,696 - discord_bot - INFO - [SYNC] 19 comandos slash sincronizados
+2025-07-03 07:29:17,696 - discord_bot - INFO - ==================================================
+2025-07-03 07:36:34,052 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:36:35,976 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:36:35,978 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:36:35,998 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: Extension 'commands.actions.daily' raised an error: ModuleNotFoundError: No module named 'utils.database'
+2025-07-03 07:36:36,041 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.regalar
+2025-07-03 07:36:36,043 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:36:37,337 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.coinflip
+2025-07-03 07:36:37,338 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.crash
+2025-07-03 07:36:37,340 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.higher_lower
+2025-07-03 07:36:37,342 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:36:37,353 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: Extension 'commands.economy.energia' raised an error: ModuleNotFoundError: No module named 'src.utils.database'
+2025-07-03 07:36:37,575 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.plata
+2025-07-03 07:36:37,576 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: Extension 'commands.economy.trabajo' raised an error: ModuleNotFoundError: No module named 'src.utils.database'
+2025-07-03 07:36:37,580 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:36:37,581 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:36:37,584 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.difficulty_stats
+2025-07-03 07:36:37,587 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.historial
+2025-07-03 07:36:37,588 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:36:37,590 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:36:37,591 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:36:37,593 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:36:37,595 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:36:37,597 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:36:37,598 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:36:37,600 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:36:37,601 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:36:37,603 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:36:37,630 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.clear
+2025-07-03 07:36:37,634 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.leave
+2025-07-03 07:36:37,639 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.loop
+2025-07-03 07:36:37,640 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:36:37,653 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: Extension 'commands.music.play' raised an error: AttributeError: loop attribute cannot be accessed in non-async contexts. Consider using either an asynchronous main function and passing it to asyncio.run or using asynchronous initialisation hooks such as Client.setup_hook
+2025-07-03 07:36:37,710 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.playlist
+2025-07-03 07:36:37,715 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.remove
+2025-07-03 07:36:37,717 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:36:37,721 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.shuffle
+2025-07-03 07:36:37,723 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:36:37,727 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.song
+2025-07-03 07:36:37,728 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:36:37,743 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:36:37,744 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:36:37,746 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:36:37,746 - discord_bot - INFO - [STATUS] Cogs cargados: 35 | Fallidos: 4
+2025-07-03 07:36:37,747 - discord.client - INFO - logging in using static token
+2025-07-03 07:36:39,003 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: f9dd9eaaea2554e91d127a5fe30b6229).
+2025-07-03 07:36:41,425 - discord_bot - INFO - [SYNC] 27 comandos slash sincronizados
+2025-07-03 07:36:41,426 - discord_bot - INFO - ==================================================
+2025-07-03 07:44:43,936 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:44:45,798 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:44:45,799 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:44:45,819 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: Extension 'commands.actions.daily' raised an error: ImportError: attempted relative import beyond top-level package
+2025-07-03 07:44:45,827 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.regalar
+2025-07-03 07:44:45,840 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:44:46,085 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.coinflip
+2025-07-03 07:44:46,087 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.crash
+2025-07-03 07:44:46,088 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.higher_lower
+2025-07-03 07:44:46,089 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:44:46,095 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: Extension 'commands.economy.energia' raised an error: ImportError: attempted relative import beyond top-level package
+2025-07-03 07:44:46,099 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.plata
+2025-07-03 07:44:46,103 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: Extension 'commands.economy.trabajo' raised an error: ImportError: attempted relative import beyond top-level package
+2025-07-03 07:44:46,108 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:44:46,109 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:44:46,113 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.difficulty_stats
+2025-07-03 07:44:46,114 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.historial
+2025-07-03 07:44:46,115 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:44:46,117 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:44:46,118 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:44:46,120 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:44:46,122 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:44:46,123 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:44:46,124 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:44:46,125 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:44:46,126 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:44:46,128 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:44:46,145 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.clear
+2025-07-03 07:44:46,146 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.leave
+2025-07-03 07:44:46,147 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.loop
+2025-07-03 07:44:46,148 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:44:46,152 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: Extension 'commands.music.play' raised an error: RuntimeError: Client has not been properly initialised. Please use the login method or asynchronous context manager before calling this method
+2025-07-03 07:44:46,158 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.playlist
+2025-07-03 07:44:46,159 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.remove
+2025-07-03 07:44:46,160 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:44:46,162 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.shuffle
+2025-07-03 07:44:46,163 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:44:46,165 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.song
+2025-07-03 07:44:46,166 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:44:46,167 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:44:46,170 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:44:46,171 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:44:46,172 - discord_bot - INFO - [STATUS] Cogs cargados: 35 | Fallidos: 4
+2025-07-03 07:44:46,172 - discord.client - INFO - logging in using static token
+2025-07-03 07:44:47,274 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 31381c263207f3933b978af784e80d81).
+2025-07-03 07:44:49,706 - discord_bot - INFO - [SYNC] 27 comandos slash sincronizados
+2025-07-03 07:44:49,707 - discord_bot - INFO - ==================================================
+2025-07-03 07:51:43,407 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:51:46,417 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:51:46,418 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:51:46,432 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.daily
+2025-07-03 07:51:46,433 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.regalar
+2025-07-03 07:51:46,444 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:51:46,776 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.coinflip
+2025-07-03 07:51:46,778 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.crash
+2025-07-03 07:51:46,779 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.higher_lower
+2025-07-03 07:51:46,780 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:51:46,785 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.energia
+2025-07-03 07:51:46,786 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.plata
+2025-07-03 07:51:46,790 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.trabajo
+2025-07-03 07:51:46,792 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:51:46,792 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:51:46,802 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.difficulty_stats
+2025-07-03 07:51:46,803 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.historial
+2025-07-03 07:51:46,804 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:51:46,805 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:51:46,806 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:51:46,808 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:51:46,809 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:51:46,811 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:51:46,812 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:51:46,813 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:51:46,814 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:51:46,815 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:51:46,826 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.clear
+2025-07-03 07:51:46,827 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.leave
+2025-07-03 07:51:46,828 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.loop
+2025-07-03 07:51:46,829 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:51:46,833 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.play
+2025-07-03 07:51:46,834 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.playlist
+2025-07-03 07:51:46,835 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.remove
+2025-07-03 07:51:46,836 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:51:46,838 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.shuffle
+2025-07-03 07:51:46,839 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:51:46,840 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.song
+2025-07-03 07:51:46,841 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:51:46,842 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:51:46,843 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:51:46,844 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:51:46,845 - discord_bot - INFO - [STATUS] Cogs cargados: 39 | Fallidos: 0
+2025-07-03 07:51:46,845 - discord.client - INFO - logging in using static token
+2025-07-03 07:56:41,792 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:56:45,074 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 07:56:45,074 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 07:56:45,075 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:56:45,076 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 07:56:45,076 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:56:45,094 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.daily
+2025-07-03 07:56:45,095 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.regalar
+2025-07-03 07:56:45,098 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:56:45,306 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.coinflip
+2025-07-03 07:56:45,308 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.crash
+2025-07-03 07:56:45,309 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.higher_lower
+2025-07-03 07:56:45,310 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:56:45,321 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.energia
+2025-07-03 07:56:45,323 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.plata
+2025-07-03 07:56:45,350 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.trabajo
+2025-07-03 07:56:45,352 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:56:45,352 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:56:45,363 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.difficulty_stats
+2025-07-03 07:56:45,364 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.historial
+2025-07-03 07:56:45,365 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:56:45,366 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:56:45,367 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:56:45,369 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:56:45,370 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:56:45,371 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:56:45,372 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:56:45,373 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:56:45,374 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:56:45,375 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:56:45,388 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.clear
+2025-07-03 07:56:45,389 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.leave
+2025-07-03 07:56:45,390 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.loop
+2025-07-03 07:56:45,391 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:56:45,400 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.play
+2025-07-03 07:56:45,401 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.playlist
+2025-07-03 07:56:45,402 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.remove
+2025-07-03 07:56:45,403 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:56:45,404 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.shuffle
+2025-07-03 07:56:45,405 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:56:45,407 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.song
+2025-07-03 07:56:45,407 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:56:45,409 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:56:45,410 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:56:45,411 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:56:45,412 - discord_bot - INFO - [STATUS] Cogs cargados: 39 | Fallidos: 0
+2025-07-03 07:56:45,412 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 07:56:45,412 - discord.client - INFO - logging in using static token
+2025-07-03 07:58:35,052 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 07:59:04,608 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 07:59:04,609 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-03 07:59:04,609 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 07:59:04,611 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 07:59:04,611 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 07:59:04,626 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.daily
+2025-07-03 07:59:04,627 - discord_bot - INFO - [LOAD] Cog cargado: commands.actions.regalar
+2025-07-03 07:59:04,630 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.blackjack
+2025-07-03 07:59:04,675 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.coinflip
+2025-07-03 07:59:04,677 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.crash
+2025-07-03 07:59:04,678 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.higher_lower
+2025-07-03 07:59:04,679 - discord_bot - INFO - [LOAD] Cog cargado: commands.casino.slots
+2025-07-03 07:59:04,687 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.energia
+2025-07-03 07:59:04,689 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.plata
+2025-07-03 07:59:04,690 - discord_bot - INFO - [LOAD] Cog cargado: commands.economy.trabajo
+2025-07-03 07:59:04,691 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.avatar
+2025-07-03 07:59:04,692 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.botinfo
+2025-07-03 07:59:04,698 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.difficulty_stats
+2025-07-03 07:59:04,698 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.historial
+2025-07-03 07:59:04,699 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.serverinfo
+2025-07-03 07:59:04,700 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.sync
+2025-07-03 07:59:04,701 - discord_bot - INFO - [LOAD] Cog cargado: commands.general.userinfo
+2025-07-03 07:59:04,703 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mensaje
+2025-07-03 07:59:04,704 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.mute
+2025-07-03 07:59:04,705 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.poll
+2025-07-03 07:59:04,706 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.purge
+2025-07-03 07:59:04,707 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.slowmode
+2025-07-03 07:59:04,708 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.specialmute
+2025-07-03 07:59:04,709 - discord_bot - INFO - [LOAD] Cog cargado: commands.moderation.unmute
+2025-07-03 07:59:04,721 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.clear
+2025-07-03 07:59:04,722 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.leave
+2025-07-03 07:59:04,723 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.loop
+2025-07-03 07:59:04,724 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.pause
+2025-07-03 07:59:04,725 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.play
+2025-07-03 07:59:04,726 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.playlist
+2025-07-03 07:59:04,726 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.remove
+2025-07-03 07:59:04,727 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.resume
+2025-07-03 07:59:04,728 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.shuffle
+2025-07-03 07:59:04,729 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.skip
+2025-07-03 07:59:04,731 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.song
+2025-07-03 07:59:04,732 - discord_bot - INFO - [LOAD] Cog cargado: commands.music.stop
+2025-07-03 07:59:04,733 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.blackmarket
+2025-07-03 07:59:04,734 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.comprar_mejora
+2025-07-03 07:59:04,735 - discord_bot - INFO - [LOAD] Cog cargado: commands.shop.tienda
+2025-07-03 07:59:04,735 - discord_bot - INFO - [STATUS] Cogs cargados: 39 | Fallidos: 0
+2025-07-03 07:59:04,736 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 07:59:04,736 - discord.client - INFO - logging in using static token
+2025-07-03 07:59:15,676 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 08:20:09,692 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 08:20:09,693 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 08:20:09,693 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 08:20:09,694 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 08:20:09,718 - discord_bot - INFO - [LAVALINK] Servidor Lavalink detectado en puerto 2444
+2025-07-03 08:20:09,718 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 08:20:09,720 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.daily: No module named 'commands'
+2025-07-03 08:20:09,726 - discord_bot - ERROR - [ERROR] Error cargando commands.actions.regalar: No module named 'commands'
+2025-07-03 08:20:09,729 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.blackjack: No module named 'commands'
+2025-07-03 08:20:09,731 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.coinflip: No module named 'commands'
+2025-07-03 08:20:09,732 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.crash: No module named 'commands'
+2025-07-03 08:20:09,734 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.higher_lower: No module named 'commands'
+2025-07-03 08:20:09,736 - discord_bot - ERROR - [ERROR] Error cargando commands.casino.slots: No module named 'commands'
+2025-07-03 08:20:09,739 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.energia: No module named 'commands'
+2025-07-03 08:20:09,740 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.plata: No module named 'commands'
+2025-07-03 08:20:09,742 - discord_bot - ERROR - [ERROR] Error cargando commands.economy.trabajo: No module named 'commands'
+2025-07-03 08:20:09,744 - discord_bot - ERROR - [ERROR] Error cargando commands.general.avatar: No module named 'commands'
+2025-07-03 08:20:09,746 - discord_bot - ERROR - [ERROR] Error cargando commands.general.botinfo: No module named 'commands'
+2025-07-03 08:20:09,747 - discord_bot - ERROR - [ERROR] Error cargando commands.general.difficulty_stats: No module named 'commands'
+2025-07-03 08:20:09,748 - discord_bot - ERROR - [ERROR] Error cargando commands.general.historial: No module named 'commands'
+2025-07-03 08:20:09,750 - discord_bot - ERROR - [ERROR] Error cargando commands.general.serverinfo: No module named 'commands'
+2025-07-03 08:20:09,753 - discord_bot - ERROR - [ERROR] Error cargando commands.general.sync: No module named 'commands'
+2025-07-03 08:20:09,754 - discord_bot - ERROR - [ERROR] Error cargando commands.general.userinfo: No module named 'commands'
+2025-07-03 08:20:09,756 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.mensaje: No module named 'commands'
+2025-07-03 08:20:09,759 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.mute: No module named 'commands'
+2025-07-03 08:20:09,760 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.poll: No module named 'commands'
+2025-07-03 08:20:09,762 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.purge: No module named 'commands'
+2025-07-03 08:20:09,764 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.slowmode: No module named 'commands'
+2025-07-03 08:20:09,766 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.specialmute: No module named 'commands'
+2025-07-03 08:20:09,767 - discord_bot - ERROR - [ERROR] Error cargando commands.moderation.unmute: No module named 'commands'
+2025-07-03 08:20:09,769 - discord_bot - ERROR - [ERROR] Error cargando commands.music.clear: No module named 'commands'
+2025-07-03 08:20:09,771 - discord_bot - ERROR - [ERROR] Error cargando commands.music.leave: No module named 'commands'
+2025-07-03 08:20:09,773 - discord_bot - ERROR - [ERROR] Error cargando commands.music.loop: No module named 'commands'
+2025-07-03 08:20:09,775 - discord_bot - ERROR - [ERROR] Error cargando commands.music.pause: No module named 'commands'
+2025-07-03 08:20:09,776 - discord_bot - ERROR - [ERROR] Error cargando commands.music.play: No module named 'commands'
+2025-07-03 08:20:09,778 - discord_bot - ERROR - [ERROR] Error cargando commands.music.playlist: No module named 'commands'
+2025-07-03 08:20:09,780 - discord_bot - ERROR - [ERROR] Error cargando commands.music.remove: No module named 'commands'
+2025-07-03 08:20:09,782 - discord_bot - ERROR - [ERROR] Error cargando commands.music.resume: No module named 'commands'
+2025-07-03 08:20:09,783 - discord_bot - ERROR - [ERROR] Error cargando commands.music.shuffle: No module named 'commands'
+2025-07-03 08:20:09,785 - discord_bot - ERROR - [ERROR] Error cargando commands.music.skip: No module named 'commands'
+2025-07-03 08:20:09,786 - discord_bot - ERROR - [ERROR] Error cargando commands.music.song: No module named 'commands'
+2025-07-03 08:20:09,788 - discord_bot - ERROR - [ERROR] Error cargando commands.music.stop: No module named 'commands'
+2025-07-03 08:20:09,790 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.blackmarket: No module named 'commands'
+2025-07-03 08:20:09,791 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.comprar_mejora: No module named 'commands'
+2025-07-03 08:20:09,793 - discord_bot - ERROR - [ERROR] Error cargando commands.shop.tienda: No module named 'commands'
+2025-07-03 08:20:09,794 - discord_bot - INFO - [STATUS] Cogs cargados: 0 | Fallidos: 39
+2025-07-03 08:20:09,795 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 08:20:09,795 - discord.client - INFO - logging in using static token
+2025-07-03 08:26:52,534 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 08:27:30,305 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 08:27:30,305 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 08:27:30,305 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 08:27:30,307 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 08:27:30,307 - discord_bot - INFO - [LAVALINK] Servidor Lavalink detectado en puerto 2444
+2025-07-03 08:27:30,308 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 08:27:30,308 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 08:27:30,309 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 08:27:30,310 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 08:27:30,320 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 08:27:30,322 - discord_bot - DEBUG - [INFO] Categoría casino no tiene setup colectivo, cargando módulos individuales: Extension 'src.commands.casino' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 08:27:30,324 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.blackjack: Extension 'src.commands.casino.blackjack' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 08:27:30,345 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.coinflip: Extension 'src.commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'utils'
+2025-07-03 08:27:30,351 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.crash: Extension 'src.commands.casino.crash' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 08:27:30,356 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.higher_lower: Extension 'src.commands.casino.higher_lower' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 08:27:30,362 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.slots: Extension 'src.commands.casino.slots' raised an error: ModuleNotFoundError: No module named 'db'
+2025-07-03 08:27:30,375 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 08:27:30,379 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 08:27:30,657 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 08:27:30,665 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 08:27:30,687 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 08:27:30,690 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 5
+2025-07-03 08:27:30,691 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 08:27:30,691 - discord.client - INFO - logging in using static token
+2025-07-03 08:31:22,059 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 08:31:57,909 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 08:31:57,910 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 08:31:57,910 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 08:31:57,911 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 08:31:57,911 - discord_bot - INFO - [LAVALINK] Servidor Lavalink detectado en puerto 2444
+2025-07-03 08:31:57,912 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 08:31:57,912 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 08:31:57,915 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 08:31:57,916 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 08:31:57,935 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 08:31:57,954 - discord_bot - DEBUG - [INFO] Categoría casino no tiene setup colectivo, cargando módulos individuales: Extension 'src.commands.casino' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:57,971 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.casino.blackjack
+2025-07-03 08:31:57,979 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.coinflip: Extension 'src.commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:57,990 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.crash: Extension 'src.commands.casino.crash' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:58,003 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.higher_lower: Extension 'src.commands.casino.higher_lower' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:58,010 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.casino.slots
+2025-07-03 08:31:58,010 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 08:31:58,028 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 08:31:58,047 - discord_bot - DEBUG - [INFO] Categoría general no tiene setup colectivo, cargando módulos individuales: Extension 'src.commands.general' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:58,063 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.avatar
+2025-07-03 08:31:58,074 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.botinfo
+2025-07-03 08:31:58,081 - discord_bot - ERROR - [ERROR] Error cargando src.commands.general.difficulty_stats: Extension 'src.commands.general.difficulty_stats' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:31:58,089 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.historial
+2025-07-03 08:31:58,097 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.serverinfo
+2025-07-03 08:31:58,105 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.sync
+2025-07-03 08:31:58,113 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.userinfo
+2025-07-03 08:31:58,114 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 08:31:58,139 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 08:31:58,191 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 08:31:58,213 - discord_bot - INFO - [STATUS] Cogs cargados: 13 | Fallidos: 4
+2025-07-03 08:31:58,213 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 08:31:58,213 - discord.client - INFO - logging in using static token
+2025-07-03 08:36:31,536 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 08:37:06,664 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 08:37:06,664 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 08:37:06,664 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 08:37:06,665 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 08:37:07,674 - discord_bot - WARNING - [LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales pueden no estar disponibles.
+2025-07-03 08:37:07,674 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 08:37:07,675 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 08:37:07,678 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 08:37:07,678 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 08:37:07,693 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 08:37:07,710 - discord_bot - DEBUG - [INFO] Categoría casino no tiene setup colectivo, cargando módulos individuales: Extension 'src.commands.casino' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,726 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.casino.blackjack
+2025-07-03 08:37:07,734 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.coinflip: Extension 'src.commands.casino.coinflip' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,745 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.crash: Extension 'src.commands.casino.crash' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,756 - discord_bot - ERROR - [ERROR] Error cargando src.commands.casino.higher_lower: Extension 'src.commands.casino.higher_lower' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,763 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.casino.slots
+2025-07-03 08:37:07,763 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 08:37:07,777 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 08:37:07,794 - discord_bot - DEBUG - [INFO] Categoría general no tiene setup colectivo, cargando módulos individuales: Extension 'src.commands.general' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,809 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.avatar
+2025-07-03 08:37:07,818 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.botinfo
+2025-07-03 08:37:07,825 - discord_bot - ERROR - [ERROR] Error cargando src.commands.general.difficulty_stats: Extension 'src.commands.general.difficulty_stats' raised an error: ModuleNotFoundError: No module named 'src.src'
+2025-07-03 08:37:07,832 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.historial
+2025-07-03 08:37:07,839 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.serverinfo
+2025-07-03 08:37:07,848 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.sync
+2025-07-03 08:37:07,856 - discord_bot - INFO - [LOAD] Cog cargado: src.commands.general.userinfo
+2025-07-03 08:37:07,856 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 08:37:07,880 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 08:37:07,905 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 08:37:07,919 - discord_bot - INFO - [STATUS] Cogs cargados: 13 | Fallidos: 4
+2025-07-03 08:37:07,920 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 08:37:07,920 - discord.client - INFO - logging in using static token
+2025-07-03 14:17:12,071 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 14:17:12,083 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 14:17:12,083 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 14:17:12,084 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 14:17:13,085 - discord_bot - WARNING - [LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales pueden no estar disponibles.
+2025-07-03 14:17:13,085 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 14:17:13,086 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 14:17:13,108 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 14:17:13,109 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 14:17:13,371 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 14:17:13,747 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 14:17:13,779 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 14:17:13,823 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 14:17:13,871 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 14:17:14,006 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 14:17:14,016 - discord_bot - INFO - [STATUS] Cogs cargados: 7 | Fallidos: 0
+2025-07-03 14:17:14,016 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 14:17:14,016 - discord.client - INFO - logging in using static token
+2025-07-03 14:19:49,569 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 14:20:33,468 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 14:20:33,469 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 14:20:33,469 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 14:20:33,470 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 14:20:34,483 - discord_bot - WARNING - [LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales pueden no estar disponibles.
+2025-07-03 14:20:34,484 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 14:20:34,487 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 14:20:34,492 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 14:20:34,493 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 14:20:34,514 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 14:20:34,929 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 14:20:34,933 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 14:20:34,938 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 14:20:34,951 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 14:20:34,966 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 14:20:34,969 - discord_bot - INFO - [STATUS] Cogs cargados: 7 | Fallidos: 0
+2025-07-03 14:20:34,969 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 14:20:34,969 - discord.client - INFO - logging in using static token
+2025-07-03 14:28:30,819 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 14:28:54,700 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-03 14:28:54,700 - discord_bot - INFO - [TOKEN] Token cargado: MTM5MD...kN5M
+2025-07-03 14:28:54,701 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-03 14:28:54,702 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-03 14:28:55,704 - discord_bot - WARNING - [LAVALINK] Servidor Lavalink no detectado en puerto 2444. Las funciones musicales pueden no estar disponibles.
+2025-07-03 14:28:55,704 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-03 14:28:55,705 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands..qodo
+2025-07-03 14:28:55,706 - discord_bot - DEBUG - [INFO] Categoría .qodo no tiene setup colectivo, cargando módulos individuales: No module named 'src.commands.'
+2025-07-03 14:28:55,707 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-03 14:28:55,715 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-03 14:28:56,460 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-03 14:28:56,464 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-03 14:28:56,471 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-03 14:28:56,503 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.music
+2025-07-03 14:28:56,526 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-03 14:28:56,530 - discord_bot - INFO - [STATUS] Cogs cargados: 7 | Fallidos: 0
+2025-07-03 14:28:56,531 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-03 14:28:56,531 - discord.client - INFO - logging in using static token
+2025-07-03 14:28:57,664 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 6f2a66d0ab866c10a472a019d4be6f34).
+2025-07-03 14:28:59,680 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: Bot de pruebas (ID: 1390183983832105032)
+2025-07-03 14:28:59,680 - discord_bot - INFO - [SERVERS] Conectado a 1 servidores:
+2025-07-03 14:28:59,680 - discord_bot - INFO -   - Roleplay mi novio aleman slowed y yo (ID: 1058113200488456192) | Miembros: 2
+2025-07-03 14:28:59,680 - discord_bot - INFO - [USERS] Sirviendo a 2 usuarios únicos
+2025-07-03 14:29:00,157 - discord_bot - INFO - [SYNC] 31 comandos slash sincronizados
+2025-07-03 14:29:02,478 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:02,478 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "0.9658173831608434" seconds.
+2025-07-03 14:29:05,771 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:05,773 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "4.695435668325283" seconds.
+2025-07-03 14:29:12,788 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:12,788 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "8.74642935226734" seconds.
+2025-07-03 14:29:23,849 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:23,849 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "9.558904198781892" seconds.
+2025-07-03 14:29:35,717 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:35,717 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "20.745605449854864" seconds.
+2025-07-03 14:29:58,775 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:29:58,775 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "0.9008403426810523" seconds.
+2025-07-03 14:30:02,004 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:30:02,004 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "2.580056281813465" seconds.
+2025-07-03 14:30:06,902 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:30:06,902 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "7.435818482243952" seconds.
+2025-07-03 14:30:16,660 - wavelink.websocket - WARNING - An unexpected error occurred while connecting Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) to Lavalink: "Cannot connect to host localhost:2444 ssl:default [El equipo remoto rechazó la conexión de red]"
+If this error persists or wavelink is unable to reconnect, please see: https://github.com/PythonistaGuild/Wavelink/issues
+2025-07-03 14:30:16,660 - wavelink.websocket - INFO - Node(identifier=1ao6AR87Fj-aEnS_, uri=http://localhost:2444, status=NodeStatus.CONNECTING, players=0) retrying websocket connection in "24.47474322133552" seconds.
+2025-07-03 14:30:20,022 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-03 14:30:20,033 - asyncio - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x000001DFD3B8E5A0>
+2025-07-04 21:30:25,399 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 21:30:25,414 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 21:30:25,414 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 21:30:25,415 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 21:30:25,416 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 21:30:25,416 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 21:30:25,417 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 21:30:25,417 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 21:30:25,418 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 21:30:25,418 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 21:30:25,418 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 21:30:25,418 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 21:30:25,419 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 21:30:25,419 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 21:30:25,419 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 21:30:26,152 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 21:30:26,256 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 21:30:26,346 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 21:30:26,481 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 21:30:26,579 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 21:30:26,617 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 21:30:26,617 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 21:30:26,617 - discord.client - INFO - logging in using static token
+2025-07-04 21:30:27,967 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 62d031b070659a190c0b38df36d03ff1).
+2025-07-04 21:30:29,978 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 21:30:29,979 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 21:30:29,980 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 21:30:29,981 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 21:30:29,982 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 21:30:29,983 - discord_bot - INFO - ==================================================
+2025-07-04 21:30:29,984 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 21:30:39,606 - discord_bot - DEBUG - CommandNotFound: Command "daily" is not found (invoked by stockholmuser in #«🎰»┆basurino)
+2025-07-04 21:37:17,209 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 22:14:57,008 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 22:14:57,008 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 22:14:57,009 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 22:14:57,010 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:14:57,010 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 22:14:57,011 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 22:14:57,011 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:14:57,011 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 22:14:57,011 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 22:14:57,012 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 22:14:57,012 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 22:14:57,012 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 22:14:57,012 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 22:14:57,012 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 22:14:57,013 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 22:14:57,498 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 22:14:57,512 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 22:14:57,515 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 22:14:57,523 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 22:14:57,534 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 22:14:57,550 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 22:14:57,550 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 22:14:57,551 - discord.client - INFO - logging in using static token
+2025-07-04 22:14:58,622 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 395b8fd025e6a689feb09f530881145d).
+2025-07-04 22:15:00,672 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 22:15:00,672 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 22:15:00,672 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 22:15:00,672 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 22:15:00,673 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 22:15:00,673 - discord_bot - INFO - ==================================================
+2025-07-04 22:15:00,673 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 22:46:45,609 - discord.gateway - INFO - Shard ID None has successfully RESUMED session 395b8fd025e6a689feb09f530881145d.
+2025-07-04 22:53:22,569 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 22:53:25,313 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 22:53:25,313 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 22:53:25,314 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 22:53:25,315 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:53:25,316 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 22:53:25,316 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 22:53:25,316 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:53:25,316 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 22:53:25,317 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 22:53:25,318 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 22:53:25,648 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 22:53:25,685 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 22:53:25,703 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 22:53:25,711 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 22:53:25,718 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 22:53:25,729 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 22:53:25,730 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 22:53:25,730 - discord.client - INFO - logging in using static token
+2025-07-04 22:53:26,784 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 02e4a29387f928b0405444b5318aec46).
+2025-07-04 22:53:28,804 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 22:53:28,804 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 22:53:28,804 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 22:53:28,805 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 22:53:28,805 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 22:53:28,805 - discord_bot - INFO - ==================================================
+2025-07-04 22:53:28,805 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 22:57:15,769 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 22:57:17,900 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 22:57:17,900 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 22:57:17,901 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 22:57:17,902 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:57:17,903 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 22:57:17,903 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 22:57:17,904 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 22:57:17,904 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 22:57:17,904 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 22:57:17,904 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 22:57:17,905 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 22:57:17,905 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 22:57:17,905 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 22:57:17,905 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 22:57:17,906 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 22:57:18,627 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 22:57:18,659 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 22:57:18,706 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 22:57:18,714 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 22:57:18,727 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 22:57:18,737 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 22:57:18,737 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 22:57:18,738 - discord.client - INFO - logging in using static token
+2025-07-04 22:57:19,819 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 6ba01a29b8529f27a77ac540b3f97e31).
+2025-07-04 22:57:22,030 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 22:57:22,030 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 22:57:22,030 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 22:57:22,031 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 22:57:22,031 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 22:57:22,031 - discord_bot - INFO - ==================================================
+2025-07-04 22:57:22,031 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 22:57:40,522 - discord_bot - DEBUG - CommandNotFound: Command "inventario" is not found (invoked by stockholmuser in #«🎰»┆basurino)
+2025-07-04 23:03:14,439 - discord_bot - ERROR - [SLASH ERROR] comprar_mejora: CommandInvokeError - Command 'comprar_mejora' raised an exception: ProgrammingError: ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]String or binary data would be truncated in table 'CasinoBot.dbo.Transactions', column 'TransactionType'. Truncated value: 'Compra blackmarket: Magnate (+10% ganancias casino'. (2628) (SQLExecDirectW); [42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The statement has been terminated. (3621)")
+2025-07-04 23:05:55,539 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 23:05:57,523 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 23:05:57,523 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 23:05:57,524 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 23:05:57,525 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:05:57,526 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 23:05:57,526 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 23:05:57,526 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 23:05:57,527 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 23:05:57,528 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 23:05:57,817 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 23:05:57,826 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 23:05:57,830 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 23:05:57,837 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 23:05:57,846 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 23:05:57,851 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 23:05:57,851 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 23:05:57,851 - discord.client - INFO - logging in using static token
+2025-07-04 23:05:59,111 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 49da8919069d0041e73f82fd6dc5277b).
+2025-07-04 23:06:01,135 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 23:06:01,135 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 23:06:01,136 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 23:06:01,136 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 23:06:01,136 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 23:06:01,136 - discord_bot - INFO - ==================================================
+2025-07-04 23:06:01,136 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 23:11:30,534 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 23:11:31,759 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 23:11:31,760 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 23:11:31,760 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 23:11:31,761 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:11:31,761 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 23:11:31,762 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 23:11:31,762 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:11:31,762 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 23:11:31,762 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 23:11:31,762 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 23:11:31,763 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 23:11:31,763 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 23:11:31,763 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 23:11:31,763 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 23:11:31,764 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 23:11:32,097 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 23:11:32,105 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 23:11:32,109 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 23:11:32,115 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 23:11:32,131 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 23:11:32,141 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 23:11:32,141 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 23:11:32,142 - discord.client - INFO - logging in using static token
+2025-07-04 23:11:33,366 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 6a68c335068084e6ba3dda3ec38f2cec).
+2025-07-04 23:11:35,399 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 23:11:35,399 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 23:11:35,399 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 23:11:35,400 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 23:11:35,400 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 23:11:35,400 - discord_bot - INFO - ==================================================
+2025-07-04 23:11:35,400 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 23:15:43,925 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente
+2025-07-04 23:15:45,299 - discord_bot - INFO - [CONFIG] Cargando variables de entorno desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\src\.env
+2025-07-04 23:15:45,299 - discord_bot - INFO - [TOKEN] Token cargado: MTM2ND...0cdI
+2025-07-04 23:15:45,300 - discord_bot - DEBUG - Modo DEBUG activado
+2025-07-04 23:15:45,300 - discord_bot - INFO - [CONFIG] Cargando configuración desde: C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:15:45,301 - discord_bot - INFO - [CONFIG] Prefix: /, Debug: True
+2025-07-04 23:15:45,302 - discord_bot - INFO - [INIT] Iniciando bot (Intento 1/3)
+2025-07-04 23:15:45,302 - discord_bot - INFO - [CONFIG] Módulos configurados desde C:\Users\felip\Desktop\Proyectos\discord bot 2\discord-bot\config.ini
+2025-07-04 23:15:45,302 - discord_bot - INFO - [MODULES] Módulo 'general': ✅ ACTIVADO
+2025-07-04 23:15:45,302 - discord_bot - INFO - [MODULES] Módulo 'economy': ✅ ACTIVADO
+2025-07-04 23:15:45,303 - discord_bot - INFO - [MODULES] Módulo 'moderation': ✅ ACTIVADO
+2025-07-04 23:15:45,303 - discord_bot - INFO - [MODULES] Módulo 'music': ❌ DESACTIVADO
+2025-07-04 23:15:45,303 - discord_bot - INFO - [MODULES] Módulo 'shop': ✅ ACTIVADO
+2025-07-04 23:15:45,303 - discord_bot - INFO - [MODULES] Módulo 'casino': ✅ ACTIVADO
+2025-07-04 23:15:45,303 - discord_bot - INFO - [MODULES] Módulo 'actions': ✅ ACTIVADO
+2025-07-04 23:15:45,304 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.actions
+2025-07-04 23:15:45,672 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.casino
+2025-07-04 23:15:45,691 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.economy
+2025-07-04 23:15:45,697 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.general
+2025-07-04 23:15:45,712 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.moderation
+2025-07-04 23:15:45,722 - discord_bot - INFO - [LOAD] Intentando cargar categoría: src.commands.shop
+2025-07-04 23:15:45,729 - discord_bot - INFO - [STATUS] Cogs cargados: 6 | Fallidos: 0
+2025-07-04 23:15:45,729 - discord_bot - INFO - [CONNECT] Intentando conectar a Discord...
+2025-07-04 23:15:45,729 - discord.client - INFO - logging in using static token
+2025-07-04 23:15:46,925 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: fbd2479d360a0ccaffa99a84a8bbed0e).
+2025-07-04 23:15:48,956 - discord_bot - INFO - [READY] ¡Bot conectado! Usuario: El Recolector de Basura (ID: 1364741760055775262)
+2025-07-04 23:15:48,956 - discord_bot - INFO - [SERVERS] Conectado a 2 servidores:
+2025-07-04 23:15:48,956 - discord_bot - INFO -   - Little paradise (ID: 1019371540908884090) | Miembros: 6
+2025-07-04 23:15:48,957 - discord_bot - INFO -   - El basurero (ID: 1352468669548073032) | Miembros: 74
+2025-07-04 23:15:48,957 - discord_bot - INFO - [USERS] Sirviendo a 75 usuarios únicos
+2025-07-04 23:15:48,957 - discord_bot - INFO - ==================================================
+2025-07-04 23:15:48,958 - discord_bot - INFO - [STATUS] Bot listo y funcionando
+2025-07-04 23:17:20,794 - discord_bot - INFO - [SHUTDOWN] Bot detenido manualmente

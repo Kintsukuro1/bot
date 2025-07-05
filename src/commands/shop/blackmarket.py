@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from src.db import get_black_market_items
+from src.commands.shop.black_market_items import BLACK_MARKET
 
 class BlackMarket(commands.Cog):
     """Cog para mostrar mejoras permanentes del mercado negro."""
@@ -10,7 +10,7 @@ class BlackMarket(commands.Cog):
 
     @app_commands.command(name="blackmarket", description="Muestra las mejoras permanentes del mercado negro.")
     async def blackmarket(self, interaction: discord.Interaction):
-        items = get_black_market_items()
+        items = BLACK_MARKET
         embed = discord.Embed(
             title="🕶️ Black Market (Mejoras Permanentes)",
             description="Mejoras exclusivas para los más arriesgados.",

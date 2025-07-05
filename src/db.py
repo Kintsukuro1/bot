@@ -51,18 +51,30 @@ def ensure_user(user_id, user_name=None):
     cursor = conn.cursor()
     cursor.execute("SELECT UserName, StartDate FROM Users WHERE UserID = ?", user_id)
     row = cursor.fetchone()
+    
+    # Verificar si el nombre parece un nombre genérico (User_ID) para no usarlo
+    is_generic_name = user_name and (user_name == f"User_{user_id}" or user_name.startswith("User_"))
+    
     if not row:
         start_date = datetime.now().date()
+        # Solo usar el nombre si no es genérico
+        actual_user_name = None if is_generic_name else user_name
         cursor.execute(
             "INSERT INTO Users (UserID, Balance, LastLogin, Streak, UserName, StartDate) VALUES (?, ?, ?, ?, ?, ?)",
-            user_id, 500, None, 0, user_name, start_date
+            user_id, 500, None, 0, actual_user_name, start_date
         )
     else:
         # Si falta alguno de los campos, actualízalo
         current_name, current_start = row
         updates = []
         params = []
-        if (not current_name or current_name != user_name) and user_name:
+        
+        # Solo actualizar el nombre si:
+        # 1. El nombre actual está vacío o es None
+        # 2. El nombre nuevo no es genérico
+        # 3. El nombre nuevo no es igual al actual
+        if ((not current_name) and user_name and not is_generic_name) or \
+           (current_name and user_name and current_name != user_name and not is_generic_name):
             updates.append("UserName = ?")
             params.append(user_name)
         if not current_start:
@@ -85,58 +97,186 @@ def registrar_transaccion(user_id, amount, tipo):
     conn.commit()
     conn.close()
 
-def agregar_item_usuario(user_id, item_id, cantidad=1, expiry=None):
-    import pyodbc
+def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
+    """
+    Agrega un item al inventario del usuario.
+    
+    Args:
+        user_id: ID del usuario
+        item_id: ID del ítem a agregar
+        quantity: Cantidad (por defecto 1)
+        expiry: Fecha de expiración (puede ser None para ítems permanentes)
+    
+    Returns:
+        bool: True si se agregó correctamente, False en caso contrario
+    """
+    from datetime import datetime, timedelta
+    
     conn = pyodbc.connect(conn_str)
     cursor = conn.cursor()
-    # Verifica si ya tiene el ítem y no está usado ni expirado (para mejoras permanentes, solo debe haber uno)
-    cursor.execute("SELECT Quantity FROM UserItems WHERE UserID=? AND ItemID=? AND (Used=0 OR Used IS NULL)", user_id, item_id)
-    row = cursor.fetchone()
-    if row:
-        cursor.execute("UPDATE UserItems SET Quantity=Quantity+? WHERE UserID=? AND ItemID=?", cantidad, user_id, item_id)
-    else:
-        cursor.execute("INSERT INTO UserItems (UserID, ItemID, Quantity, Expiry, Used) VALUES (?, ?, ?, ?, 0)", user_id, item_id, cantidad, expiry)
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        # Si no se proporciona fecha de expiración, decidimos qué hacer según el tipo de ítem
+        if expiry is None:
+            # Los ítems con IDs >= 1000 son mejoras permanentes (usar fecha lejana)
+            if item_id >= 1000:
+                # Fecha muy lejana para representar "permanente" (10 años)
+                expiry = datetime.now() + timedelta(days=3650)
+            else:
+                # Ítems normales duran 7 días por defecto
+                expiry = datetime.now() + timedelta(days=7)
+        
+        # Verificar si el usuario ya tiene este ítem
+        cursor.execute("SELECT Quantity FROM UserItems WHERE UserID = ? AND ItemID = ? AND Expiry > GETDATE() AND Used = 0", 
+                       user_id, item_id)
+        row = cursor.fetchone()
+        
+        if row:
+            # El usuario ya tiene este ítem, aumentamos la cantidad
+            cursor.execute("""
+                UPDATE UserItems 
+                SET Quantity = Quantity + ?
+                WHERE UserID = ? AND ItemID = ? AND Expiry > GETDATE() AND Used = 0
+            """, quantity, user_id, item_id)
+        else:
+            # El usuario no tiene el ítem, lo insertamos
+            cursor.execute("""
+                INSERT INTO UserItems (UserID, ItemID, Quantity, Expiry, Used)
+                VALUES (?, ?, ?, ?, 0)
+            """, user_id, item_id, quantity, expiry)
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error agregando ítem al usuario: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 def usuario_tiene_item(user_id, item_id):
-    import pyodbc
+    """
+    Verifica si un usuario tiene un ítem específico en su inventario.
+    
+    Args:
+        user_id: ID del usuario
+        item_id: ID del ítem a verificar
+    
+    Returns:
+        bool: True si el usuario tiene el ítem, False en caso contrario
+    """
     conn = pyodbc.connect(conn_str)
     cursor = conn.cursor()
-    cursor.execute("SELECT Quantity FROM UserItems WHERE UserID=? AND ItemID=? AND (Used=0 OR Used IS NULL)", user_id, item_id)
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return bool(row and row.Quantity > 0)
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM UserItems 
+            WHERE UserID = ? AND ItemID = ? AND Quantity > 0 AND Used = 0
+            AND Expiry > GETDATE()
+        """, user_id, item_id)
+        row = cursor.fetchone()
+        count = row[0] if row else 0
+        return count > 0
+    except (pyodbc.Error, pyodbc.ProgrammingError, pyodbc.DatabaseError) as e:
+        print(f"Error de base de datos al verificar ítem de usuario: {e}")
+        return False
+    except Exception as e:
+        print(f"Error inesperado verificando ítem de usuario: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
-def usuario_tiene_mejora(user_id, mejora_id):
-    import pyodbc
-    conn = pyodbc.connect(conn_str)
-    cursor = conn.cursor()
-    # Las mejoras del black market usan IDs 1000+ en UserItems
-    cursor.execute("SELECT Quantity FROM UserItems WHERE UserID=? AND ItemID=? AND (Used=0 OR Used IS NULL)", user_id, 1000 + mejora_id)
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return bool(row and row.Quantity > 0)
+def usuario_tiene_mejora(user_id, item_id):
+    """Alias para usuario_tiene_item para mantener compatibilidad"""
+    return usuario_tiene_item(user_id, item_id)
 
-def get_black_market_items():
-    import pyodbc
+def get_user_items(user_id):
+    """
+    Obtiene todos los ítems activos de un usuario.
+    
+    Args:
+        user_id: ID del usuario
+    
+    Returns:
+        list: Lista de diccionarios con información de los ítems
+    """
     conn = pyodbc.connect(conn_str)
     cursor = conn.cursor()
-    cursor.execute("SELECT ItemID, Nombre, Precio, Descripcion FROM BlackMarketItems")
-    items = []
-    for row in cursor.fetchall():
-        items.append({
-            "id": row.ItemID,
-            "nombre": row.Nombre,
-            "precio": row.Precio,
-            "descripcion": row.Descripcion
-        })
-    cursor.close()
-    conn.close()
-    return items
+    try:
+        cursor.execute("""
+            SELECT ItemID, Quantity, Expiry, Used 
+            FROM UserItems 
+            WHERE UserID = ? AND Quantity > 0 AND Used = 0
+            AND Expiry > GETDATE()
+        """, user_id)
+        
+        items = []
+        for row in cursor.fetchall():
+            items.append({
+                'item_id': row[0],
+                'quantity': row[1],
+                'expiry': row[2],
+                'used': row[3]
+            })
+        return items
+    except Exception as e:
+        print(f"Error obteniendo ítems de usuario: {e}")
+        return []
+    finally:
+        cursor.close()
+        conn.close()
+
+def usar_item_usuario(user_id, item_id):
+    """
+    Marca un ítem como usado en el inventario del usuario.
+    
+    Args:
+        user_id: ID del usuario
+        item_id: ID del ítem a usar
+    
+    Returns:
+        bool: True si se usó correctamente, False en caso contrario
+    """
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    try:
+        # Obtenemos la fecha de expiración del item más antiguo para usar en la cláusula WHERE
+        cursor.execute("""
+            SELECT TOP 1 Expiry 
+            FROM UserItems 
+            WHERE UserID = ? AND ItemID = ? AND Quantity > 0 AND Used = 0
+            AND Expiry > GETDATE()
+            ORDER BY Expiry
+        """, user_id, item_id)
+        
+        row = cursor.fetchone()
+        if not row:
+            return False
+            
+        expiry_date = row[0]
+        
+        # Actualizamos el registro usando todos los criterios de búsqueda para garantizar unicidad
+        cursor.execute("""
+            UPDATE UserItems 
+            SET Quantity = Quantity - 1,
+                Used = CASE WHEN Quantity - 1 <= 0 THEN 1 ELSE Used END
+            WHERE UserID = ? AND ItemID = ? AND Quantity > 0 AND Used = 0 
+            AND Expiry = ?
+        """, user_id, item_id, expiry_date)
+        
+        conn.commit()
+        return True
+    except pyodbc.Error as e:
+        print(f"Error de base de datos usando ítem: {e}")
+        conn.rollback()
+        return False
+    except Exception as e:
+        print(f"Error inesperado usando ítem: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
 # Funciones para el sistema de dificultad dinámica
 def get_user_game_stats(user_id):
@@ -192,9 +332,9 @@ def record_game_result(user_id, game_type, bet_amount, result, win_amount, diffi
                 (UserID, TotalGamesPlayed, TotalWins, TotalLosses, TotalAmountBet, 
                  TotalAmountWon, WinRate, AvgBetSize, LastGameTime, 
                  HotStreak, ColdStreak, RiskProfile, DifficultyLevel)
-                VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BALANCED', ?)
-            """, user_id, 1 if is_win else 0, 0 if is_win else 1, bet_amount, 
-                 win_amount, 1.0 if is_win else 0.0, float(bet_amount), 
+                VALUES (?, 1, ?,
+                        0, 0, ?, ?, ?, ?, ?, ?, 'BALANCED', ?)
+            """, user_id, 1 if is_win else 0, win_amount, 1.0 if is_win else 0.0, float(bet_amount), 
                  datetime.now(), 1 if is_win else 0, 0 if is_win else 1, difficulty_applied)
         else:
             # Actualizar estadísticas existentes

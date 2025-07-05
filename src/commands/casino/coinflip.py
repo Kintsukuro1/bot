@@ -303,10 +303,10 @@ class CoinflipView(discord.ui.View):
         # Probabilidad base del 50%
         base_prob = 0.5
         
-        # Aplicar dificultad dinámica
+        # Aplicar dificultad dinámica (ahora afecta al resultado de la moneda, no a una segunda verificación)
         prob_ganar = DynamicDifficulty.apply_difficulty_to_odds(base_prob, difficulty_modifier)
         
-        # Calcular probabilidades adicionales basadas en el porcentaje de apuesta (efecto menor ahora)
+        # Calcular probabilidades adicionales basadas en el porcentaje de apuesta
         porcentaje_apuesta = (self.apuesta / self.saldo) * 100
         bet_adjustment = 0.0
         if porcentaje_apuesta <= 25:
@@ -319,9 +319,9 @@ class CoinflipView(discord.ui.View):
         # --- MEJORAS BLACK MARKET ---
         ganancia_bonus = 1.0
         if usuario_tiene_mejora(user_id, 2):  # Apostador Pro
-            prob_ganar += 0.03  # Reducido de 0.05 a 0.03
+            prob_ganar += 0.03  # Mejora las probabilidades
         if usuario_tiene_mejora(user_id, 3):  # Magnate
-            ganancia_bonus += 0.10
+            ganancia_bonus += 0.10  # Aumenta la ganancia
         # ---------------------------
         
         # Animación de lanzamiento
@@ -344,12 +344,24 @@ class CoinflipView(discord.ui.View):
         await asyncio.sleep(2)
         
         # Determinar resultado
-        gano = random.random() < prob_ganar
-        resultado_moneda = random.choice(['cara', 'sello'])
+        # La dificultad influye en el resultado de la moneda, no en una verificación adicional
+        probabilidad_cara = 0.5
         
-        # Si el usuario eligió correctamente Y tiene suerte según probabilidades
+        # Ajustar probabilidad de cara según dificultad
+        if eleccion == 'cara':
+            probabilidad_cara = 0.5 - (0.3 * (1 - prob_ganar))  # Difícil = menos prob de cara
+        else:  # Sello
+            probabilidad_cara = 0.5 + (0.3 * (1 - prob_ganar))  # Difícil = más prob de cara
+            
+        # Resultado final (ajustado entre 0.2 y 0.8)
+        probabilidad_cara = max(0.2, min(0.8, probabilidad_cara))
+        
+        # Determinar el resultado de la moneda según la probabilidad ajustada
+        resultado_moneda = 'cara' if random.random() < probabilidad_cara else 'sello'
+        
+        # El usuario gana si acertó - sistema simple y directo
         usuario_acerto = (eleccion == resultado_moneda)
-        gano_final = usuario_acerto and gano
+        gano_final = usuario_acerto
         
         # GIFs de resultado
         cara_gif = "https://cdn.discordapp.com/attachments/1142907813757198386/1386677290578214932/gif_cara.gif?ex=685a935d&is=685941dd&hm=d41249e840fb753ab064a397836bd37b77616ba50df68a37e17f00287199b958&"
@@ -387,12 +399,8 @@ class CoinflipView(discord.ui.View):
             # Registrar resultado para el sistema de dificultad
             record_game_result(user_id, 'coinflip', self.apuesta, 'loss', 0, difficulty_modifier, nuevo_saldo)
             
-            if usuario_acerto:
-                # Acertó pero no tuvo suerte
-                razon = "Acertaste, pero no fue tu día de suerte"
-            else:
-                # No acertó
-                razon = "No acertaste el resultado"
+            # El usuario sólo pierde cuando no acierta
+            razon = "No acertaste el resultado"
             
             embed = discord.Embed(
                 title="😞 Perdiste",
