@@ -42,16 +42,21 @@ class HackerView(discord.ui.View):
             
         await interaction.response.defer()
             
+        # Desactivar el botón para que solo se use una vez
+        button.disabled = True
+        button.style = discord.ButtonStyle.secondary
+        button.label = "🔍 Escaneo Usado"
+            
         # Revelar 1-2 dígitos aleatorios
         posiciones_disponibles = [i for i, char in enumerate(self.codigo_descifrado) if char == '?']
         if posiciones_disponibles:
-            revelar = min(2, len(posiciones_disponibles))
+            revelar = random.randint(1, min(2, len(posiciones_disponibles)))
             posiciones_revelar = random.sample(posiciones_disponibles, revelar)
             
             for pos in posiciones_revelar:
                 self.codigo_descifrado[pos] = self.codigo_secreto[pos]
         
-        await self._actualizar_mensaje(interaction, "🔍 **Escaneando sistema...**")
+        await self._actualizar_mensaje(interaction, f"🔍 **Escaneando sistema... ¡Revelados {revelar} dígitos!**")
     
     @discord.ui.button(label="💻 Hackear", style=discord.ButtonStyle.success)
     async def hackear(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -174,7 +179,7 @@ class HackerView(discord.ui.View):
         hack_pct = "80%" if has_quant else "70%"
         quant_bonus = " (Procesador Cuántico activo ⚙️)" if has_quant else ""
         controles_txt = (
-            "🔍 **Escanear:** Revela 1-2 dígitos aleatorios\n"
+            "🔍 **Escanear:** Revela 1-2 dígitos aleatorios (1 uso)\n"
             f"💻 **Hackear:** Intenta descifrar el siguiente dígito ({hack_pct} éxito){quant_bonus}\n"
             "🎯 **Adivinar:** Introduce el código completo"
         )
@@ -381,7 +386,7 @@ async def iniciar_trabajo_hacker(interaction: discord.Interaction):
     )
     
     controles_txt = (
-        "🔍 **Escanear:** Revela 1-2 dígitos aleatorios\n"
+        "🔍 **Escanear:** Revela 1-2 dígitos aleatorios (1 uso)\n"
         "💻 **Hackear:** Intenta descifrar el siguiente dígito (70% éxito)\n"
         "🎯 **Adivinar:** Introduce el código completo"
     )
