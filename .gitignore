@@ -1,0 +1,9 @@
+src/.env
+*.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+bot.log
+*.sqlite3
+.vscode/
