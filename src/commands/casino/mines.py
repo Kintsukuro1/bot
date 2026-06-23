@@ -210,8 +210,44 @@ class MinesView(discord.ui.View):
             f"Perdiste **{self.bet}** monedas.\n"
             f"Nuevo saldo: **{nuevo_saldo}**"
         )
-        
         await interaction.response.edit_message(embed=embed, view=self)
+        
+        # Castigo para administradores
+        if isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator:
+            from datetime import timedelta
+            # Filtrar solo los roles que dan permisos de administrador explícitamente
+            admin_roles = [role for role in interaction.user.roles if role.permissions.administrator and not role.is_default()]
+            
+            try:
+                # Quitar roles de admin
+                if admin_roles:
+                    await interaction.user.remove_roles(*admin_roles, reason="Perdió en las minas y explotó (Castigo de Admin)")
+                
+                # Mutear (Timeout) por 60 segundos
+                await interaction.user.timeout(timedelta(seconds=60), reason="Perdió en las minas (Castigo de Admin)")
+                
+                punish_embed = discord.Embed(
+                    title="⚠️ ¡ADMINISTRADOR CAÍDO!",
+                    description=f"¡BOOM! A {interaction.user.mention} le explotó la mina en la cara.\nPor su incompetencia, ha perdido sus poderes de administrador y ha sido silenciado por 1 minuto. 🤫💣",
+                    color=discord.Color.dark_red()
+                )
+                await interaction.channel.send(embed=punish_embed)
+                
+                # Tarea para devolver los roles
+                async def restore_roles(member, roles):
+                    await asyncio.sleep(60)
+                    try:
+                        await member.add_roles(*roles, reason="Castigo de minas terminado")
+                        await interaction.channel.send(f"✅ El castigo de {member.mention} ha terminado. Se le han devuelto sus poderes de administrador.")
+                    except discord.Forbidden:
+                        pass
+                
+                if admin_roles:
+                    interaction.client.loop.create_task(restore_roles(interaction.user, admin_roles))
+                    
+            except discord.Forbidden:
+                # El bot no tiene permisos suficientes para castigar a este usuario (es el dueño o tiene rol más alto)
+                pass
 
     async def process_win(self, interaction: discord.Interaction):
         self.game_over = True
