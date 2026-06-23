@@ -10,11 +10,15 @@ class Minas(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # Diccionario para almacenar las minas activas por canal {channel_id: cantidad}
-        # Cargamos desde la base de datos de manera sincrona al iniciar el cog
+        self.minas_activas = {}
+
+    async def cog_load(self):
+        """Carga las minas desde la base de datos de manera asíncrona al cargar el cog."""
         try:
-            self.minas_activas = get_all_minas()
+            self.minas_activas = await asyncio.to_thread(get_all_minas)
+            print(f"[Minas] Minas cargadas desde la BD: {len(self.minas_activas)} canales activos.")
         except Exception as e:
-            print(f"Error cargando minas desde DB: {e}")
+            print(f"[Minas] Error cargando minas desde DB: {e}")
             self.minas_activas = {}
 
     @app_commands.command(name="poner_minas", description="Coloca minas explosivas ocultas en un canal específico.")
@@ -36,8 +40,8 @@ class Minas(commands.Cog):
         # Sumar a las minas ya existentes o crear nuevo registro
         self.minas_activas[canal_id] = self.minas_activas.get(canal_id, 0) + cantidad
 
-        # Guardar en base de datos (usando to_thread para no bloquear)
-        asyncio.create_task(asyncio.to_thread(set_minas_canal, canal_id, self.minas_activas[canal_id]))
+        # Guardar en base de datos
+        await asyncio.to_thread(set_minas_canal, canal_id, self.minas_activas[canal_id])
 
         embed = discord.Embed(
             title="💣 ¡Minas Colocadas!",
@@ -68,7 +72,7 @@ class Minas(commands.Cog):
             minas_restantes = self.minas_activas[canal_id]
             
             # Actualizar DB
-            asyncio.create_task(asyncio.to_thread(set_minas_canal, canal_id, minas_restantes))
+            await asyncio.to_thread(set_minas_canal, canal_id, minas_restantes)
             
             # Limpiar diccionario si ya no quedan minas
             if minas_restantes <= 0:
@@ -90,8 +94,8 @@ class Minas(commands.Cog):
             else:
                 # La mina explotó
                 try:
-                    # Registrar que pisó una mina en la BD (to_thread para no bloquear)
-                    asyncio.create_task(asyncio.to_thread(registrar_mina_pisada, message.author.id))
+                    # Registrar que pisó una mina en la BD
+                    await asyncio.to_thread(registrar_mina_pisada, message.author.id)
 
                     # Mute por 1 minuto (Timeout)
                     timeout_duration = timedelta(minutes=1)
