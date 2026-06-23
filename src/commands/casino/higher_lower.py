@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from typing import Optional, Dict, Any
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 # Cartas y sus valores
@@ -15,11 +15,11 @@ CARD_VALUES = {
 
 async def _prepare_higher_lower_db(user_id, user_name, apuesta):
     await asyncio.to_thread(ensure_user, user_id, user_name)
-    saldo = await asyncio.to_thread(get_balance, user_id)
+    success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
     difficulty_modifier, difficulty_explanation = await asyncio.to_thread(
         DynamicDifficulty.calculate_dynamic_difficulty, user_id, apuesta, 'higher_lower'
     )
-    return saldo, difficulty_modifier, difficulty_explanation
+    return success, saldo, difficulty_modifier, difficulty_explanation
 
 CARD_SUITS = ['♠️', '♥️', '♦️', '♣️']
 CARD_NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
@@ -242,8 +242,8 @@ class HigherLowerView(discord.ui.View):
         profit = winnings - self.apuesta
         
         # Actualizar balance
-        new_balance = self.saldo - self.apuesta + winnings
-        await asyncio.to_thread(set_balance, self.user.id, new_balance)
+        new_balance = self.saldo + winnings
+        await asyncio.to_thread(add_balance, self.user.id, winnings)
         await asyncio.to_thread(registrar_transaccion, self.user.id, profit, f"Higher/Lower: {self.consecutive_wins} aciertos consecutivos")
         
         # Registrar resultado para dificultad
@@ -298,8 +298,7 @@ class HigherLowerView(discord.ui.View):
         
         if not won:
             # Perdió - solo pierde la apuesta
-            new_balance = self.saldo - self.apuesta
-            await asyncio.to_thread(set_balance, self.user.id, new_balance)
+            new_balance = self.saldo
             await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, "Higher/Lower: perdió")
             
             # Registrar resultado para dificultad
@@ -347,14 +346,17 @@ class HigherLowerView(discord.ui.View):
                 # El timeout cobra automáticamente las ganancias
                 winnings = int(self.apuesta * self.total_multiplier)
                 profit = winnings - self.apuesta
-                new_balance = self.saldo - self.apuesta + winnings
-                await asyncio.to_thread(set_balance, self.user.id, new_balance)
+                new_balance = self.saldo + winnings
+                await asyncio.to_thread(add_balance, self.user.id, winnings)
                 await asyncio.to_thread(registrar_transaccion, self.user.id, profit, f"Higher/Lower: timeout con {self.consecutive_wins} aciertos")
                 
                 await asyncio.to_thread(record_game_result,
                     self.user.id, 'higher_lower', self.apuesta, 'win', 
                     profit, self.difficulty_modifier, new_balance
                 )
+            else:
+                # Refund if they timed out without playing
+                await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
 
 class HigherLower(commands.Cog):
     """Cog para el juego Higher or Lower."""
@@ -389,12 +391,12 @@ class HigherLower(commands.Cog):
                 await ctx_or_interaction.send(error_msg)
             return
 
-        saldo, difficulty_modifier, difficulty_explanation = await _prepare_higher_lower_db(
+        success, saldo, difficulty_modifier, difficulty_explanation = await _prepare_higher_lower_db(
             user_id, user_name, apuesta
         )
             
-        if apuesta > saldo:
-            error_msg = f"❌ No tienes suficiente saldo. Tu saldo: {saldo:,} monedas."
+        if not success:
+            error_msg = f"❌ No tienes suficiente saldo."
             if is_slash:
                 await ctx_or_interaction.response.send_message(error_msg, ephemeral=True)
             else:

@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 CHOICES = {
@@ -59,23 +59,13 @@ class RPSMainView(discord.ui.View):
             
         # Verificar saldo del retado
         await asyncio.to_thread(ensure_user, self.challenged.id, self.challenged.name)
-        balance_challenged = await asyncio.to_thread(get_balance, self.challenged.id)
+        success, balance_challenged = await asyncio.to_thread(deduct_balance, self.challenged.id, self.bet)
         
-        if balance_challenged < self.bet:
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para aceptar esta apuesta.", ephemeral=True)
             return
 
-        # Verificar si el retador aún tiene saldo
-        balance_challenger = await asyncio.to_thread(get_balance, self.challenger.id)
-        if balance_challenger < self.bet:
-            await interaction.response.send_message("❌ El retador ya no tiene saldo suficiente para cubrir la apuesta.", ephemeral=True)
-            return
-
         self.accepted = True
-        
-        # Cobrar a ambos para el pozo
-        await asyncio.to_thread(set_balance, self.challenger.id, balance_challenger - self.bet)
-        await asyncio.to_thread(set_balance, self.challenged.id, balance_challenged - self.bet)
         
         await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.bet, f"Apuesta PPT vs {self.challenged.display_name}")
         await asyncio.to_thread(registrar_transaccion, self.challenged.id, -self.bet, f"Apuesta PPT vs {self.challenger.display_name}")
@@ -140,8 +130,8 @@ class RPSMainView(discord.ui.View):
 
         if ch_c == cd_c:
             # Empate, devolver dinero
-            await asyncio.to_thread(set_balance, self.challenger.id, bal_1 + self.bet)
-            await asyncio.to_thread(set_balance, self.challenged.id, bal_2 + self.bet)
+            await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
+            await asyncio.to_thread(add_balance, self.challenged.id, self.bet)
             
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, self.bet, "Empate PPT (Devolución)")
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, self.bet, "Empate PPT (Devolución)")
@@ -155,7 +145,7 @@ class RPSMainView(discord.ui.View):
             
         elif CHOICES[ch_c]['beats'] == cd_c:
             # Gana retador
-            await asyncio.to_thread(set_balance, self.challenger.id, bal_1 + pozo)
+            await asyncio.to_thread(add_balance, self.challenger.id, pozo)
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, pozo, f"Ganó PPT vs {self.challenged.display_name}")
             
             await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'win', self.bet, diff_1, bal_1 + pozo)
@@ -167,7 +157,7 @@ class RPSMainView(discord.ui.View):
             
         else:
             # Gana retado
-            await asyncio.to_thread(set_balance, self.challenged.id, bal_2 + pozo)
+            await asyncio.to_thread(add_balance, self.challenged.id, pozo)
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, pozo, f"Ganó PPT vs {self.challenger.display_name}")
             
             await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'loss', 0, diff_1, bal_1)
@@ -189,16 +179,14 @@ class RPSMainView(discord.ui.View):
                 embed = self.message.embeds[0]
                 embed.color = discord.Color.dark_grey()
                 if not self.accepted:
+                    await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
                     embed.description = "El reto expiró porque no fue aceptado a tiempo."
                 else:
                     embed.description = "El reto fue cancelado porque alguien no eligió su jugada a tiempo.\nSe ha devuelto el dinero a ambos."
                     
-                    # Devolver dinero si aceptaron pero no jugaron
-                    bal_1 = await asyncio.to_thread(get_balance, self.challenger.id)
-                    bal_2 = await asyncio.to_thread(get_balance, self.challenged.id)
-                    
-                    await asyncio.to_thread(set_balance, self.challenger.id, bal_1 + self.bet)
-                    await asyncio.to_thread(set_balance, self.challenged.id, bal_2 + self.bet)
+                    # Devolver dinero a ambos
+                    await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
+                    await asyncio.to_thread(add_balance, self.challenged.id, self.bet)
                     
                 await self.message.edit(embed=embed, view=None)
         except:
@@ -229,9 +217,9 @@ class RPSBet(commands.Cog):
             return
 
         await asyncio.to_thread(ensure_user, retador.id, retador.name)
-        saldo_retador = await asyncio.to_thread(get_balance, retador.id)
         
-        if saldo_retador < apuesta:
+        success, saldo_retador = await asyncio.to_thread(deduct_balance, retador.id, apuesta)
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para esta apuesta.", ephemeral=True)
             return
 

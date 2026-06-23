@@ -5,7 +5,7 @@ import random
 import asyncio
 from typing import List
 
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 class RRLobbyView(discord.ui.View):
@@ -29,9 +29,9 @@ class RRLobbyView(discord.ui.View):
 
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
-        balance = await asyncio.to_thread(get_balance, user_id)
         
-        if balance < self.bet:
+        success, balance = await asyncio.to_thread(deduct_balance, user_id, self.bet)
+        if not success:
             await interaction.response.send_message("No tienes suficiente saldo para entrar.", ephemeral=True)
             return
 
@@ -66,10 +66,8 @@ class RRLobbyView(discord.ui.View):
         embed.title = "🔫 Ruleta Rusa - ¡El juego ha comenzado!"
         embed.color = discord.Color.red()
         
-        # Cobrar las entradas
+        # Registrar las entradas (ya cobradas)
         for p in self.players:
-            bal = await asyncio.to_thread(get_balance, p.id)
-            await asyncio.to_thread(set_balance, p.id, bal - self.bet)
             await asyncio.to_thread(registrar_transaccion, p.id, -self.bet, "Entrada Ruleta Rusa")
             
         await self.message.edit(embed=embed, view=None)
@@ -81,6 +79,8 @@ class RRLobbyView(discord.ui.View):
     async def on_timeout(self):
         if not self.started:
             if len(self.players) < 2:
+                for p in self.players:
+                    await asyncio.to_thread(add_balance, p.id, self.bet)
                 self.clear_items()
                 try:
                     if self.message:
@@ -180,10 +180,8 @@ class RRGameView(discord.ui.View):
         profit = pozo - self.bet
         
         diff, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, winner.id, self.bet, 'russian_roulette')
-        bal = await asyncio.to_thread(get_balance, winner.id)
-        nuevo_saldo = bal + pozo
-        
-        await asyncio.to_thread(set_balance, winner.id, nuevo_saldo)
+        await asyncio.to_thread(add_balance, winner.id, pozo)
+        nuevo_saldo = await asyncio.to_thread(get_balance, winner.id)
         await asyncio.to_thread(registrar_transaccion, winner.id, pozo, f"Ganó Ruleta Rusa (Pozo de {self.initial_players_count} jugadores)")
         await asyncio.to_thread(record_game_result, winner.id, 'russian_roulette', self.bet, 'win', profit, diff, nuevo_saldo)
         
@@ -216,9 +214,9 @@ class RussianRoulette(commands.Cog):
             
         host = interaction.user
         await asyncio.to_thread(ensure_user, host.id, host.name)
-        balance = await asyncio.to_thread(get_balance, host.id)
         
-        if balance < entrada:
+        success, balance = await asyncio.to_thread(deduct_balance, host.id, entrada)
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para abrir este juego.", ephemeral=True)
             return
 
