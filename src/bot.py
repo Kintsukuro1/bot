@@ -1,6 +1,18 @@
 import os
 import sys
 import asyncio
+import functools
+import contextvars
+
+# Polyfill para asyncio.to_thread (necesario para Python 3.8 o inferior)
+if not hasattr(asyncio, 'to_thread'):
+    async def to_thread(func, /, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        ctx = contextvars.copy_context()
+        func_call = functools.partial(ctx.run, func, *args, **kwargs)
+        return await loop.run_in_executor(None, func_call)
+    asyncio.to_thread = to_thread
+
 import logging
 import discord
 from discord.ext import commands
