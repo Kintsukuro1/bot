@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from typing import Optional
-from src.db import get_balance, set_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -23,15 +23,11 @@ class CoinflipDuelView(discord.ui.View):
             await interaction.response.send_message("Solo el retado puede aceptar el duelo.", ephemeral=True)
             return
         
-        # Verificar saldos
+        # Verificar saldos (retador ya fue descontado)
         challenger_balance = await asyncio.to_thread(get_balance, self.challenger.id)
-        challenged_balance = await asyncio.to_thread(get_balance, self.challenged.id)
         
-        if challenger_balance < self.apuesta:
-            await interaction.response.send_message(f"❌ El retador no tiene suficiente saldo en este momento ({self.apuesta} monedas).", ephemeral=True)
-            return
-            
-        if challenged_balance < self.apuesta:
+        success, challenged_balance = await asyncio.to_thread(deduct_balance, self.challenged.id, self.apuesta)
+        if not success:
             await interaction.response.send_message(f"❌ No tienes suficiente saldo para este duelo. Necesitas {self.apuesta} monedas.", ephemeral=True)
             return
         
@@ -57,23 +53,21 @@ class CoinflipDuelView(discord.ui.View):
             
         # Procesar transferencias
         if challenger_win:
-            await asyncio.to_thread(set_balance, self.challenger.id, challenger_balance + self.apuesta)
-            await asyncio.to_thread(set_balance, self.challenged.id, challenged_balance - self.apuesta)
+            await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta * 2)
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, self.apuesta, f"Duelo coinflip: ganó vs {self.challenged.display_name}")
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenger.display_name}")
             
             # Registrar historial con dificultad neutral 0.0 (duelo PVP justo)
             await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenger_balance + self.apuesta)
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenged_balance - self.apuesta)
+            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenged_balance)
         else:
-            await asyncio.to_thread(set_balance, self.challenger.id, challenger_balance - self.apuesta)
-            await asyncio.to_thread(set_balance, self.challenged.id, challenged_balance + self.apuesta)
+            await asyncio.to_thread(add_balance, self.challenged.id, self.apuesta * 2)
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenged.display_name}")
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, self.apuesta, f"Duelo coinflip: ganó vs {self.challenger.display_name}")
             
             # Registrar historial
             await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenger_balance - self.apuesta)
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenged_balance + self.apuesta)
+            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenged_balance + self.apuesta * 2)
             
         # Embed de resultado final
         embed = discord.Embed(
@@ -106,6 +100,7 @@ class CoinflipDuelView(discord.ui.View):
             return
         
         self.game_over = True
+        await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
         
         embed = discord.Embed(
             title="⚔️ Duelo Rechazado",
@@ -123,6 +118,7 @@ class CoinflipDuelView(discord.ui.View):
         """Se ejecuta cuando se agota el tiempo."""
         if not self.game_over:
             self.game_over = True
+            await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
             for item in self.children:
                 item.disabled = True
 
@@ -216,8 +212,8 @@ class CoinflipView(discord.ui.View):
         if gano_final:
             # Usuario ganó
             ganancia = int(self.apuesta * ganancia_bonus)
-            nuevo_saldo = self.saldo + ganancia
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo + self.apuesta + ganancia
+            await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
             await asyncio.to_thread(registrar_transaccion, user_id, ganancia, f"Coinflip: ganó con {eleccion}")
             
             # Registrar resultado para el sistema de dificultad
@@ -237,8 +233,7 @@ class CoinflipView(discord.ui.View):
             embed.set_image(url=cara_gif if resultado_moneda == 'cara' else cruz_gif)
         else:
             # Usuario perdió
-            nuevo_saldo = self.saldo - self.apuesta
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo
             await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, f"Coinflip: perdió con {eleccion}")
             
             # Registrar resultado para el sistema de dificultad
@@ -267,6 +262,7 @@ class CoinflipView(discord.ui.View):
         """Se ejecuta cuando se agota el tiempo."""
         if not self.game_over:
             self.game_over = True
+            await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
             for item in self.children:
                 item.disabled = True
 
@@ -283,17 +279,12 @@ class Coinflip(commands.Cog):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)  # Asegura registro y datos del usuario
-        saldo = await asyncio.to_thread(get_balance, user_id)
-        
-        if saldo <= 0:
-            await interaction.response.send_message("❌ No tienes saldo suficiente para apostar.", ephemeral=True)
-            return
-            
         if apuesta <= 0:
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
-            
-        if apuesta > saldo:
+
+        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
         

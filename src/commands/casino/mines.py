@@ -5,7 +5,7 @@ import random
 import asyncio
 from typing import List
 
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 # Cálculo del multiplicador de Mines (combinatoria clásica)
@@ -150,8 +150,7 @@ class MinesView(discord.ui.View):
             self.reveal_all()
             
             # El timeout se considera derrota
-            nuevo_saldo = self.balance - self.bet
-            await asyncio.to_thread(set_balance, self.user_id, nuevo_saldo)
+            nuevo_saldo = self.balance
             await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Timeout ({self.bombs} bombas)")
             await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
             
@@ -196,8 +195,7 @@ class MinesView(discord.ui.View):
         self.game_over = True
         self.reveal_all()
         
-        nuevo_saldo = self.balance - self.bet
-        await asyncio.to_thread(set_balance, self.user_id, nuevo_saldo)
+        nuevo_saldo = self.balance
         await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Perdida ({self.bombs} bombas)")
         await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
 
@@ -223,8 +221,8 @@ class MinesView(discord.ui.View):
         winnings = int(self.bet * multiplier)
         profit = winnings - self.bet
         
-        nuevo_saldo = self.balance + profit
-        await asyncio.to_thread(set_balance, self.user_id, nuevo_saldo)
+        nuevo_saldo = self.balance + winnings
+        await asyncio.to_thread(add_balance, self.user_id, winnings)
         await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Mines: Retiro x{multiplier:.2f} ({self.bombs} bombas)")
         await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'win', profit, self.difficulty_modifier, nuevo_saldo)
 
@@ -265,9 +263,9 @@ class Mines(commands.Cog):
             return
 
         await asyncio.to_thread(ensure_user, user_id, user_name)
-        saldo_usuario = await asyncio.to_thread(get_balance, user_id)
         
-        if apuesta > saldo_usuario:
+        success, saldo_usuario = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
 
