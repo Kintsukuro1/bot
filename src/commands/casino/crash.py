@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 class Crash(commands.Cog):
@@ -31,8 +31,6 @@ class Crash(commands.Cog):
             user_name = user.name
             
         await asyncio.to_thread(ensure_user, user_id, user_name)
-        saldo = await asyncio.to_thread(get_balance, user_id)
-        
         if apuesta <= 0:
             error_msg = "❌ La apuesta debe ser mayor a 0."
             if is_slash:
@@ -40,9 +38,10 @@ class Crash(commands.Cog):
             else:
                 await ctx_or_interaction.send(error_msg)
             return
-            
-        if apuesta > saldo:
-            error_msg = f"❌ No tienes suficiente saldo para esa apuesta. Tu saldo: {saldo:,} monedas."
+
+        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        if not success:
+            error_msg = f"❌ No tienes suficiente saldo para esa apuesta."
             if is_slash:
                 await ctx_or_interaction.response.send_message(error_msg, ephemeral=True)
             else:
@@ -146,8 +145,8 @@ class CrashView(discord.ui.View):
             ganancia_neta = ganancia_total - self.apuesta
             
             # Actualizar balance
-            nuevo_saldo = self.saldo - self.apuesta + ganancia_total
-            await asyncio.to_thread(set_balance, self.user.id, nuevo_saldo)
+            nuevo_saldo = self.saldo + ganancia_total
+            await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
             await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: retirado x{mult_al_retirarse:.2f}")
             
             # Registrar resultado para el sistema de dificultad
@@ -321,8 +320,8 @@ class CrashView(discord.ui.View):
                                 reembolsado = True
                                 
                     if reembolsado:
-                        nuevo_saldo = self.saldo
-                        await asyncio.to_thread(set_balance, self.user.id, nuevo_saldo)
+                        nuevo_saldo = self.saldo + self.apuesta
+                        await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
                         await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
                         
@@ -336,8 +335,7 @@ class CrashView(discord.ui.View):
                             color=discord.Color.blue()
                         )
                     else:
-                        nuevo_saldo = self.saldo - self.apuesta
-                        await asyncio.to_thread(set_balance, self.user.id, nuevo_saldo)
+                        nuevo_saldo = self.saldo
                         await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
                         
@@ -362,8 +360,8 @@ class CrashView(discord.ui.View):
                     ganancia_total = int(self.apuesta * self.current_mult * ganancia_bonus)
                     ganancia_neta = ganancia_total - self.apuesta
                     
-                    nuevo_saldo = self.saldo - self.apuesta + ganancia_total
-                    await asyncio.to_thread(set_balance, self.user.id, nuevo_saldo)
+                    nuevo_saldo = self.saldo + ganancia_total
+                    await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
                     await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{self.current_mult:.2f}")
                     await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
                     

@@ -99,6 +99,21 @@ def add_balance(user_id, amount):
             ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
             """, (user_id, amount))
 
+def deduct_balance(user_id, amount):
+    """Resta saldo a un usuario de forma atómica y segura. 
+    Retorna (True, nuevo_saldo) si tuvo éxito, (False, 0) en caso contrario."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE Users 
+            SET Balance = Balance - %s 
+            WHERE UserID = %s AND Balance >= %s
+            RETURNING Balance
+        """, (amount, user_id, amount))
+        row = cursor.fetchone()
+        if row:
+            return True, row[0]
+        return False, 0
+
 def ensure_user(user_id, user_name=None):
     """Verifica si el usuario existe en la base de datos y lo crea si no."""
     from datetime import datetime

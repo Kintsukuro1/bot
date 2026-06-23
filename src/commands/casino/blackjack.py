@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 suits = ["♠", "♥", "♦", "♣"]
@@ -89,8 +89,7 @@ class BlackjackView(discord.ui.View):
         
         if action == "bust":
             # Jugador se pasó
-            nuevo_saldo = self.saldo - self.apuesta
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo
             await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: se pasó de 21")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
             
@@ -145,8 +144,8 @@ class BlackjackView(discord.ui.View):
         if dealer_value > 21:
             # Dealer se pasa
             ganancia = int(self.apuesta * ganancia_bonus)
-            nuevo_saldo = self.saldo + ganancia
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo + self.apuesta + ganancia
+            await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
             await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: dealer se pasó")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'win', ganancia, self.difficulty_modifier, nuevo_saldo)
             
@@ -155,8 +154,8 @@ class BlackjackView(discord.ui.View):
         elif player_value > dealer_value:
             # Jugador gana
             ganancia = int(self.apuesta * ganancia_bonus)
-            nuevo_saldo = self.saldo + ganancia
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo + self.apuesta + ganancia
+            await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
             await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: ganó al dealer")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'win', ganancia, self.difficulty_modifier, nuevo_saldo)
             
@@ -164,8 +163,7 @@ class BlackjackView(discord.ui.View):
             embed.color = discord.Color.green()
         elif player_value < dealer_value:
             # Dealer gana
-            nuevo_saldo = self.saldo - self.apuesta
-            await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+            nuevo_saldo = self.saldo
             await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: perdió contra dealer")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
             
@@ -173,7 +171,9 @@ class BlackjackView(discord.ui.View):
             embed.color = discord.Color.red()
         else:
             # Empate
-            await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'draw', 0, self.difficulty_modifier, self.saldo)
+            nuevo_saldo = self.saldo + self.apuesta
+            await asyncio.to_thread(add_balance, user_id, self.apuesta)
+            await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'draw', 0, self.difficulty_modifier, nuevo_saldo)
             
             embed.add_field(name="🤝 ¡Empate!", value="🟰 Misma puntuación\nRecuperas tu apuesta", inline=False)
             embed.color = discord.Color.yellow()
@@ -208,12 +208,13 @@ class Blackjack(commands.Cog):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)
-        saldo = await asyncio.to_thread(get_balance, user_id)
         
         if apuesta <= 0:
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
-        if apuesta > saldo:
+            
+        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
 
@@ -257,8 +258,8 @@ class Blackjack(commands.Cog):
                     ganancia_bonus += 0.15
                     
                 ganancia = int(apuesta * 1.5 * ganancia_bonus)
-                nuevo_saldo = saldo + ganancia
-                await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
+                nuevo_saldo = saldo + apuesta + ganancia
+                await asyncio.to_thread(add_balance, user_id, apuesta + ganancia)
                 await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: blackjack natural")
                 await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'win', ganancia, difficulty_modifier, nuevo_saldo)
                 
