@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from src.db import ensure_user, db_cursor
+from src.db import ensure_user, db_cursor, get_top_minas
 
 class Top(commands.Cog):
     def __init__(self, bot):
@@ -82,6 +82,61 @@ class Top(commands.Cog):
         )
         embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
         embed.set_footer(text=f"Solicitado por {interaction.user.display_name}", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="top_minas", description="Muestra el top de usuarios que más minas han pisado en el servidor.")
+    async def top_minas(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        user_id = interaction.user.id
+        user_name = interaction.user.name
+        ensure_user(user_id, user_name)
+        
+        member_ids = tuple(m.id for m in guild.members)
+        
+        await interaction.response.defer()
+        
+        try:
+            # Ejecutar la consulta en un hilo secundario
+            rows = await asyncio.to_thread(get_top_minas, 10, member_ids)
+            
+        except Exception as e:
+            print(f"Error querying top minas: {e}")
+            await interaction.followup.send("❌ Ocurrió un error al obtener el ranking.", ephemeral=True)
+            return
+            
+        top_list = []
+        for db_user_id, minas_pisadas, db_username in rows:
+            if minas_pisadas == 0:
+                continue
+                
+            member = guild.get_member(db_user_id)
+            if member:
+                nombre = member.display_name
+            elif db_username:
+                nombre = db_username
+            else:
+                nombre = f"Usuario {db_user_id}"
+                
+            top_list.append((nombre, minas_pisadas))
+                
+        if not top_list:
+            await interaction.followup.send("Nadie ha pisado ninguna mina en este servidor. ¡Qué paz!")
+            return
+            
+        desc = ""
+        medals = ["💥", "🤕", "🚑", "🩹", "🩹", "🩹", "🩹", "🩹", "🩹", "🩹"]
+        
+        for i, (nombre, minas_pisadas) in enumerate(top_list, 1):
+            medal = medals[i-1] if i <= len(medals) else "🩹"
+            desc += f"{medal} **{nombre}**: `{minas_pisadas}` minas pisadas\n\n"
+            
+        embed = discord.Embed(
+            title=f"💣 Top Víctimas de Minas",
+            description=desc,
+            color=discord.Color.dark_red()
+        )
+        embed.set_author(name=guild.name, icon_url=guild.icon.url if guild.icon else None)
+        embed.set_footer(text=f"Solicitado por {interaction.user.display_name} - ¡Cuidado donde pisas!", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
         await interaction.followup.send(embed=embed)
 
 async def setup(bot):

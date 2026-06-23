@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from datetime import timedelta
-from src.db import get_all_minas, set_minas_canal
+from src.db import get_all_minas, set_minas_canal, registrar_mina_pisada
 
 class Minas(commands.Cog):
     def __init__(self, bot):
@@ -58,9 +58,9 @@ class Minas(commands.Cog):
         if canal_id not in self.minas_activas or self.minas_activas[canal_id] <= 0:
             return
 
-        # Probabilidad de que el mensaje active una mina (e.g. 15% por cada mensaje)
-        # Puedes ajustar este valor si quieres que exploten más rápido o más lento
-        probabilidad_explotar = 0.15 
+        # Probabilidad de que el mensaje active una mina (e.g. 2% por cada mensaje)
+        # Se bajó la probabilidad a pedido para que sea más esporádico y sorprendente
+        probabilidad_explotar = 0.02 
 
         if random.random() < probabilidad_explotar:
             # Una mina fue activada
@@ -90,6 +90,9 @@ class Minas(commands.Cog):
             else:
                 # La mina explotó
                 try:
+                    # Registrar que pisó una mina en la BD (to_thread para no bloquear)
+                    asyncio.create_task(asyncio.to_thread(registrar_mina_pisada, message.author.id))
+
                     # Mute por 1 minuto (Timeout)
                     timeout_duration = timedelta(minutes=1)
                     await message.author.timeout(timeout_duration, reason="Pisó una mina explosiva.")
@@ -145,7 +148,7 @@ class Minas(commands.Cog):
         canal_id = canal_obj.id
 
         minas_restantes = self.minas_activas.get(canal_id, 0)
-        prob_explosion = 15 # 15% hardcoded en on_message
+        prob_explosion = 2 # 2% hardcoded en on_message
         prob_falla = 10 # 10% de que sea defectuosa si explota
 
         if minas_restantes > 0:

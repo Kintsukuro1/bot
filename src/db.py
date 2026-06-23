@@ -636,6 +636,46 @@ def set_minas_canal(canal_id, cantidad):
                 ON CONFLICT (CanalID) DO UPDATE SET Cantidad = EXCLUDED.Cantidad
             """, (canal_id, cantidad))
 
+def registrar_mina_pisada(user_id):
+    """Registra que un usuario pisó una mina."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO MinaStats (UserID, MinasPisadas) VALUES (%s, 1)
+            ON CONFLICT (UserID) DO UPDATE SET MinasPisadas = MinaStats.MinasPisadas + 1
+        """, (user_id,))
+
+def get_top_minas(limit=10, member_ids=None):
+    """Obtiene el top de usuarios que más minas han pisado."""
+    with db_cursor() as cursor:
+        if member_ids:
+            if len(member_ids) == 1:
+                cursor.execute("""
+                    SELECT m.UserID, m.MinasPisadas, u.UserName 
+                    FROM MinaStats m
+                    LEFT JOIN Users u ON m.UserID = u.UserID
+                    WHERE m.UserID = %s
+                    ORDER BY m.MinasPisadas DESC
+                    LIMIT %s
+                """, (member_ids[0], limit))
+            else:
+                cursor.execute("""
+                    SELECT m.UserID, m.MinasPisadas, u.UserName 
+                    FROM MinaStats m
+                    LEFT JOIN Users u ON m.UserID = u.UserID
+                    WHERE m.UserID IN %s
+                    ORDER BY m.MinasPisadas DESC
+                    LIMIT %s
+                """, (tuple(member_ids), limit))
+        else:
+            cursor.execute("""
+                SELECT m.UserID, m.MinasPisadas, u.UserName 
+                FROM MinaStats m
+                LEFT JOIN Users u ON m.UserID = u.UserID
+                ORDER BY m.MinasPisadas DESC
+                LIMIT %s
+            """, (limit,))
+        return cursor.fetchall()
+
 def init_db():
     """
     Inicializa la base de datos PostgreSQL:
@@ -834,6 +874,14 @@ def init_db():
                     TicketID SERIAL PRIMARY KEY,
                     UserID BIGINT NOT NULL,
                     PurchaseDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Tabla: MinaStats
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS MinaStats (
+                    UserID BIGINT PRIMARY KEY,
+                    MinasPisadas INT DEFAULT 0
                 )
             """)
 
