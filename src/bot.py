@@ -140,6 +140,7 @@ async def load_cogs():
     exclude_files = {
         '__init__.py',
         'hacker.py', 'chef.py', 'artista.py', 'mecanico.py', 'minero.py', 'pescador.py',  # Módulos auxiliares de minijuegos
+        'medico.py', 'piloto.py', 'cientifico.py', 'ladron.py', 'cazarrecompensas.py',
         'niveles_trabajo.py',  # Sistema de niveles
         'black_market_items.py'  # Módulos de datos, no cogs
     }
