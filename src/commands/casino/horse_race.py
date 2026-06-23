@@ -5,7 +5,7 @@ import random
 import asyncio
 from typing import Dict, List, Tuple
 
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result, add_balance
+from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, add_balance
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 HORSES = [
@@ -215,6 +215,10 @@ class HorseRaceView(discord.ui.View):
         embed.color = discord.Color.gold()
         embed.description = f"**Pista:**\n\n{track}\n\n**Pagos (x{winner_mult}):**\n"
         
+        # Calcular totales para el pozo
+        total_losing_bets = sum(b['amount'] for b in self.bets.values() if b['horse_idx'] != winner_idx)
+        total_winning_bets = sum(b['amount'] for b in self.bets.values() if b['horse_idx'] == winner_idx)
+
         # Pagar a los ganadores
         winners_text = ""
         for user_id, bet_data in self.bets.items():
@@ -224,19 +228,24 @@ class HorseRaceView(discord.ui.View):
             # Calcular dificultad
             diff_mod, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, user_id, bet_amt, 'horse_race')
             
-            balance = await asyncio.to_thread(get_balance, user_id)
-            
             if bet_data['horse_idx'] == winner_idx:
-                winnings = int(bet_amt * winner_mult)
-                profit = winnings - bet_amt
-                nuevo_saldo = balance + winnings
+                # Ganancia = apuesta * multiplicador + proporción del pozo de perdedores
+                base_winnings = bet_amt * winner_mult
+                pool_share = total_losing_bets * (bet_amt / total_winning_bets) if total_winning_bets > 0 else 0
                 
-                await asyncio.to_thread(set_balance, user_id, nuevo_saldo)
-                await asyncio.to_thread(registrar_transaccion, user_id, winnings, f"Caballos: Ganador x{winner_mult}")
+                winnings = int(base_winnings + pool_share)
+                profit = winnings - bet_amt
+                
+                # Usar add_balance para evitar race conditions
+                await asyncio.to_thread(add_balance, user_id, winnings)
+                nuevo_saldo = await asyncio.to_thread(get_balance, user_id)
+                
+                await asyncio.to_thread(registrar_transaccion, user_id, winnings, f"Caballos: Ganador x{winner_mult} + Pozo")
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'win', profit, diff_mod, nuevo_saldo)
                 
                 winners_text += f"✅ {user.mention} ganó **{winnings}** monedas.\n"
             else:
+                balance = await asyncio.to_thread(get_balance, user_id)
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'loss', 0, diff_mod, balance)
                 winners_text += f"❌ {user.display_name} perdió **{bet_amt}** monedas.\n"
                 
