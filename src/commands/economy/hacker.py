@@ -194,15 +194,6 @@ class HackerView(discord.ui.View):
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
     
-def _completar_hacker_db(user_id, tipo_trabajo, recompensa_base, bonus_eficiencia, xp_ganada):
-    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
-    recompensa_final = int(recompensa_base_con_nivel * bonus_eficiencia)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, "Trabajo: Hacker completado")
-    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
-    return recompensa_final, resultado_nivel
-
     async def _completar_trabajo(self, interaction, exito):
         # Desactivar todos los botones
         self.escanear.disabled = True
@@ -307,6 +298,15 @@ class CodigoModal(discord.ui.Modal, title="🎯 Adivinar Código"):
                 await self.view._completar_trabajo(interaction, False)
             else:
                 await self.view._actualizar_mensaje(interaction, f"❌ **Código incorrecto! Intentos restantes: {self.view.intentos}**")
+
+def _completar_hacker_db(user_id, tipo_trabajo, recompensa_base, bonus_eficiencia, xp_ganada):
+    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
+    recompensa_final = int(recompensa_base_con_nivel * bonus_eficiencia)
+    saldo_actual = get_balance(user_id)
+    set_balance(user_id, saldo_actual + recompensa_final)
+    registrar_transaccion(user_id, recompensa_final, "Trabajo: Hacker completado")
+    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
+    return recompensa_final, resultado_nivel
 
 def _iniciar_hacker_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)

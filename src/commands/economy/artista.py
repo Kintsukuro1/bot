@@ -85,16 +85,6 @@ class AuctionView(discord.ui.View):
         await interaction.response.defer()
         await self._finalizar_con_multiplicador(interaction, self.mult3, "Comprador Anónimo (Salvaje)")
 
-def _finalizar_artista_db(user_id, recompensa_final, xp_ganada, comprador_msg):
-    if recompensa_final > 0:
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa_final)
-        registrar_transaccion(user_id, recompensa_final, f"Trabajo: Artista completado ({comprador_msg})")
-        
-    resultado_nivel = add_experiencia_trabajo(user_id, 'artista', xp_ganada)
-    has_easel = usuario_tiene_mejora(user_id, 8)
-    return resultado_nivel, has_easel
-
     async def _finalizar_con_multiplicador(self, interaction, mult, comprador):
         self.venta_directa.disabled = True
         self.oferta_mecenas.disabled = True
@@ -502,6 +492,16 @@ class ArtistaView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+
+def _finalizar_artista_db(user_id, recompensa_final, xp_ganada, comprador_msg):
+    if recompensa_final > 0:
+        saldo_actual = get_balance(user_id)
+        set_balance(user_id, saldo_actual + recompensa_final)
+        registrar_transaccion(user_id, recompensa_final, f"Trabajo: Artista completado ({comprador_msg})")
+        
+    resultado_nivel = add_experiencia_trabajo(user_id, 'artista', xp_ganada)
+    has_easel = usuario_tiene_mejora(user_id, 8)
+    return resultado_nivel, has_easel
 
 def _iniciar_artista_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)

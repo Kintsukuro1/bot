@@ -16,6 +16,15 @@ from src.db import (
     db_cursor
 )
 
+def consumir_energia(user_id: int, cantidad: int) -> bool:
+    """Consume una cantidad específica de energía del usuario.
+    Retorna True si fue exitoso, False si no tenía suficiente energía."""
+    energia_actual = get_energia(user_id)
+    if energia_actual >= cantidad:
+        set_energia(user_id, energia_actual - cantidad)
+        return True
+    return False
+
 class Energia(commands.Cog):
     """Cog para comandos relacionados con energía."""
     

@@ -220,16 +220,6 @@ class PescadorView(discord.ui.View):
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
 
-def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pez_objetivo):
-    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
-    recompensa_final = int(recompensa_base_con_nivel * precision)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, f"Trabajo: Capturado {pez_objetivo}")
-    xp_ganada = int(recompensa_base * 0.08) + (20 if precision > 0.9 else 10)
-    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
-    return recompensa_final, resultado_nivel
-
     async def _completar_trabajo(self, interaction, exito, motivo=None):
         self.recoger.disabled = True
         self.soltar.disabled = True
@@ -313,16 +303,6 @@ def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pe
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
 
-def _finalizar_con_red_db(user_id, tipo_trabajo, recompensa_base):
-    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
-    recompensa_final = int(recompensa_base_con_nivel * 0.95)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, "Trabajo: Pesca con Red de Arrastre")
-    xp_ganada = int(recompensa_base * 0.04) + 5
-    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
-    return recompensa_final, resultado_nivel
-
     async def _finalizar_con_red(self, interaction):
         user_id = self.user.id
         tipo_trabajo = 'pescador'
@@ -368,6 +348,26 @@ def _finalizar_con_red_db(user_id, tipo_trabajo, recompensa_base):
             )
             
         await interaction.response.edit_message(embed=embed, view=self)
+
+def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pez_objetivo):
+    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
+    recompensa_final = int(recompensa_base_con_nivel * precision)
+    saldo_actual = get_balance(user_id)
+    set_balance(user_id, saldo_actual + recompensa_final)
+    registrar_transaccion(user_id, recompensa_final, f"Trabajo: Capturado {pez_objetivo}")
+    xp_ganada = int(recompensa_base * 0.08) + (20 if precision > 0.9 else 10)
+    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
+    return recompensa_final, resultado_nivel
+
+def _finalizar_con_red_db(user_id, tipo_trabajo, recompensa_base):
+    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
+    recompensa_final = int(recompensa_base_con_nivel * 0.95)
+    saldo_actual = get_balance(user_id)
+    set_balance(user_id, saldo_actual + recompensa_final)
+    registrar_transaccion(user_id, recompensa_final, "Trabajo: Pesca con Red de Arrastre")
+    xp_ganada = int(recompensa_base * 0.04) + 5
+    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
+    return recompensa_final, resultado_nivel
 
 def _iniciar_pescador_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)

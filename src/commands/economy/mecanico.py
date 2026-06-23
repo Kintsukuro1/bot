@@ -247,20 +247,6 @@ class MecanicoView(discord.ui.View):
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
     
-def _completar_mecanico_db(user_id, tipo_trabajo, recompensa_base, puntuacion, xp_ganada):
-    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
-    multiplicador = puntuacion / 100
-    recompensa_final = int(recompensa_base_con_nivel * multiplicador)
-    
-    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
-    
-    if recompensa_final > 0:
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa_final)
-        registrar_transaccion(user_id, recompensa_final, "Trabajo: Mecánico completado")
-        
-    return recompensa_final, resultado_nivel
-
     async def _completar_trabajo(self, interaction, puntuacion, reparaciones_correctas, total_problemas, falsos_positivos):
         # Desactivar todos los botones
         self.diagnosticar.disabled = True
@@ -369,6 +355,20 @@ def _completar_mecanico_db(user_id, tipo_trabajo, recompensa_base, puntuacion, x
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+
+def _completar_mecanico_db(user_id, tipo_trabajo, recompensa_base, puntuacion, xp_ganada):
+    recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
+    multiplicador = puntuacion / 100
+    recompensa_final = int(recompensa_base_con_nivel * multiplicador)
+    
+    resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
+    
+    if recompensa_final > 0:
+        saldo_actual = get_balance(user_id)
+        set_balance(user_id, saldo_actual + recompensa_final)
+        registrar_transaccion(user_id, recompensa_final, "Trabajo: Mecánico completado")
+        
+    return recompensa_final, resultado_nivel
 
 def _iniciar_mecanico_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)
