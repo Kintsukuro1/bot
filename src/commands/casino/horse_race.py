@@ -16,6 +16,26 @@ HORSES = [
     {"name": "Brisa", "emoji": "🍃"}
 ]
 
+POSSIBLE_NAMES = [
+    "Foot licker",
+    "Trash can",
+    "Vivaloo minlgy",
+    "few jobs aplication",
+    "fourthy dreams",
+    "whilling to change"
+]
+
+def randomize_horse_names():
+    names = random.sample(POSSIBLE_NAMES, len(HORSES))
+    for i in range(len(HORSES)):
+        HORSES[i]['name'] = names[i]
+
+# Inicializar nombres aleatorios al cargar el módulo
+randomize_horse_names()
+
+HORSE_DOPING = {i: 0 for i in range(len(HORSES))}
+
+
 class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
     amount = discord.ui.TextInput(
         label="Cantidad a apostar",
@@ -130,15 +150,34 @@ class HorseRaceView(discord.ui.View):
         race_length = 20
         winner_idx = -1
 
+        emojis_pista = []
+        caballos_muertos = []
+        for i in range(len(HORSES)):
+            if HORSE_DOPING[i] > 3:
+                emojis_pista.append("💀")
+                caballos_muertos.append(HORSES[i]['name'])
+            else:
+                emojis_pista.append(HORSES[i]['emoji'])
+
+        if caballos_muertos:
+            embed.description = f"⚠️ **¡ATENCIÓN!** {', '.join(caballos_muertos)} ha sufrido un infarto por sobredosis de doping antes de iniciar la carrera.\n\n"
+        else:
+            embed.description = ""
+
         while winner_idx == -1:
             await asyncio.sleep(1.5)
             
             # Avanzar caballos aleatoriamente
             for i in range(len(HORSES)):
-                # Caballos con multiplicador más bajo (favoritos) tienen un leve bonus de velocidad
-                speed_bonus = (5.0 - self.multipliers[i]) * 0.2
-                move = random.randint(1, 3) + random.random() * speed_bonus
-                positions[i] += int(move)
+                if HORSE_DOPING[i] > 3:
+                    # El caballo murió por sobredosis, no avanza
+                    pass
+                else:
+                    # Caballos con multiplicador más bajo (favoritos) tienen un leve bonus de velocidad
+                    speed_bonus = (5.0 - self.multipliers[i]) * 0.2
+                    doping_bonus = HORSE_DOPING[i] * 1.5
+                    move = random.randint(1, 3) + random.random() * speed_bonus + doping_bonus
+                    positions[i] += int(move)
                 
                 if positions[i] >= race_length:
                     positions[i] = race_length
@@ -149,10 +188,12 @@ class HorseRaceView(discord.ui.View):
             track = ""
             for i, h in enumerate(HORSES):
                 pos = min(positions[i], race_length)
-                line = "➖" * pos + h['emoji'] + "➖" * (race_length - pos) + " 🏁"
+                line = "➖" * pos + emojis_pista[i] + "➖" * (race_length - pos) + " 🏁"
                 track += f"{line}\n"
                 
             embed.description = f"**Pista:**\n\n{track}"
+            if caballos_muertos:
+                embed.description = f"⚠️ **Sobredosis:** {', '.join(caballos_muertos)} (Eliminados)\n\n" + embed.description
             await self.message.edit(embed=embed, view=self)
 
         # Carrera terminada
@@ -194,6 +235,12 @@ class HorseRaceView(discord.ui.View):
         embed.add_field(name="Resultados de las apuestas", value=winners_text)
         await self.message.edit(embed=embed, view=None)
 
+        # Resetear el estado de doping después de la carrera
+        for i in HORSE_DOPING:
+            HORSE_DOPING[i] = 0
+
+        # Cambiar nombres para la próxima carrera
+        randomize_horse_names()
 
 class HorseRace(commands.Cog):
     def __init__(self, bot):
