@@ -145,6 +145,12 @@ class HorseRaceView(discord.ui.View):
         embed.color = discord.Color.red()
         await self.message.edit(embed=embed, view=self)
 
+        mentions = " ".join([data['user'].mention for data in self.bets.values()])
+        if mentions:
+            await self.channel.send(f"🏁 ¡La carrera ha comenzado! {mentions}")
+        else:
+            await self.channel.send("🏁 ¡La carrera ha comenzado! (No hay participantes)")
+
         # Estado de la carrera (distancia 0 a 20)
         positions = [0] * len(HORSES)
         race_length = 20
