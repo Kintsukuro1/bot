@@ -5,7 +5,7 @@ import random
 import asyncio
 from typing import Dict, List, Tuple
 
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, ensure_user, registrar_transaccion, record_game_result, add_balance
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 HORSES = [
@@ -63,28 +63,32 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
 
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
-        balance = await asyncio.to_thread(get_balance, user_id)
 
-        if bet_amount > balance:
-            await interaction.response.send_message("❌ No tienes suficiente saldo.", ephemeral=True)
-            return
-
-        # Restar el saldo ahora para evitar apuestas múltiples abusivas
-        await asyncio.to_thread(set_balance, user_id, balance - bet_amount)
-        await asyncio.to_thread(registrar_transaccion, user_id, -bet_amount, f"Apuesta Caballos: {self.horse_name}")
-        
-        # Guardar la apuesta en la vista
-        if user_id in self.race_view.bets:
-            # Si ya había apostado, le devolvemos la apuesta anterior
-            old_bet = self.race_view.bets[user_id]['amount']
-            await asyncio.to_thread(set_balance, user_id, (balance - bet_amount) + old_bet)
-            await asyncio.to_thread(registrar_transaccion, user_id, old_bet, "Devolución Apuesta Anterior Caballos")
+        async with self.race_view.lock:
+            balance = await asyncio.to_thread(get_balance, user_id)
             
-        self.race_view.bets[user_id] = {
-            'horse_idx': self.horse_idx,
-            'amount': bet_amount,
-            'user': interaction.user
-        }
+            old_bet = 0
+            if user_id in self.race_view.bets:
+                old_bet = self.race_view.bets[user_id]['amount']
+                
+            total_available = balance + old_bet
+
+            if bet_amount > total_available:
+                await interaction.response.send_message("❌ No tienes suficiente saldo.", ephemeral=True)
+                return
+
+            if old_bet > 0:
+                await asyncio.to_thread(add_balance, user_id, old_bet)
+                await asyncio.to_thread(registrar_transaccion, user_id, old_bet, "Devolución Apuesta Anterior Caballos")
+                
+            await asyncio.to_thread(add_balance, user_id, -bet_amount)
+            await asyncio.to_thread(registrar_transaccion, user_id, -bet_amount, f"Apuesta Caballos: {self.horse_name}")
+            
+            self.race_view.bets[user_id] = {
+                'horse_idx': self.horse_idx,
+                'amount': bet_amount,
+                'user': interaction.user
+            }
 
         await interaction.response.send_message(f"✅ Has apostado **{bet_amount}** a {self.horse_emoji} **{self.horse_name}**.", ephemeral=True)
         await self.race_view.update_embed()
@@ -113,6 +117,7 @@ class HorseRaceView(discord.ui.View):
         self.bets: Dict[int, dict] = {} # user_id -> {'horse_idx': int, 'amount': int, 'user': User}
         self.started = False
         self.message = None
+        self.lock = asyncio.Lock()
         
         # Generar multiplicadores aleatorios (cuotas) para cada caballo (entre 1.5 y 5.0)
         self.multipliers = [round(random.uniform(1.5, 5.0), 1) for _ in HORSES]
