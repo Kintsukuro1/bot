@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.commands.casino.horse_race import HORSE_DOPING, HORSES
-from src.db import get_balance, set_balance, registrar_transaccion, ensure_user
+from src.db import get_balance, set_balance, deduct_balance, registrar_transaccion, ensure_user
 import asyncio
 
 class DopeCaballoSelect(discord.ui.Select):
@@ -21,13 +21,11 @@ class DopeCaballoSelect(discord.ui.Select):
         # Verificar y descontar dinero
         costo_doping = 5000
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
-        balance = await asyncio.to_thread(get_balance, user_id)
         
-        if balance < costo_doping:
+        success, balance = await asyncio.to_thread(deduct_balance, user_id, costo_doping)
+        if not success:
             await interaction.response.send_message(f"❌ No tienes suficientes monedas. Necesitas {costo_doping} 🪙.", ephemeral=True)
             return
-            
-        await asyncio.to_thread(set_balance, user_id, balance - costo_doping)
         await asyncio.to_thread(registrar_transaccion, user_id, -costo_doping, f"Mercado Negro: Doping para {HORSES[horse_idx]['name']}")
         
         # Incrementar doping
@@ -42,7 +40,7 @@ class DopeCaballoSelect(discord.ui.Select):
         else:
             msg = f"💉 Has inyectado doping a {horse_emoji} **{horse_name}**. Correrá mucho más rápido en su próxima carrera. (Dosis acumuladas: {dosis_actual}/3)"
             
-        await interaction.response.send_message(msg, ephemeral=False)
+        await interaction.response.send_message(msg, ephemeral=True)
 
 class DopeCaballoView(discord.ui.View):
     def __init__(self):
@@ -81,7 +79,7 @@ class BlackMarket(commands.Cog):
         )
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3062/3062634.png")
         view = DopeCaballoView()
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(BlackMarket(bot))
