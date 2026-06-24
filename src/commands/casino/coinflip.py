@@ -190,8 +190,9 @@ class CoinflipView(discord.ui.View):
         # Aplicar dificultad dinámica (ahora afecta al resultado de la moneda, no a una segunda verificación)
         prob_ganar = DynamicDifficulty.apply_difficulty_to_odds(base_prob, difficulty_modifier)
         
-        # Calcular probabilidades adicionales basadas en el porcentaje de apuesta
-        porcentaje_apuesta = (self.apuesta / self.saldo) * 100
+        # Calcular probabilidades adicionales basadas en el porcentaje de apuesta (con respecto al saldo original)
+        saldo_original = self.saldo + self.apuesta
+        porcentaje_apuesta = (self.apuesta / saldo_original) * 100 if saldo_original > 0 else 100.0
         bet_adjustment = 0.0
         if porcentaje_apuesta <= 25:
             bet_adjustment = 0.1  # Bonificación por apuesta conservadora
