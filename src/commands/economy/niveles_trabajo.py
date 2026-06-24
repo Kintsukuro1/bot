@@ -338,6 +338,7 @@ def get_nivel_trabajo(user_id, tipo_trabajo):
     """, (user_id, tipo_trabajo))
     
     row = cursor.fetchone()
+    conn.commit()
     conn.close()
     
     if row:
