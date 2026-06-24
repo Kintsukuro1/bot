@@ -26,8 +26,19 @@ POSSIBLE_NAMES = [
     "whilling to change"
 ]
 
+SECRET_HORSES = [
+    "turbulent waters"
+]
+
 def randomize_horse_names():
     names = random.sample(POSSIBLE_NAMES, len(HORSES))
+    
+    # 5% chance para un caballo secreto
+    if random.random() < 0.05:
+        secret_horse = random.choice(SECRET_HORSES)
+        replace_idx = random.randint(0, len(HORSES) - 1)
+        names[replace_idx] = secret_horse
+
     for i in range(len(HORSES)):
         HORSES[i]['name'] = names[i]
 
