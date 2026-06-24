@@ -43,7 +43,7 @@ class WarSettings(discord.ui.Modal, title="Apuesta para Casino War"):
                 raise ValueError
         except ValueError:
             await interaction.response.send_message("❌ Monto inválido.", ephemeral=True)
-            return
+            raise
 
         saldo = await asyncio.to_thread(get_balance, interaction.user.id)
         if saldo < apuesta:
@@ -228,6 +228,7 @@ class CasinoWarView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+            raise
 
 class CasinoWarCog(commands.Cog):
     def __init__(self, bot):

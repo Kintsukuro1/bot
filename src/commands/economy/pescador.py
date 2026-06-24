@@ -219,6 +219,7 @@ class PescadorView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+            raise
 
     async def _completar_trabajo(self, interaction, exito, motivo=None):
         self.recoger.disabled = True
@@ -302,6 +303,7 @@ class PescadorView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+            raise
 
     async def _finalizar_con_red(self, interaction):
         user_id = self.user.id

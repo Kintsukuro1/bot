@@ -170,6 +170,7 @@ class ConfirmGiftView(discord.ui.View):
             except Exception as ex:
                 logger.warning(f"No se pudo enviar mensaje público de notificación de regalo: {ex}")
                 
+                raise
         except Exception as e:
             logger.error(f"Error al procesar regalo: {e}", exc_info=True)
             embed = discord.Embed(
@@ -179,6 +180,7 @@ class ConfirmGiftView(discord.ui.View):
             )
             await interaction.edit_original_response(embed=embed, view=None)
         
+            raise
         self.stop()
 
     @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.danger)
@@ -218,6 +220,7 @@ class ConfirmGiftView(discord.ui.View):
             except Exception:
                 pass
 
+                raise
 async def setup(bot):
     await bot.add_cog(Regalar(bot))
     logger.info("Regalar cog loaded successfully.")

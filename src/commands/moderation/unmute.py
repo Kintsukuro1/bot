@@ -30,8 +30,10 @@ class Unmute(commands.Cog):
                 await interaction.followup.send(f"🔊 {miembro.mention} ya puede hablar y escribir de nuevo.", ephemeral=False)
             except discord.Forbidden:
                 await interaction.followup.send("❌ No tengo permisos suficientes para remover el rol a este usuario (puede que tenga un rol superior al mío o no tenga permisos de gestionar roles).", ephemeral=True)
+                raise
             except Exception as e:
                 await interaction.followup.send(f"❌ Ocurrió un error al intentar desmutear al usuario: {e}", ephemeral=True)
+                raise
         else:
             await interaction.followup.send(f"ℹ️ {miembro.mention} no está silenciado.", ephemeral=True)
 

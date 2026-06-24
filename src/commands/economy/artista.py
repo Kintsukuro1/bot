@@ -436,6 +436,7 @@ class ArtistaView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+            raise
             
     async def _actualizar_mensaje(self, interaction, accion):
         progreso_colores = len(self.colores_seleccionados) / 4
@@ -492,6 +493,7 @@ class ArtistaView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
+            raise
 
 def _finalizar_artista_db(user_id, recompensa_final, xp_ganada, comprador_msg):
     if recompensa_final > 0:

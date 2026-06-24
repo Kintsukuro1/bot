@@ -143,6 +143,7 @@ class PollView(discord.ui.View):
         except Exception as e:
             print(f"Error handling poll timeout edit: {e}")
 
+            raise
 class Poll(commands.Cog):
     """Cog para crear votaciones interactivas."""
     

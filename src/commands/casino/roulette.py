@@ -123,6 +123,7 @@ class RouletteView(discord.ui.View):
             except Exception:
                 pass
             
+                raise
             embed.color = discord.Color.green()
             embed.title = "🎰 Ruleta - ¡Ganaste!"
             embed.description = (
@@ -141,6 +142,7 @@ class RouletteView(discord.ui.View):
             except Exception:
                 pass
             
+                raise
             embed.color = discord.Color.red()
             embed.title = "🎰 Ruleta - Perdiste"
             embed.description = (

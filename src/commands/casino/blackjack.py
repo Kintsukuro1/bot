@@ -204,6 +204,7 @@ class BlackjackView(discord.ui.View):
         except Exception:
             pass
             
+            raise
         embed.add_field(name="💳 Saldo actual", value=f"{saldo_actual:,} monedas", inline=False)
         
         for item in self.children:
@@ -231,6 +232,7 @@ class BlackjackView(discord.ui.View):
             except Exception:
                 pass
 
+                raise
 class Blackjack(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -279,7 +281,7 @@ class Blackjack(commands.Cog):
                 try:
                     await process_post_game_events(interaction, user_id, 'blackjack', apuesta, 0)
                 except Exception:
-                    pass
+                    raise
                 embed.add_field(name="🤝 ¡Empate!", value="🟰 Ambos tienen blackjack\nRecuperas tu apuesta", inline=False)
                 embed.color = discord.Color.yellow()
             else:
@@ -298,6 +300,7 @@ class Blackjack(commands.Cog):
                 except Exception:
                     pass
                 
+                    raise
                 embed.add_field(name="🎉 ¡BLACKJACK!", value=f"✅ **+{ganancia}** monedas (1.5x)", inline=False)
                 embed.color = discord.Color.gold()
                 embed.set_field_at(3, name="💳 Saldo actual", value=f"{nuevo_saldo} monedas", inline=True)

@@ -120,6 +120,7 @@ class Slots(commands.Cog):
                 except Exception:
                     pass
                 
+                    raise
                 title = '🎰 ¡Felicidades! ¡Has ganado!'
                 color = discord.Color.green()
                 footer = f"{payout_desc}{ticket_desc}"
@@ -134,6 +135,7 @@ class Slots(commands.Cog):
                 except Exception:
                     pass
                 
+                    raise
                 title = '🎰 Lo siento, has perdido.'
                 color = discord.Color.red()
                 footer = 'Inténtalo de nuevo.'
@@ -152,5 +154,6 @@ class Slots(commands.Cog):
             except:
                 pass
 
+            raise
 async def setup(bot):
     await bot.add_cog(Slots(bot))

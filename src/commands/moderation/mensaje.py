@@ -58,12 +58,14 @@ class Mensaje(commands.Cog):
                 f"❌ Error al enviar el mensaje: {str(e)}", 
                 ephemeral=True
             )
+            raise
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Error inesperado: {str(e)}", 
                 ephemeral=True
             )
 
+            raise
     @app_commands.command(name="embed", description="Envía un embed como el bot (solo owner)")
     @app_commands.describe(
         titulo="Título del embed",
@@ -107,6 +109,7 @@ class Mensaje(commands.Cog):
                     embed_color = discord.Color(int(color, 16))
                 except ValueError:
                     embed_color = discord.Color.blue()
+                    raise
             
             # Crear embed
             embed = discord.Embed(
@@ -136,12 +139,14 @@ class Mensaje(commands.Cog):
                 f"❌ Error al enviar el embed: {str(e)}", 
                 ephemeral=True
             )
+            raise
         except Exception as e:
             await interaction.response.send_message(
                 f"❌ Error inesperado: {str(e)}", 
                 ephemeral=True
             )
 
+            raise
 async def setup(bot):
     await bot.add_cog(Mensaje(bot))
     print("Mensaje cog loaded successfully.")

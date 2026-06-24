@@ -91,12 +91,14 @@ class SpecialMute(commands.Cog):
                 except Exception as e:
                     print(f"Error al consumir Special Mute item: {e}")
             
+                    raise
             # Consumir el item de protección del objetivo
             try:
                 usar_item_usuario(miembro.id, ANTI_MUTE_ITEM_ID)
             except Exception as e:
                 print(f"Error al consumir item de protección de mute: {e}")
             
+                raise
             msg = f"🛡️ ¡El mute en contra de {mention} ha fallado! La maldición fue protegida por su Escudo Anti-Mute y el item de protección se ha descontado.{mensaje_item}"
             
             if log_channel and isinstance(log_channel, discord.TextChannel):
@@ -122,6 +124,7 @@ class SpecialMute(commands.Cog):
                 # El comando funcionó pero hubo error al consumir el item
                 print(f"Error al consumir Special Mute item: {e}")
                 mensaje_item = "\nℹ️ Ha ocurrido un error al registrar el uso de tu item, pero el comando ha funcionado correctamente."
+                raise
         else:
             mensaje_item = ""
 
@@ -138,6 +141,7 @@ class SpecialMute(commands.Cog):
                     mute_cooldown[miembro.id][user_id] = datetime.datetime.now()
             except Exception as e:
                 msg = f"No se pudo mutear a {mention}: {e}"
+                raise
         else:
             msg = f"🟢 {mention} Te salvaste de pura suerte."
         

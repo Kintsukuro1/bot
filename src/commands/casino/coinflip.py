@@ -63,12 +63,12 @@ class CoinflipDuelView(discord.ui.View):
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, self.apuesta)
             except Exception:
-                pass
+                raise
             await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenged_balance)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, 0)
             except Exception:
-                pass
+                raise
         else:
             await asyncio.to_thread(add_balance, self.challenged.id, self.apuesta * 2)
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenged.display_name}")
@@ -79,13 +79,14 @@ class CoinflipDuelView(discord.ui.View):
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, 0)
             except Exception:
-                pass
+                raise
             await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenged_balance + self.apuesta * 2)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, self.apuesta)
             except Exception:
                 pass
             
+                raise
         # Embed de resultado final
         embed = discord.Embed(
             title="⚔️ Resultado del Duelo de Coinflip",
@@ -149,6 +150,7 @@ class CoinflipDuelView(discord.ui.View):
                 pass
 
 
+                raise
 class CoinflipView(discord.ui.View):
     def __init__(self, user, apuesta, saldo):
         super().__init__(timeout=30)
@@ -249,6 +251,7 @@ class CoinflipView(discord.ui.View):
             except Exception:
                 pass
             
+                raise
             embed = discord.Embed(
                 title="🎉 ¡GANASTE!",
                 description=(
@@ -273,6 +276,7 @@ class CoinflipView(discord.ui.View):
             except Exception:
                 pass
             
+                raise
             # El usuario sólo pierde cuando no acierta
             razon = "No acertaste el resultado"
             

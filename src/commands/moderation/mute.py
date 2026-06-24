@@ -38,15 +38,17 @@ class Mute(commands.Cog):
                             pass
             except discord.Forbidden:
                 await interaction.followup.send("❌ No tengo permisos para crear el rol 'Muted'.", ephemeral=True)
-                return
+                raise
 
         try:
             await miembro.add_roles(muted_role, reason=motivo)
             await interaction.followup.send(f"🔇 {miembro.mention} ha sido silenciado. Motivo: {motivo}", ephemeral=False)
         except discord.Forbidden:
             await interaction.followup.send("❌ No tengo permisos suficientes para agregar el rol a este usuario (puede que tenga un rol superior al mío o no tenga permisos de gestionar roles).", ephemeral=True)
+            raise
         except Exception as e:
             await interaction.followup.send(f"❌ Ocurrió un error al intentar silenciar al usuario: {e}", ephemeral=True)
 
+            raise
 async def setup(bot):
     await bot.add_cog(Mute(bot))

@@ -143,6 +143,7 @@ class Energia(commands.Cog):
         except Exception as e:
             estado = f"❌ Error: {str(e)}"
         
+            raise
         embed = discord.Embed(
             title=f"🔧 Debug: Energía de {target_user.display_name}",
             color=discord.Color.orange()

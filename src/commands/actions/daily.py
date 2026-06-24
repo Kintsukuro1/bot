@@ -44,6 +44,7 @@ class Daily(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Ocurrió un error al reclamar la recompensa diaria: {e}", ephemeral=True)
 
+            raise
 # Añadir el cog al bot
 async def setup(bot):
     await bot.add_cog(Daily(bot))

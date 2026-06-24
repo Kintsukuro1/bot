@@ -157,6 +157,7 @@ class MinesView(discord.ui.View):
                 except Exception:
                     pass
 
+                    raise
             try:
                 if hasattr(self, 'message') and self.message:
                     embed = self.message.embeds[0]
@@ -210,6 +211,7 @@ class MinesView(discord.ui.View):
         except Exception:
             pass
 
+            raise
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.red()
         embed.title = "💥 Mines - ¡BBOOM!"
@@ -258,7 +260,7 @@ class MinesView(discord.ui.View):
                     
             except discord.Forbidden:
                 # El bot no tiene permisos suficientes para castigar a este usuario (es el dueño o tiene rol más alto)
-                pass
+                raise
 
     async def process_win(self, interaction: discord.Interaction):
         self.game_over = True
@@ -281,6 +283,7 @@ class MinesView(discord.ui.View):
         except Exception:
             pass
 
+            raise
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()
         embed.title = "✅ Mines - ¡Retirada Exitosa!"

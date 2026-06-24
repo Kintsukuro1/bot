@@ -355,6 +355,16 @@ def record_game_result(user_id, game_type, bet_amount, result, win_amount, diffi
     result_str = 'win' if is_win else 'loss'
     
     with db_cursor() as cursor:
+        # Acumular un pozo constante del 2% de la apuesta para el loto si no es un juego PvP
+        if game_type not in {'coinflip_duel', 'russian_roulette', 'liars_dice', 'rps', 'horse_race'}:
+            contribution = int(bet_amount * 0.02)
+            if contribution > 0:
+                cursor.execute("""
+                    UPDATE LotteryState 
+                    SET JackpotPool = JackpotPool + %s 
+                    WHERE ID = 1
+                """, (contribution,))
+
         # === 1. Tablas Legacy (GameHistory y UserGameStats) ===
         # Registrar en GameHistory
         cursor.execute("""
@@ -946,6 +956,108 @@ def get_top_minas(limit=10, member_ids=None):
             """, (limit,))
         return cursor.fetchall()
 
+def get_user_ticket_count(user_id):
+    """Obtiene el número de boletos activos que posee el usuario para el sorteo actual."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM LotteryTickets WHERE UserID = %s", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+def comprar_boleto_db(user_id, numbers, cost):
+    """Compra un boleto de loto de forma atómica: descuenta balance, añade al pozo y registra el boleto."""
+    with db_cursor() as cursor:
+        # Descontar saldo
+        cursor.execute("""
+            UPDATE Users 
+            SET Balance = Balance - %s 
+            WHERE UserID = %s AND Balance >= %s
+            RETURNING Balance
+        """, (cost, user_id, cost))
+        row = cursor.fetchone()
+        if not row:
+            return False, 0
+        
+        new_balance = row[0]
+        
+        # Registrar boleto
+        cursor.execute("""
+            INSERT INTO LotteryTickets (UserID, Numbers)
+            VALUES (%s, %s)
+        """, (user_id, numbers))
+        
+        # Añadir al pozo
+        cursor.execute("""
+            UPDATE LotteryState 
+            SET JackpotPool = JackpotPool + %s 
+            WHERE ID = 1
+        """, (cost,))
+        
+        return True, new_balance
+
+def get_lottery_pool():
+    """Obtiene el pozo acumulado actual de la lotería."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT JackpotPool FROM LotteryState WHERE ID = 1")
+        row = cursor.fetchone()
+        return row[0] if row else 10000
+
+def add_to_lottery_pool(amount):
+    """Suma monedas directamente al pozo de la lotería."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE LotteryState 
+            SET JackpotPool = JackpotPool + %s 
+            WHERE ID = 1 
+            RETURNING JackpotPool
+        """, (amount,))
+        row = cursor.fetchone()
+        return row[0] if row else 10000
+
+def get_active_tickets():
+    """Retorna los boletos activos para el sorteo de hoy."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT UserID, Numbers FROM LotteryTickets")
+        return cursor.fetchall()
+
+def get_lottery_state():
+    """Obtiene el estado actual completo de la lotería."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT JackpotPool, LastDrawDate, NextDrawDate FROM LotteryState WHERE ID = 1")
+        row = cursor.fetchone()
+        if row:
+            return {
+                'pool': row[0],
+                'last_draw': row[1],
+                'next_draw': row[2]
+            }
+        return {'pool': 10000, 'last_draw': None, 'next_draw': None}
+
+def process_lottery_draw_db(winners_data, new_pool_amount, last_draw, next_draw):
+    """Procesa el sorteo de lotería: paga premios, limpia boletos y actualiza estado."""
+    with db_cursor() as cursor:
+        # Pagar a ganadores e insertar transacciones
+        for user_id, amount, matches in winners_data:
+            if amount > 0:
+                cursor.execute("""
+                    INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
+                    ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
+                """, (user_id, amount))
+                
+                cursor.execute("""
+                    INSERT INTO Transactions (UserID, Amount, TransactionType)
+                    VALUES (%s, %s, %s)
+                """, (user_id, amount, f"Premio Loto: {matches} aciertos"))
+        
+        # Eliminar todos los boletos ya sorteados
+        cursor.execute("DELETE FROM LotteryTickets")
+        
+        # Actualizar estado de la lotería
+        cursor.execute("""
+            UPDATE LotteryState 
+            SET JackpotPool = %s, LastDrawDate = %s, NextDrawDate = %s 
+            WHERE ID = 1
+        """, (new_pool_amount, last_draw, next_draw))
+
 def init_db():
     """
     Inicializa la base de datos PostgreSQL:
@@ -1220,6 +1332,23 @@ def init_db():
                     UserID BIGINT NOT NULL,
                     PurchaseDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            """)
+            cursor.execute("ALTER TABLE LotteryTickets ADD COLUMN IF NOT EXISTS Numbers VARCHAR(50);")
+
+            # Tabla: LotteryState
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS LotteryState (
+                    ID INT PRIMARY KEY DEFAULT 1,
+                    JackpotPool BIGINT DEFAULT 10000,
+                    LastDrawDate TIMESTAMP,
+                    NextDrawDate TIMESTAMP,
+                    CONSTRAINT single_row CHECK (ID = 1)
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO LotteryState (ID, JackpotPool)
+                VALUES (1, 10000)
+                ON CONFLICT (ID) DO NOTHING
             """)
 
             # Tabla: MinaStats

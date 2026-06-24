@@ -33,8 +33,7 @@ class Top(commands.Cog):
         except Exception as e:
             logger.error(f"Error querying top users: {e}", exc_info=True)
             await interaction.followup.send("❌ Ocurrió un error al obtener el ranking.", ephemeral=True)
-            return
-            
+            raise
         top_list = []
         for db_user_id, balance, db_username in rows:
             member = guild.get_member(db_user_id)
@@ -100,8 +99,7 @@ class Top(commands.Cog):
         except Exception as e:
             logger.error(f"Error querying top minas: {e}", exc_info=True)
             await interaction.followup.send("❌ Ocurrió un error al obtener el ranking.", ephemeral=True)
-            return
-            
+            raise
         top_list = []
         for db_user_id, minas_pisadas, db_username in rows:
             if minas_pisadas == 0:

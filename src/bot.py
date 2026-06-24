@@ -205,12 +205,81 @@ async def on_ready():
     logger.info("=" * 50)
     logger.info("[STATUS] Bot listo y funcionando")
 
+LOGS_CHANNEL_ID = 1519413696206737559
+
+async def send_command_log(ctx_or_interaction, success: bool, error_msg: Optional[str] = None):
+    """Envía un log de éxito o error al canal centralizado de logs."""
+    try:
+        from datetime import datetime
+        is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
+        
+        if is_interaction:
+            interaction = ctx_or_interaction
+            user = interaction.user
+            command_name = f"/{interaction.command.name}" if interaction.command else "desconocido"
+            
+            # Construir la acción: si es un comando con opciones, incluirlas en el log
+            options = []
+            if hasattr(interaction, "namespace") and interaction.namespace:
+                for name, value in interaction.namespace:
+                    options.append(f"{name}: {value}")
+            options_str = f" ({', '.join(options)})" if options else ""
+            action = f"Ejecución{options_str}"
+            guild = interaction.guild
+            channel_invoked = interaction.channel
+        else:
+            ctx = ctx_or_interaction
+            user = ctx.author
+            command_name = f"{ctx.prefix or ''}{ctx.command.name}" if ctx.command else "desconocido"
+            action = f"Ejecución ({ctx.message.content})"
+            guild = ctx.guild
+            channel_invoked = ctx.channel
+
+        # Formato de estado / error requerido por el usuario
+        status_text = "Funcionó" if success else f"Error: {error_msg}"
+        
+        # Formato exacto requerido: Comando - Accion - Error
+        log_message_literal = f"{command_name} - {action} - {status_text}"
+            
+        color = discord.Color.green() if success else discord.Color.red()
+        
+        embed = discord.Embed(
+            title="📋 Registro de Comando",
+            description=f"**Log:** `{log_message_literal}`",
+            color=color,
+            timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
+        )
+        embed.add_field(name="Usuario", value=f"{user.mention} (ID: {user.id})", inline=True)
+        embed.add_field(name="Ubicación", value=f"{channel_invoked.mention if hasattr(channel_invoked, 'mention') else 'DMs'} (Server: {guild.name if guild else 'DMs'})", inline=True)
+
+        logs_channel = bot.get_channel(LOGS_CHANNEL_ID)
+        if not logs_channel:
+            logs_channel = await bot.fetch_channel(LOGS_CHANNEL_ID)
+            
+        if logs_channel:
+            await logs_channel.send(content=log_message_literal, embed=embed)
+    except Exception as e:
+        logger.error(f"Error al enviar log de comando al canal de Discord {LOGS_CHANNEL_ID}: {e}")
+
+@bot.event
+async def on_app_command_completion(interaction: discord.Interaction, command):
+    """Loguea la finalización exitosa de comandos slash."""
+    await send_command_log(interaction, success=True)
+
+@bot.event
+async def on_command_completion(ctx):
+    """Loguea la finalización exitosa de comandos tradicionales."""
+    await send_command_log(ctx, success=True)
+
 @bot.event
 async def on_command_error(ctx, error):
     """Manejo mejorado de errores para comandos tradicionales."""
     if isinstance(error, commands.CommandNotFound):
         logger.debug(f"CommandNotFound: {error} (invoked by {ctx.author} in #{ctx.channel})")
         return
+    
+    # Enviar log de error al canal
+    await send_command_log(ctx, success=False, error_msg=str(error))
     
     error_messages = {
         commands.MissingRequiredArgument: f"Faltan argumentos. Usa: `{ctx.prefix}{ctx.command.qualified_name} {ctx.command.signature}`",
@@ -290,6 +359,9 @@ async def reload_cog(ctx, cog: Optional[str] = None):
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):
     """Manejo de errores para comandos slash."""
+    # Enviar log de error al canal
+    await send_command_log(interaction, success=False, error_msg=str(error))
+    
     command = interaction.command.name if interaction.command else "desconocido"
     
     if isinstance(error, discord.app_commands.CommandOnCooldown):

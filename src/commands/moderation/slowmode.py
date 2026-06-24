@@ -23,8 +23,10 @@ class Slowmode(commands.Cog):
             await interaction.response.send_message(msg, ephemeral=False)
         except discord.Forbidden:
             await interaction.response.send_message("❌ No tengo permisos suficientes para cambiar el slowmode en este canal.", ephemeral=True)
+            raise
         except Exception as e:
             await interaction.response.send_message(f"❌ Ocurrió un error al intentar cambiar el slowmode: {e}", ephemeral=True)
 
+            raise
 async def setup(bot):
     await bot.add_cog(Slowmode(bot))

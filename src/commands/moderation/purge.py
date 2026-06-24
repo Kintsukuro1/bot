@@ -33,6 +33,7 @@ class Purge(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
+            raise
         except Exception as e:
             embed = discord.Embed(
                 title="❌ Error Inesperado",
@@ -41,5 +42,6 @@ class Purge(commands.Cog):
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
 
+            raise
 async def setup(bot):
     await bot.add_cog(Purge(bot))
