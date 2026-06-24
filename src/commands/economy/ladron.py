@@ -1,13 +1,14 @@
 import discord
 import asyncio
 import random
-from src.db import get_balance, set_balance, registrar_transaccion
+import time
+from src.db import get_balance, set_balance, registrar_transaccion, deduct_balance
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
     codigo_input = discord.ui.TextInput(
-        label="Introduce el PIN que viste",
+        label="Introduce el PIN",
         style=discord.TextStyle.short,
         placeholder="Ej: 12345",
         required=True,
@@ -20,26 +21,70 @@ class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
 
     async def on_submit(self, interaction: discord.Interaction):
         self.view_parent.input_recibido = self.codigo_input.value.strip()
+        self.view_parent.tiempo_submit = time.time()
         await interaction.response.defer()
         self.view_parent.stop()
 
-class LadronView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=20)
+class LadronHackView(discord.ui.View):
+    def __init__(self, user_id, tiempo_limite):
+        super().__init__(timeout=tiempo_limite)
         self.user_id = user_id
         self.input_recibido = None
+        self.tiempo_submit = 0
 
     @discord.ui.button(label="Introducir PIN", style=discord.ButtonStyle.primary, emoji="🔓")
     async def btn_pin(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ No es tu atraco.", ephemeral=True)
             return
-        
-        # Abrir modal
         await interaction.response.send_modal(LadronModal(self))
 
     async def on_timeout(self):
         self.input_recibido = ""
+
+class LadronGanzuaView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=15)
+        self.user_id = user_id
+        self.usar_ganzua = False
+
+    @discord.ui.button(label="Usar Ganzúa Electrónica", style=discord.ButtonStyle.success, emoji="🛠️")
+    async def btn_ganzua(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return
+        self.usar_ganzua = True
+        await interaction.response.defer()
+        self.stop()
+        
+    @discord.ui.button(label="Rendirse", style=discord.ButtonStyle.danger, emoji="🏳️")
+    async def btn_rendirse(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return
+        self.usar_ganzua = False
+        await interaction.response.defer()
+        self.stop()
+
+class LadronRutaView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=30)
+        self.user_id = user_id
+        self.ruta = None
+
+    @discord.ui.button(label="Ruta Sigilosa", style=discord.ButtonStyle.primary, emoji="🥷")
+    async def btn_sigilo(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return
+        self.ruta = "sigilo"
+        await interaction.response.defer()
+        self.stop()
+
+    @discord.ui.button(label="Fuerza Bruta", style=discord.ButtonStyle.danger, emoji="💥")
+    async def btn_fuerza(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return
+        self.ruta = "fuerza"
+        await interaction.response.defer()
+        self.stop()
 
 async def iniciar_trabajo_ladron(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -58,96 +103,125 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         )
         return
 
-    await interaction.response.defer()
-    consumir_energia(user_id, energia_req)
-
-    # Nivel 8 acorta el pin
-    len_pin = 4 if nivel >= 8 else 5
-    pin_secreto = "".join([str(random.randint(0, 9)) for _ in range(len_pin)])
-
+    tiene_ganzua = nivel >= 5
+    tiene_penetracion = nivel >= 8
+    
     header = get_job_header(user_id, tipo_trabajo)
-    embed = discord.Embed(
-        title="🥷 Asalto al Banco Central",
-        description=f"{header}Has llegado a la bóveda principal.\nMemoriza este PIN para desactivar la alarma:\n\n# **{pin_secreto}**",
+    
+    ruta_view = LadronRutaView(user_id)
+    embed_ruta = discord.Embed(
+        title="🏦 Asalto al Banco Central",
+        description=f"{header}Elige tu método de infiltración:\n\n🥷 **Sigilo:** Tienes tiempo para memorizar el PIN, pero si fallas irás a la cárcel.\n💥 **Fuerza Bruta:** Escribe el PIN al revés lo más rápido posible. Máximo riesgo, máxima ganancia.",
         color=discord.Color.dark_theme()
     )
-    embed.set_footer(text="El PIN desaparecerá en 3 segundos...")
+    await interaction.response.send_message(embed=embed_ruta, view=ruta_view)
+    await ruta_view.wait()
     
-    msg = await interaction.followup.send(embed=embed, wait=True)
-    await asyncio.sleep(3)
-    
-    embed_oculto = discord.Embed(
-        title="🥷 Asalto al Banco Central",
-        description="¡El panel se ha bloqueado! Tienes 20 segundos para presionar el botón e introducir el PIN de memoria.",
-        color=discord.Color.orange()
-    )
-    
-    view = LadronView(user_id)
-    await msg.edit(embed=embed_oculto, view=view)
-    
-    await view.wait()
-    
-    # Validar resultado
-    if view.input_recibido == pin_secreto:
-        # Éxito
-        recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
-        recompensa = int(recompensa_base * random.uniform(1.0, 1.5)) # Alta recompensa
+    if ruta_view.ruta is None:
+        await interaction.edit_original_response(content="⏳ Tardaste mucho en decidir. Abortando atraco.", embed=None, view=None)
+        return
         
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa)
-        registrar_transaccion(user_id, recompensa, "Trabajo: Ladrón de Bancos (Éxito)")
+    consumir_energia(user_id, energia_req)
+    
+    len_pin = 4 if tiene_penetracion else 5
+    pin_secreto = "".join([str(random.randint(0, 9)) for _ in range(len_pin)])
+    
+    if ruta_view.ruta == "sigilo":
+        embed_juego = discord.Embed(
+            title="🥷 Infiltración Sigilosa",
+            description=f"Memoriza este PIN para desactivar la alarma:\n\n# **{pin_secreto}**",
+            color=discord.Color.blue()
+        )
+        tiempo_mostrar = 5 if tiene_penetracion else 3
+        embed_juego.set_footer(text=f"El PIN desaparecerá en {tiempo_mostrar} segundos...")
+        await interaction.edit_original_response(embed=embed_juego, view=None)
         
-        xp_ganada = 20
-        resultado_xp = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
+        await asyncio.sleep(tiempo_mostrar)
+        
+        embed_oculto = discord.Embed(
+            title="🥷 Panel Bloqueado",
+            description="¡Introduce el PIN de memoria!",
+            color=discord.Color.orange()
+        )
+        hack_view = LadronHackView(user_id, 20)
+        await interaction.edit_original_response(embed=embed_oculto, view=hack_view)
+        
+        await hack_view.wait()
+        respuesta_correcta = pin_secreto
+        multiplicador_pago = random.uniform(1.0, 1.3)
+        
+    else: # Fuerza Bruta
+        pin_inverso = pin_secreto[::-1]
+        embed_juego = discord.Embed(
+            title="💥 Fuerza Bruta",
+            description=f"¡RÁPIDO! Escribe este PIN **AL REVÉS** antes de que suene la alarma:\n\n# **{pin_secreto}**",
+            color=discord.Color.red()
+        )
+        embed_juego.set_footer(text="Tienes exactamente 10 segundos desde AHORA.")
+        
+        hack_view = LadronHackView(user_id, 10)
+        start_time = time.time()
+        await interaction.edit_original_response(embed=embed_juego, view=hack_view)
+        
+        await hack_view.wait()
+        
+        # Validación extra de tiempo para Fuerza Bruta
+        if hack_view.input_recibido and (hack_view.tiempo_submit - start_time) > 10.5:
+            hack_view.input_recibido = "" # Tardó mucho
+            
+        respuesta_correcta = pin_inverso
+        multiplicador_pago = random.uniform(1.5, 2.0)
+
+    # Evaluación de resultados
+    recompensa_base, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+    
+    if hack_view.input_recibido == respuesta_correcta:
+        # ÉXITO
+        recompensa = int(recompensa_base * multiplicador_pago)
+        set_balance(user_id, get_balance(user_id) + recompensa)
+        registrar_transaccion(user_id, recompensa, "Atraco al Banco (Éxito)")
+        add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
         
         embed_final = discord.Embed(
-            title="💰 ¡Bóveda Saqueada!",
-            description="Introdujiste el PIN correcto y escapaste con el botín antes de que llegara la policía.",
+            title="✅ Atraco Exitoso",
+            description=f"Lograste abrir la bóveda y escapar con el botín.\n\n💰 **Ganancia:** {recompensa} monedas\n📈 **XP:** {xp_ganada}",
             color=discord.Color.green()
         )
-        embed_final.add_field(name="💰 Botín Obtenido", value=f"**{recompensa}** monedas")
+        await interaction.edit_original_response(embed=embed_final, view=None)
         
-        xp_msg = f"+{resultado_xp['xp_ganada_final']} XP"
-        if resultado_xp['pocion_usada']:
-            xp_msg += " (🧪 x1.5)"
-        embed_final.add_field(name="✨ Experiencia", value=xp_msg)
-        
-        if resultado_xp['subio_nivel']:
-            embed_final.add_field(
-                name="🎉 ¡SUBISTE DE NIVEL!", 
-                value=f"Ahora eres nivel **{resultado_xp['nivel_nuevo']}** de Ladrón.",
-                inline=False
-            )
-
-        await msg.edit(embed=embed_final, view=None)
     else:
-        # Fallo
-        multa = 150
-        tiene_ganzua = nivel >= 5
-        
+        # FALLO
         if tiene_ganzua:
-            embed_fail = discord.Embed(
+            embed_fallo = discord.Embed(
                 title="🚨 ¡Alarma Activada!",
-                description=f"PIN incorrecto (era {pin_secreto}). La policía ha llegado, pero usaste tu Ganzúa Electrónica para escapar sin pagar multa. Sin embargo, no consigues botín.",
+                description="Te equivocaste de PIN o tardaste demasiado.\nTienes una **Ganzúa Electrónica**, ¿quieres usarla para escapar sin pagar multa?",
                 color=discord.Color.orange()
             )
-            await msg.edit(embed=embed_fail, view=None)
-            add_experiencia_trabajo(user_id, tipo_trabajo, 5)
-        else:
-            saldo_actual = get_balance(user_id)
-            if saldo_actual >= multa:
-                set_balance(user_id, saldo_actual - multa)
-                registrar_transaccion(user_id, -multa, "Multa por atraco fallido")
-                multa_txt = f"Has pagado una fianza de **{multa}** monedas."
-            else:
-                set_balance(user_id, 0)
-                registrar_transaccion(user_id, -saldo_actual, "Embargo por atraco fallido")
-                multa_txt = "Han embargado todo el dinero que tenías."
+            ganzua_view = LadronGanzuaView(user_id)
+            await interaction.edit_original_response(embed=embed_fallo, view=ganzua_view)
+            await ganzua_view.wait()
+            
+            if ganzua_view.usar_ganzua:
+                embed_escapo = discord.Embed(
+                    title="🏃 Escape Exitoso",
+                    description="Usaste tu Ganzúa Electrónica para forzar una salida. No ganaste nada, pero tampoco pagaste multa.",
+                    color=discord.Color.dark_gray()
+                )
+                add_experiencia_trabajo(user_id, tipo_trabajo, int(xp_ganada * 0.2))
+                await interaction.edit_original_response(embed=embed_escapo, view=None)
+                return
                 
-            embed_fail = discord.Embed(
-                title="🚓 ¡ARRESTADO!",
-                description=f"Introdujiste el PIN incorrecto (era {pin_secreto}). La policía te ha capturado.\n\n{multa_txt}",
-                color=discord.Color.red()
-            )
-            await msg.edit(embed=embed_fail, view=None)
-            add_experiencia_trabajo(user_id, tipo_trabajo, 2)
+        # Arrestado
+        multa = int(recompensa_base * 0.5)
+        saldo = get_balance(user_id)
+        if saldo < multa:
+            multa = saldo
+        deduct_balance(user_id, multa)
+        registrar_transaccion(user_id, -multa, "Multa por Arresto")
+        
+        embed_arresto = discord.Embed(
+            title="👮 ¡Arrestado!",
+            description=f"Fallaste el atraco. La policía te atrapó.\n\n💸 **Multa Pagada:** {multa} monedas.",
+            color=discord.Color.red()
+        )
+        await interaction.edit_original_response(embed=embed_arresto, view=None)

@@ -745,6 +745,33 @@ def advance_provably_fair_nonce(user_id: int):
         """, (user_id,))
         return cursor.fetchone()[0]
 
+def save_multiplayer_game(game_id: str, game_type: str, state: dict):
+    """Guarda el estado de un juego multijugador."""
+    import json
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO ActiveMultiplayerGames (GameID, GameType, GameState, LastUpdate)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (GameID) DO UPDATE 
+            SET GameState = EXCLUDED.GameState,
+                LastUpdate = CURRENT_TIMESTAMP
+        """, (game_id, game_type, json.dumps(state)))
+
+def get_multiplayer_game(game_id: str):
+    """Obtiene el estado de un juego multijugador."""
+    import json
+    with db_cursor() as cursor:
+        cursor.execute("SELECT GameState FROM ActiveMultiplayerGames WHERE GameID = %s", (game_id,))
+        row = cursor.fetchone()
+        if row:
+            return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        return None
+
+def delete_multiplayer_game(game_id: str):
+    """Elimina un juego multijugador activo."""
+    with db_cursor() as cursor:
+        cursor.execute("DELETE FROM ActiveMultiplayerGames WHERE GameID = %s", (game_id,))
+
 def clear_lottery():
     with db_cursor() as cursor:
         cursor.execute("TRUNCATE TABLE LotteryTickets")
@@ -1106,6 +1133,16 @@ def init_db():
                     PastServerSeed VARCHAR(64),
                     PastClientSeed VARCHAR(64),
                     PastNonce INT
+                )
+            """)
+
+            # Tabla: ActiveMultiplayerGames
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ActiveMultiplayerGames (
+                    GameID VARCHAR(50) PRIMARY KEY,
+                    GameType VARCHAR(50) NOT NULL,
+                    GameState JSONB NOT NULL,
+                    LastUpdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 

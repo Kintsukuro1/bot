@@ -5,63 +5,158 @@ from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
-RECETAS_QUIMICAS = {
-    "Naranja 🟠": ["rojo", "amarillo"],
-    "Verde 🟢": ["azul", "amarillo"],
-    "Morado 🟣": ["rojo", "azul"],
-    "Gris ⚪": ["blanco", "negro"],
-    "Rosa 🌸": ["rojo", "blanco"],
-    "Celeste 🧊": ["azul", "blanco"]
+# Reactivos posibles y sus pesos (impacto en la inestabilidad)
+REACTIVOS = {
+    "Extracto Carmesí 🔴": {"inestabilidad": 20, "afinidad": ["Agua Destilada 💧", "Polvo Estelar ✨"]},
+    "Líquido Fluorescente 🟢": {"inestabilidad": 35, "afinidad": ["Polvo Estelar ✨"]},
+    "Isótopo Volátil 🟣": {"inestabilidad": 50, "afinidad": []},
+    "Agua Destilada 💧": {"inestabilidad": 5, "afinidad": ["Extracto Carmesí 🔴"]},
+    "Polvo Estelar ✨": {"inestabilidad": 15, "afinidad": ["Líquido Fluorescente 🟢", "Extracto Carmesí 🔴"]},
+    "Cristal Neutro ⚪": {"inestabilidad": 10, "afinidad": ["Isótopo Volátil 🟣"]} # El cristal ayuda a mitigar isótopos
 }
 
-COLORES_BASE = [
-    discord.SelectOption(label="Rojo", emoji="🔴", value="rojo"),
-    discord.SelectOption(label="Azul", emoji="🔵", value="azul"),
-    discord.SelectOption(label="Amarillo", emoji="🟡", value="amarillo"),
-    discord.SelectOption(label="Blanco", emoji="⚪", value="blanco"),
-    discord.SelectOption(label="Negro", emoji="⚫", value="negro")
-]
-
-class QuimicoSelect(discord.ui.Select):
-    def __init__(self, tiene_pipeta):
-        # Nivel 5 remueve los colores blanco y negro si no son necesarios
-        # Para hacerlo dinámico, simplemente entregamos la lista.
-        # En este minijuego, la "Pipeta" simplificará las opciones.
-        opciones = COLORES_BASE.copy()
-        if tiene_pipeta:
-            opciones = [o for o in opciones if o.value in ["rojo", "azul", "amarillo"]]
+class CientificoGame:
+    def __init__(self, user_id, nivel):
+        self.user_id = user_id
+        self.nivel = nivel
+        self.tiene_analizador = nivel >= 5
+        self.tiene_estabilizador = nivel >= 8
+        self.rondas_totales = 4 if nivel >= 3 else 3
+        
+        self.ronda_actual = 1
+        self.inestabilidad = 0
+        self.reactivo_anterior = None
+        self.estabilizador_usado = False
+        self.analizador_usado = False
+        
+        self.status = "Jugando" # Jugando, Ganado, Explotado, Timeout
+        
+    def aplicar_reactivo(self, nombre_reactivo):
+        datos = REACTIVOS[nombre_reactivo]
+        base_instability = datos["inestabilidad"]
+        
+        # Calcular sinergias
+        if self.reactivo_anterior and self.reactivo_anterior in datos["afinidad"]:
+            base_instability = max(0, base_instability - 10) # Sinergia reduce inestabilidad añadida
             
-        super().__init__(
-            placeholder="Selecciona EXACTAMENTE 2 químicos",
-            min_values=2,
-            max_values=2,
-            options=opciones
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        view: CientificoView = self.view
-        if interaction.user.id != view.user_id:
-            await interaction.response.send_message("❌ No es tu experimento.", ephemeral=True)
-            return
-
-        view.seleccion = self.values
-        for item in view.children:
-            item.disabled = True
+        # El Isótopo Volátil explota casi seguro si se mezcla con otro Isótopo
+        if self.reactivo_anterior == "Isótopo Volátil 🟣" and nombre_reactivo == "Isótopo Volátil 🟣":
+            base_instability = 100
             
-        await interaction.response.edit_message(view=view)
-        view.stop()
+        self.inestabilidad += base_instability
+        self.reactivo_anterior = nombre_reactivo
+        
+        if self.inestabilidad >= 100:
+            self.status = "Explotado"
+        elif self.ronda_actual >= self.rondas_totales:
+            self.status = "Ganado"
+        else:
+            self.ronda_actual += 1
 
 class CientificoView(discord.ui.View):
-    def __init__(self, user_id, tiene_pipeta):
-        super().__init__(timeout=20)
-        self.user_id = user_id
-        self.seleccion = None
-        self.add_item(QuimicoSelect(tiene_pipeta))
+    def __init__(self, game: CientificoGame):
+        super().__init__(timeout=30)
+        self.game = game
+        self.accion_realizada = False
+        self.generar_botones()
+        
+    def generar_botones(self):
+        self.clear_items()
+        
+        # Elegir 3 reactivos al azar para esta ronda
+        opciones_ronda = random.sample(list(REACTIVOS.keys()), 3)
+        
+        for r in opciones_ronda:
+            btn = discord.ui.Button(label=r, style=discord.ButtonStyle.primary)
+            btn.callback = self.crear_callback_reactivo(r)
+            self.add_item(btn)
+            
+        if self.game.tiene_estabilizador and not self.game.estabilizador_usado:
+            btn_est = discord.ui.Button(label="❄️ Estabilizar Térmicamente", style=discord.ButtonStyle.success, row=1)
+            btn_est.callback = self.estabilizar_callback
+            self.add_item(btn_est)
+            
+        if self.game.tiene_analizador and not self.game.analizador_usado:
+            btn_ana = discord.ui.Button(label="🔍 Analizar Sinergia", style=discord.ButtonStyle.secondary, row=1)
+            btn_ana.callback = self.analizar_callback
+            self.add_item(btn_ana)
+
+    def crear_callback_reactivo(self, reactivo):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.game.user_id:
+                await interaction.response.send_message("❌ Este no es tu laboratorio.", ephemeral=True)
+                return
+                
+            if self.accion_realizada: return
+            self.accion_realizada = True
+            await interaction.response.defer()
+            
+            self.game.aplicar_reactivo(reactivo)
+            self.stop()
+        return callback
+        
+    async def estabilizar_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.game.user_id:
+            return
+            
+        if self.accion_realizada: return
+        self.accion_realizada = True
+        await interaction.response.defer()
+        
+        self.game.estabilizador_usado = True
+        self.game.inestabilidad = max(0, self.game.inestabilidad - 30)
+        self.stop()
+        
+    async def analizar_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.game.user_id:
+            return
+            
+        if self.accion_realizada: return
+        # No avanza la ronda, solo da información y refresca la vista sin el botón
+        self.game.analizador_usado = True
+        
+        afinidad = "Ninguna conocida"
+        if self.game.reactivo_anterior:
+            # Buscar qué reactivos tienen afinidad con el anterior
+            afines = [r for r, d in REACTIVOS.items() if self.game.reactivo_anterior in d["afinidad"]]
+            if afines:
+                afinidad = ", ".join(afines)
+        else:
+            afinidad = "Comienza con Agua Destilada para ir seguro."
+            
+        await interaction.response.send_message(f"🧠 **Análisis de Sinergia:** Si el reactivo anterior fue {self.game.reactivo_anterior or 'NADA'}, los reactivos seguros son: {afinidad}", ephemeral=True)
+        
+        self.generar_botones()
+        await interaction.edit_original_response(view=self)
+        self.accion_realizada = False
 
     async def on_timeout(self):
-        self.seleccion = None
-        for item in self.children:
-            item.disabled = True
+        if not self.accion_realizada:
+            self.game.status = "Timeout"
+            self.stop()
+
+def generar_embed(game: CientificoGame):
+    header = get_job_header(game.user_id, "cientifico")
+    color = discord.Color.blue()
+    
+    if game.inestabilidad > 70:
+        color = discord.Color.orange()
+    if game.inestabilidad >= 100:
+        color = discord.Color.red()
+        
+    embed = discord.Embed(
+        title="🔬 Laboratorio Químico",
+        description=f"{header}\nMezcla reactivos para completar el experimento sin que la inestabilidad llegue al 100%.",
+        color=color
+    )
+    
+    barra = "🟥" * (game.inestabilidad // 10) + "⬜" * (10 - (game.inestabilidad // 10))
+    
+    embed.add_field(name="Ronda", value=f"{game.ronda_actual} / {game.rondas_totales}", inline=True)
+    embed.add_field(name="Último Reactivo", value=game.reactivo_anterior or "Ninguno", inline=True)
+    embed.add_field(name="Inestabilidad", value=f"{game.inestabilidad}%\n{barra}", inline=False)
+    
+    return embed
 
 async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -82,86 +177,66 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
 
     await interaction.response.defer()
     consumir_energia(user_id, energia_req)
-
-    tiene_pipeta = nivel >= 5
-    tiene_catalizador = nivel >= 8
-
-    # Si tiene pipeta, solo le pediremos recetas que usen colores primarios
-    recetas_disponibles = list(RECETAS_QUIMICAS.keys())
-    if tiene_pipeta:
-        recetas_disponibles = ["Naranja 🟠", "Verde 🟢", "Morado 🟣"]
-
-    objetivo = random.choice(recetas_disponibles)
-    ingredientes_correctos = RECETAS_QUIMICAS[objetivo]
-
-    header = get_job_header(user_id, tipo_trabajo)
-    embed = discord.Embed(
-        title="🔬 Laboratorio Químico",
-        description=f"{header}El supervisor necesita que crees una poción de color **{objetivo}**.\n\nSelecciona los 2 ingredientes primarios en el menú de abajo. Tienes 20 segundos.",
-        color=discord.Color.green()
-    )
     
-    view = CientificoView(user_id, tiene_pipeta)
-    msg = await interaction.followup.send(embed=embed, view=view, wait=True)
+    game = CientificoGame(user_id, nivel)
     
-    await view.wait()
-    
-    if view.seleccion is None:
-        embed_fail = discord.Embed(
-            title="💥 ¡KABOOM!",
-            description="Tardaste demasiado y la mezcla explotó.",
-            color=discord.Color.red()
-        )
-        await msg.edit(embed=embed_fail, view=None)
-        add_experiencia_trabajo(user_id, tipo_trabajo, 2)
-        return
-
-    # Comprobar si la selección es correcta (el orden no importa)
-    es_correcto = set(view.seleccion) == set(ingredientes_correctos)
-
-    if es_correcto:
-        recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
-        if tiene_catalizador:
-            recompensa_base *= 2 # Catalizador dobla la recompensa
+    while game.status == "Jugando":
+        embed = generar_embed(game)
+        view = CientificoView(game)
+        
+        try:
+            await interaction.edit_original_response(embed=embed, view=view)
+        except:
+            break
             
-        recompensa = int(recompensa_base * random.uniform(0.9, 1.1))
+        await view.wait()
         
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa)
-        registrar_transaccion(user_id, recompensa, "Trabajo: Científico")
-        
-        xp_ganada = 12
-        resultado_xp = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
-        
-        titulo_exito = "🧪 ¡Fórmula Exitosa!"
-        if tiene_catalizador:
-            titulo_exito = "🧪 ¡Fórmula Exitosa! (Catalizador: x2)"
+        if game.status != "Jugando":
+            break
             
-        embed_final = discord.Embed(
-            title=titulo_exito,
-            description=f"Mezclaste correctamente {view.seleccion[0]} y {view.seleccion[1]} para crear {objetivo}.",
-            color=discord.Color.green()
-        )
-        embed_final.add_field(name="💰 Pago de la Patente", value=f"**{recompensa}** monedas")
+    # Resolución del juego
+    embed = generar_embed(game)
+    view = discord.ui.View() # Empty view
+    
+    if game.status == "Ganado":
+        recompensa, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
         
-        xp_msg = f"+{resultado_xp['xp_ganada_final']} XP"
-        if resultado_xp['pocion_usada']:
-            xp_msg += " (🧪 x1.5)"
-        embed_final.add_field(name="✨ Experiencia", value=xp_msg)
+        if game.inestabilidad == 0:
+            recompensa = int(recompensa * 1.5) # Bono por perfección
+            embed.description = "🌟 **¡SÍNTESIS PERFECTA!** Lograste una mezcla con 0% de inestabilidad."
+        else:
+            embed.description = "✅ **Experimento Exitoso.** Has logrado sintetizar la fórmula."
+            
+        set_balance(user_id, get_balance(user_id) + recompensa)
+        registrar_transaccion(user_id, recompensa, "Sueldo Científico")
+        add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
         
-        if resultado_xp['subio_nivel']:
-            embed_final.add_field(
-                name="🎉 ¡SUBISTE DE NIVEL!", 
-                value=f"Ahora eres nivel **{resultado_xp['nivel_nuevo']}** de Científico.",
-                inline=False
-            )
-
-        await msg.edit(embed=embed_final, view=None)
-    else:
-        embed_fail = discord.Embed(
-            title="🤢 Mezcla Tóxica",
-            description=f"Mezclaste {view.seleccion[0]} y {view.seleccion[1]} y creaste un ácido inútil. El supervisor te ha regañado.",
-            color=discord.Color.dark_green()
-        )
-        await msg.edit(embed=embed_fail, view=None)
-        add_experiencia_trabajo(user_id, tipo_trabajo, 4)
+        embed.color = discord.Color.green()
+        embed.add_field(name="Ganancia", value=f"💰 {recompensa} monedas\n📈 {xp_ganada} XP", inline=False)
+        
+    elif game.status == "Explotado":
+        embed.description = "💥 **¡BOOOM!** El nivel de inestabilidad superó el límite."
+        embed.color = discord.Color.red()
+        
+        # Recompensa parcial si pasó de la ronda 1
+        if game.ronda_actual > 1:
+            recompensa, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+            recompensa_parcial = int(recompensa * 0.3 * (game.ronda_actual - 1))
+            xp_parcial = max(1, int(xp_ganada * 0.3))
+            
+            set_balance(user_id, get_balance(user_id) + recompensa_parcial)
+            registrar_transaccion(user_id, recompensa_parcial, "Salvamento Científico")
+            add_experiencia_trabajo(user_id, tipo_trabajo, xp_parcial)
+            
+            embed.add_field(name="Salvamento de Datos", value=f"Lograste rescatar algo de la investigación.\n💰 {recompensa_parcial} monedas\n📈 {xp_parcial} XP", inline=False)
+        else:
+            embed.add_field(name="Fracaso Total", value="No se salvó nada de la explosión.", inline=False)
+            
+    elif game.status == "Timeout":
+        embed.description = "⏳ **El experimento se arruinó por exposición prolongada al aire.**"
+        embed.color = discord.Color.dark_grey()
+        
+    try:
+        await interaction.edit_original_response(embed=embed, view=view)
+    except:
+        pass
