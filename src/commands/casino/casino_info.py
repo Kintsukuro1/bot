@@ -27,8 +27,8 @@ class CasinoInfo(commands.Cog):
         )
 
         embed.add_field(
-            name="🪙 /coinflip [apuesta] [cara/sello]",
-            value="Apuesta todo a cara o sello. Tienes un 50% de probabilidad base de duplicar tu apuesta.",
+            name="🪙 /coinflip [apuesta] [@usuario (opcional)]",
+            value="Juega cara o sello contra el casino, o reta a otro jugador a un duelo de suerte.",
             inline=False
         )
 
@@ -39,8 +39,38 @@ class CasinoInfo(commands.Cog):
         )
 
         embed.add_field(
-            name="📈 /higher_lower [apuesta]",
+            name="📈 /higherlow [apuesta]",
             value="Una carta aparecerá sobre la mesa y deberás adivinar si la siguiente carta será de mayor o menor valor. Cuantos más aciertos consecutivos tengas, mayor será el multiplicador final.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🎡 /roulette [apuesta]",
+            value="Apuesta a rojo, negro, números o docenas en la clásica Ruleta Europea.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="💣 /mines [apuesta]",
+            value="Encuentra gemas en un campo minado para multiplicar tu apuesta. Retírate antes de pisar una bomba y perderlo todo.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🏇 /horse_race [apuesta]",
+            value="Apuesta a tu caballo favorito. El ganador se lleva su multiplicador más una tajada del pozo de todas las apuestas perdidas.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="✂️ /rps_bet [apuesta] [@usuario]",
+            value="Reta a otro usuario a un duelo a muerte de Piedra, Papel o Tijera por el pozo acumulado.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🔫 /russian_roulette [entrada]",
+            value="Crea una sala de Ruleta Rusa de hasta 6 jugadores. Sobrevive al arma para llevarte el pozo completo.",
             inline=False
         )
         
