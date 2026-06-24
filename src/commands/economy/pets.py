@@ -44,27 +44,38 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
             # 2. Evaluar Proc
             proc_trigger = False
             
-            if effect_type == "proc_universal":
+            if effect_type == "multiplier" and is_win:
+                proc_trigger = True
+                raw_proc = int(profit * (eff_val - 1.0)) # Ej: 1.10 -> 0.10
+            elif effect_type == "refund" and not is_win:
+                proc_trigger = True
+                raw_proc = int(bet_amount * eff_val)
+            elif effect_type == "proc_universal":
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             elif effect_type == "proc_derrota" and not is_win:
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             elif effect_type == "proc_derrota_y_revive" and not is_win:
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             elif effect_type == "proc_juego" and game_type == fav_game:
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             elif effect_type == "proc_juego_y_mult" and game_type == fav_game:
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             elif effect_type == "proc_high_roller" and get_user_balance(cursor, user_id) > 0 and (bet_amount / get_user_balance(cursor, user_id)) >= 0.10:
                 proc_trigger = random.random() < eff_chance
+                raw_proc = int(bet_amount * eff_val)
             
             if proc_trigger:
-                raw_proc = int(bet_amount * eff_val)
                 proc_amount = min(raw_proc, eff_cap) if eff_cap > 0 else raw_proc
                 if proc_amount > 0:
                     add_balance(user_id, proc_amount)
                     # Notificamos el proc
                     asyncio.run_coroutine_threadsafe(
-                        send_proc_message(interaction, p_emoji, p_name, proc_amount),
+                        send_proc_message(interaction, p_emoji, p_name, proc_amount, effect_type),
                         interaction.client.loop
                     )
             
@@ -189,9 +200,14 @@ def get_random_pet_by_encounter(cursor, encounter_type, level):
 
 # --- Funciones de Interfaz (Discord) ---
 
-async def send_proc_message(interaction, emoji, name, amount):
+async def send_proc_message(interaction, emoji, name, amount, effect_type):
     try:
-        await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** encontró **{amount:,}** monedas extra tras la partida!*")
+        if effect_type == "multiplier":
+            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** aumentó tus ganancias en **{amount:,}** monedas!*")
+        elif effect_type == "refund":
+            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** recuperó **{amount:,}** monedas de tus pérdidas!*")
+        else:
+            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** encontró **{amount:,}** monedas extra!*")
     except: pass
 
 async def send_escape_message(interaction, emoji, name):

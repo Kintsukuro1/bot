@@ -772,6 +772,68 @@ def delete_multiplayer_game(game_id: str):
     with db_cursor() as cursor:
         cursor.execute("DELETE FROM ActiveMultiplayerGames WHERE GameID = %s", (game_id,))
 
+# ==========================================
+# SISTEMA DE PETS
+# ==========================================
+
+def get_pet_catalog():
+    """Obtiene todo el catálogo de mascotas disponibles."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT * FROM PetsCatalog WHERE Enabled = 1")
+        columns = [desc[0] for desc in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+def get_active_pet(user_id: int):
+    """Obtiene la mascota activa del usuario con todos sus datos del catálogo."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT up.*, pc.* 
+            FROM UserPets up
+            JOIN PetsCatalog pc ON up.PetID = pc.PetID
+            WHERE up.UserID = %s AND up.IsActive = 1
+        """, (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        columns = [desc[0] for desc in cursor.description]
+        return dict(zip(columns, row))
+
+def add_user_pet(user_id: int, pet_id: int):
+    """Añade una mascota al usuario y la pone como activa automáticamente."""
+    with db_cursor() as cursor:
+        # Desactivar la mascota actual
+        cursor.execute("UPDATE UserPets SET IsActive = 0 WHERE UserID = %s", (user_id,))
+        # Insertar nueva
+        cursor.execute("""
+            INSERT INTO UserPets (UserID, PetID, IsActive, Loyalty, Mood, GamesWithOwner, WinsWithOwner, LossesWithOwner)
+            VALUES (%s, %s, 1, 50, 'Feliz', 0, 0, 0)
+            RETURNING UserPetID
+        """, (user_id, pet_id))
+        return cursor.fetchone()[0]
+
+def remove_user_pet(user_id: int, user_pet_id: int):
+    """Elimina una mascota del inventario (ej. cuando abandona al usuario)."""
+    with db_cursor() as cursor:
+        cursor.execute("DELETE FROM UserPets WHERE UserID = %s AND UserPetID = %s", (user_id, user_pet_id))
+
+def update_pet_stats(user_id: int, win: bool):
+    """Actualiza las estadísticas de la mascota activa tras un juego de casino."""
+    with db_cursor() as cursor:
+        if win:
+            cursor.execute("""
+                UPDATE UserPets SET 
+                GamesWithOwner = GamesWithOwner + 1,
+                WinsWithOwner = WinsWithOwner + 1
+                WHERE UserID = %s AND IsActive = 1
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                UPDATE UserPets SET 
+                GamesWithOwner = GamesWithOwner + 1,
+                LossesWithOwner = LossesWithOwner + 1
+                WHERE UserID = %s AND IsActive = 1
+            """, (user_id,))
+
 def clear_lottery():
     with db_cursor() as cursor:
         cursor.execute("TRUNCATE TABLE LotteryTickets")
