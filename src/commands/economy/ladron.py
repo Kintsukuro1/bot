@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
     codigo_input = discord.ui.TextInput(
@@ -65,9 +65,10 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
     len_pin = 4 if nivel >= 8 else 5
     pin_secreto = "".join([str(random.randint(0, 9)) for _ in range(len_pin)])
 
+    header = get_job_header(user_id, tipo_trabajo)
     embed = discord.Embed(
         title="🥷 Asalto al Banco Central",
-        description=f"Has llegado a la bóveda principal.\nMemoriza este PIN para desactivar la alarma:\n\n# **{pin_secreto}**",
+        description=f"{header}Has llegado a la bóveda principal.\nMemoriza este PIN para desactivar la alarma:\n\n# **{pin_secreto}**",
         color=discord.Color.dark_theme()
     )
     embed.set_footer(text="El PIN desaparecerá en 3 segundos...")

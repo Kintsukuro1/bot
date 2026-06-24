@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 HERRAMIENTAS = {
     "bisturi": {"nombre": "Bisturí", "emoji": "🔪"},
@@ -82,9 +82,10 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
 
     situaciones = random.sample(SITUACIONES_MEDICAS, 3)
     
+    header = get_job_header(user_id, tipo_trabajo)
     embed_principal = discord.Embed(
         title="🏥 Quirófano Activo",
-        description="Lávate las manos, la operación está a punto de comenzar.",
+        description=f"{header}Lávate las manos, la operación está a punto de comenzar.",
         color=discord.Color.red()
     )
     msg = await interaction.followup.send(embed=embed_principal, wait=True)

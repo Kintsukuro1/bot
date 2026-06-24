@@ -693,6 +693,58 @@ def buy_lottery_tickets(user_id, count):
         args = [(user_id,)] * count
         cursor.executemany("INSERT INTO LotteryTickets (UserID) VALUES (%s)", args)
 
+def get_provably_fair_seeds(user_id: int):
+    """Obtiene las semillas actuales del usuario, o las genera si no existen."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT ServerSeed, ClientSeed, Nonce FROM ProvablyFairSeeds WHERE UserID = %s", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            return {"server_seed": row[0], "client_seed": row[1], "nonce": row[2]}
+        
+        # Si no existe, generamos semillas iniciales
+        import secrets
+        server_seed = secrets.token_hex(32)
+        client_seed = secrets.token_hex(16)
+        
+        cursor.execute("""
+            INSERT INTO ProvablyFairSeeds (UserID, ServerSeed, ClientSeed, Nonce)
+            VALUES (%s, %s, %s, 0)
+        """, (user_id, server_seed, client_seed))
+        return {"server_seed": server_seed, "client_seed": client_seed, "nonce": 0}
+        
+def rotate_provably_fair_seeds(user_id: int, new_client_seed: str = None):
+    """Rota la semilla del servidor. El usuario puede proveer un nuevo client seed opcional."""
+    import secrets
+    current = get_provably_fair_seeds(user_id)
+    
+    new_server_seed = secrets.token_hex(32)
+    new_client = new_client_seed if new_client_seed else current["client_seed"]
+    
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE ProvablyFairSeeds
+            SET PastServerSeed = ServerSeed,
+                PastClientSeed = ClientSeed,
+                PastNonce = Nonce,
+                ServerSeed = %s,
+                ClientSeed = %s,
+                Nonce = 0
+            WHERE UserID = %s
+        """, (new_server_seed, new_client, user_id))
+        
+    return {"server_seed": new_server_seed, "client_seed": new_client, "nonce": 0, "past_server_seed": current["server_seed"]}
+
+def advance_provably_fair_nonce(user_id: int):
+    """Avanza el nonce en 1. Debe llamarse CADA VEZ que se genera un resultado en un juego."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE ProvablyFairSeeds
+            SET Nonce = Nonce + 1
+            WHERE UserID = %s
+            RETURNING Nonce
+        """, (user_id,))
+        return cursor.fetchone()[0]
+
 def clear_lottery():
     with db_cursor() as cursor:
         cursor.execute("TRUNCATE TABLE LotteryTickets")
@@ -1041,6 +1093,19 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS MinaStats (
                     UserID BIGINT PRIMARY KEY,
                     MinasPisadas INT DEFAULT 0
+                )
+            """)
+
+            # Tabla: ProvablyFairSeeds
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ProvablyFairSeeds (
+                    UserID BIGINT PRIMARY KEY,
+                    ServerSeed VARCHAR(64) NOT NULL,
+                    ClientSeed VARCHAR(64) NOT NULL,
+                    Nonce INT DEFAULT 0,
+                    PastServerSeed VARCHAR(64),
+                    PastClientSeed VARCHAR(64),
+                    PastNonce INT
                 )
             """)
 

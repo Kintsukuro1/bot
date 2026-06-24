@@ -26,6 +26,7 @@ class HackerView(discord.ui.View):
         self.bypass_activo = False
         self.bypass_usado = False
         self.inyeccion_usada = False
+        self.escaneo_usado = False
         self.has_mejora_6 = False
         
         # Remover botones si no se cumple el nivel requerido
@@ -40,6 +41,8 @@ class HackerView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este trabajo.", ephemeral=True)
             return
             
+        if self.escaneo_usado: return
+        self.escaneo_usado = True
         await interaction.response.defer()
             
         # Desactivar el botón para que solo se use una vez
@@ -103,10 +106,11 @@ class HackerView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este trabajo.", ephemeral=True)
             return
         
+        if self.bypass_usado: return
+        self.bypass_usado = True
         await interaction.response.defer()
         
         self.bypass_activo = True
-        self.bypass_usado = True
         button.disabled = True
         button.style = discord.ButtonStyle.success
         button.label = "⚡ Bypass Activo"
@@ -118,9 +122,10 @@ class HackerView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este trabajo.", ephemeral=True)
             return
         
+        if self.inyeccion_usada: return
+        self.inyeccion_usada = True
         await interaction.response.defer()
         
-        self.inyeccion_usada = True
         button.disabled = True
         button.style = discord.ButtonStyle.danger
         button.label = "💉 Inyección Ejecutada"

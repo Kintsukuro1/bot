@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 RECETAS_QUIMICAS = {
     "Naranja 🟠": ["rojo", "amarillo"],
@@ -94,9 +94,10 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
     objetivo = random.choice(recetas_disponibles)
     ingredientes_correctos = RECETAS_QUIMICAS[objetivo]
 
+    header = get_job_header(user_id, tipo_trabajo)
     embed = discord.Embed(
         title="🔬 Laboratorio Químico",
-        description=f"El supervisor necesita que crees una poción de color **{objetivo}**.\n\nSelecciona los 2 ingredientes primarios en el menú de abajo. Tienes 20 segundos.",
+        description=f"{header}El supervisor necesita que crees una poción de color **{objetivo}**.\n\nSelecciona los 2 ingredientes primarios en el menú de abajo. Tienes 20 segundos.",
         color=discord.Color.green()
     )
     

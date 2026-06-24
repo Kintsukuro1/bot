@@ -21,7 +21,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Descifra códigos y sistemas informáticos',
         'energia_base': 25,  # Energía base requerida
         'recompensa_base': 300,  # Recompensa base promedio
-        'dificultad': 3,  # 1-5 donde 5 es más difícil
+        'tier_economico': '⭐⭐⭐ (Medio-Alto)',
+        'riesgo': '⭐⭐ (Medio)',
         'xp_por_trabajo': 15,  # XP base por trabajo completado
         'bonificaciones': {
             # nivel: {bonificación}
@@ -44,7 +45,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Prepara platos exquisitos',
         'energia_base': 20,
         'recompensa_base': 200,
-        'dificultad': 2,
+        'tier_economico': '⭐⭐ (Medio)',
+        'riesgo': '⭐⭐ (Medio)',
         'xp_por_trabajo': 12,
         'bonificaciones': {
             1: 'Acceso a recetas básicas',
@@ -66,7 +68,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Crea obras de arte únicas',
         'energia_base': 15,
         'recompensa_base': 150,
-        'dificultad': 1,
+        'tier_economico': '⭐ (Bajo)',
+        'riesgo': '⭐ (Bajo)',
         'xp_por_trabajo': 10,
         'bonificaciones': {
             1: 'Acceso a obras básicas',
@@ -88,7 +91,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Repara y mejora vehículos',
         'energia_base': 30,
         'recompensa_base': 350,
-        'dificultad': 4,
+        'tier_economico': '⭐⭐⭐⭐ (Alto)',
+        'riesgo': '⭐⭐ (Medio)',
         'xp_por_trabajo': 20,
         'bonificaciones': {
             1: 'Acceso a reparaciones básicas',
@@ -110,7 +114,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Excava en túneles buscando gemas y metales',
         'energia_base': 25,
         'recompensa_base': 300,
-        'dificultad': 3,
+        'tier_economico': '⭐⭐⭐ (Medio-Alto)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 15,
         'bonificaciones': {
             1: 'Acceso a túneles básicos',
@@ -132,7 +137,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Pesca criaturas y monstruos en lagos y océanos',
         'energia_base': 20,
         'recompensa_base': 220,
-        'dificultad': 2,
+        'tier_economico': '⭐⭐ (Medio)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 12,
         'bonificaciones': {
             1: 'Acceso a zonas de pesca básicas',
@@ -154,7 +160,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Pilota vuelos comerciales y de contrabando',
         'energia_base': 40,
         'recompensa_base': 500,
-        'dificultad': 5,
+        'tier_economico': '⭐⭐⭐⭐⭐ (Muy Alto)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 25,
         'bonificaciones': {
             1: 'Licencia de Vuelo Básica',
@@ -176,7 +183,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Busca fugitivos para cobrar su cabeza',
         'energia_base': 35,
         'recompensa_base': 400,
-        'dificultad': 4,
+        'tier_economico': '⭐⭐⭐⭐ (Alto)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 22,
         'bonificaciones': {
             1: 'Cazarrecompensas Novato',
@@ -198,7 +206,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Realiza cirugías complejas bajo presión',
         'energia_base': 25,
         'recompensa_base': 300,
-        'dificultad': 3,
+        'tier_economico': '⭐⭐⭐ (Medio-Alto)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 15,
         'bonificaciones': {
             1: 'Residente',
@@ -220,7 +229,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Asalta bancos memorizando códigos',
         'energia_base': 30,
         'recompensa_base': 450,
-        'dificultad': 4,
+        'tier_economico': '⭐⭐⭐⭐ (Alto)',
+        'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 20,
         'bonificaciones': {
             1: 'Carterista',
@@ -242,7 +252,8 @@ TIPOS_TRABAJO = {
         'descripcion': 'Mezcla químicos para crear fórmulas',
         'energia_base': 20,
         'recompensa_base': 250,
-        'dificultad': 2,
+        'tier_economico': '⭐⭐ (Medio)',
+        'riesgo': '⭐⭐ (Medio)',
         'xp_por_trabajo': 12,
         'bonificaciones': {
             1: 'Asistente de Laboratorio',
@@ -746,29 +757,19 @@ def crear_tabla_progresion():
         str: Tabla formateada con la información de progresión
     """
     tabla = "```\n"
-    tabla += "Nivel | XP Necesaria | Bonificaciones\n"
-    tabla += "------|-------------|-------------\n"
-    
-    for nivel in range(1, MAX_NIVEL + 1):
-        # XP necesaria para este nivel
-        if nivel == 1:
-            xp_necesaria = XP_BASE
-        else:
-            xp_necesaria = calcular_xp_necesaria(nivel - 1)
-            
-        # Usar bonificaciones del primer trabajo como referencia (son iguales)
-        bonificaciones = []
-        for tipo, info in TIPOS_TRABAJO.items():
-            if nivel in info['bonificaciones']:
-                bonificacion = info['bonificaciones'][nivel]
-                if bonificacion not in bonificaciones:
-                    bonificaciones.append(bonificacion)
-                break
-        
-        bonificacion_txt = ', '.join(bonificaciones)
-        tabla += f"{nivel:<5} | {xp_necesaria:<11} | {bonificacion_txt}\n"
-    
-    tabla += "```"
+    tabla += "Nivel | Desbloqueo General\n"
+    tabla += "------|-------------------------------------\n"
+    tabla += "  2   | +10% Recompensa base\n"
+    tabla += "  3   | -5% Energía requerida\n"
+    tabla += "  4   | +15% Recompensa base\n"
+    tabla += "  5   | ✨ Habilidad Especial Activa/Pasiva\n"
+    tabla += "  6   | +20% Recompensa base\n"
+    tabla += "  7   | -10% Energía requerida\n"
+    tabla += "  8   | 🚀 Mecánica Avanzada (Gran Riesgo/Recompensa)\n"
+    tabla += "  9   | 🏆 Título de Maestro desbloqueado\n"
+    tabla += "  10  | +50% Recompensa, -15% Energía\n"
+    tabla += "```\n"
+    tabla += "💡 *Usa el botón 'Detalles' de cada trabajo en el menú principal para ver la habilidad exacta que se desbloquea.*"
     return tabla
 
 def crear_embed_progresion_global():
@@ -820,3 +821,21 @@ def crear_embed_progresion_global():
     return embed
 
 # La base de datos se configurará mediante la función setup_db() llamada explícitamente desde el cargador del módulo.
+
+def get_job_header(user_id, tipo_trabajo):
+    """Obtiene el encabezado estandarizado para iniciar un trabajo"""
+    bonos = calcular_bonificaciones(user_id, tipo_trabajo)
+    bono_energia = bonos["energia_reduccion"]
+    bono_recompensa = bonos["recompensa_multiplicador"] - 1.0
+    info = TIPOS_TRABAJO[tipo_trabajo]
+    nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)
+    nivel = nivel_info["nivel"]
+    bonificacion_actual = info['bonificaciones'].get(nivel, "Sin bonificaciones")
+    energia_req = calcular_energia_requerida(info['energia_base'], user_id, tipo_trabajo)
+    
+    return (
+        f"📈 **Tier:** {info.get('tier_economico', 'N/A')} | 🎯 **Riesgo:** {info.get('riesgo', 'N/A')}\n"
+        f"💰 **Recompensa:** {info['recompensa_base']} base (+{int(bono_recompensa * 100)}% bono)\n"
+        f"⚡ **Energía:** {energia_req} (-{int(bono_energia * 100)}%)\n"
+        f"🌟 **Bonus (Nivel {nivel}):** {bonificacion_actual}\n\n"
+    )

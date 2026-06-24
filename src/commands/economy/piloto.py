@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 EVENTOS_PILOTO = [
     {
@@ -123,9 +123,10 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
     tiene_radar = nivel >= 5
     tiempo_limite = 8.0 if nivel >= 8 else 6.0
 
+    header = get_job_header(user_id, tipo_trabajo)
     embed_principal = discord.Embed(
         title="🛫 Vuelo Comercial 909",
-        description="El avión ha despegado. ¡Mantente alerta a los paneles de control!",
+        description=f"{header}El avión ha despegado. ¡Mantente alerta a los paneles de control!",
         color=discord.Color.blue()
     )
     msg = await interaction.followup.send(embed=embed_principal, wait=True)

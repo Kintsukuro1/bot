@@ -297,7 +297,8 @@ class BotonDetallesTrabajo(discord.ui.Button):
             value=(
                 f"⚡ **Energía requerida:** {energia_actual} (base: {energia_base})\n"
                 f"💰 **Recompensa promedio:** {recompensa_actual} (base: {recompensa_base})\n"
-                f"📊 **Dificultad:** {'⭐' * info_trabajo.get('dificultad', 1)}\n"
+                f"📈 **Tier Económico:** {info_trabajo.get('tier_economico', 'N/A')}\n"
+                f"🎯 **Riesgo de fallo:** {info_trabajo.get('riesgo', 'N/A')}\n"
                 f"✨ **XP por trabajo:** {info_trabajo.get('xp_por_trabajo', 10)}"
             ),
             inline=False
@@ -365,9 +366,9 @@ class Trabajo(commands.Cog):
             recompensa_max = int(recompensa_ajustada * 1.2)
             rango_recompensa = f"{recompensa_min}-{recompensa_max}"
             
-            # Nivel de dificultad en estrellas
-            dificultad_num = info.get('dificultad', 1)
-            estrellas = "⭐" * dificultad_num
+            # Obtener métricas
+            tier_economico = info.get('tier_economico', 'N/A')
+            riesgo = info.get('riesgo', 'N/A')
             
             embed.add_field(
                 name=f"{info['emoji']} **{info['nombre']}**",
@@ -375,7 +376,8 @@ class Trabajo(commands.Cog):
                     f"{info['descripcion']}\n"
                     f"⚡ Energía: {energia_req}\n"
                     f"💰 Recompensa: {rango_recompensa}\n"
-                    f"📈 Dificultad: {estrellas}"
+                    f"📈 Tier: {tier_economico}\n"
+                    f"🎯 Riesgo: {riesgo}"
                 ),
                 inline=True
             )

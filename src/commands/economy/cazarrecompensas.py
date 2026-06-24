@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 
 class GridBountyView(discord.ui.View):
     def __init__(self, user_id, intentos, tiene_infrarrojos):
@@ -124,9 +124,10 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
 
     view = GridBountyView(user_id, intentos, tiene_infrarrojos)
     
+    header = get_job_header(user_id, tipo_trabajo)
     embed = discord.Embed(
         title="🗡️ Cacería de Recompensas",
-        description="Se busca un fugitivo peligroso en este sector.\nTienes un radar y debes encontrarlo buscando en la cuadrícula.",
+        description=f"{header}Se busca un fugitivo peligroso en este sector.\nTienes un radar y debes encontrarlo buscando en la cuadrícula.",
         color=discord.Color.dark_red()
     )
     embed.add_field(name="Intentos", value=f"{intentos}", inline=True)
