@@ -421,6 +421,75 @@ def record_game_result(user_id, game_type, bet_amount, result, win_amount, diffi
             """, (d_new_games, d_new_win_rate, d_new_hot_streak, d_new_cold_streak, 
                   d_new_avg_bet, risk_profile, user_id))
 
+        # === 3. Progreso de Apostador (GamblerProgress) ===
+        if bet_amount >= 25:
+            base_xp = 0
+            if bet_amount >= 10000: base_xp = 12
+            elif bet_amount >= 5000: base_xp = 9
+            elif bet_amount >= 2500: base_xp = 7
+            elif bet_amount >= 1000: base_xp = 5
+            elif bet_amount >= 500: base_xp = 3
+            elif bet_amount >= 100: base_xp = 2
+            else: base_xp = 1
+            
+            rtp = win_amount / bet_amount
+            rtp_mod = 1.0
+            if rtp < 0.25: rtp_mod = 1.30
+            elif rtp < 0.75: rtp_mod = 1.15
+            elif rtp < 1.25: rtp_mod = 1.00
+            elif rtp < 2.00: rtp_mod = 0.90
+            else: rtp_mod = 0.75
+            
+            xp_earned = max(1, round(base_xp * rtp_mod))
+            
+            cursor.execute("SELECT GamblerLevel, GamblerXP, TotalValidBets, TotalBetVolume FROM GamblerProgress WHERE UserID = %s", (user_id,))
+            gp_row = cursor.fetchone()
+            
+            if not gp_row:
+                g_level, g_xp, g_bets, g_vol = 1, xp_earned, 1, bet_amount
+                cursor.execute("""
+                    INSERT INTO GamblerProgress (UserID, GamblerLevel, GamblerXP, TotalValidBets, TotalBetVolume) 
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (user_id, g_level, g_xp, g_bets, g_vol))
+            else:
+                g_level, g_xp, g_bets, g_vol = gp_row
+                g_xp += xp_earned
+                g_bets += 1
+                g_vol += bet_amount
+                
+                # Subir de nivel
+                leveled_up = False
+                while g_level < 50:
+                    req_xp = 40 + (g_level - 1) * 15
+                    if g_xp >= req_xp:
+                        g_xp -= req_xp
+                        g_level += 1
+                        leveled_up = True
+                    else:
+                        break
+                
+                if leveled_up:
+                    cursor.execute("""
+                        UPDATE GamblerProgress 
+                        SET GamblerLevel = %s, GamblerXP = %s, TotalValidBets = %s, TotalBetVolume = %s, LastLevelUpAt = CURRENT_TIMESTAMP
+                        WHERE UserID = %s
+                    """, (g_level, g_xp, g_bets, g_vol, user_id))
+                else:
+                    cursor.execute("""
+                        UPDATE GamblerProgress 
+                        SET GamblerLevel = %s, GamblerXP = %s, TotalValidBets = %s, TotalBetVolume = %s
+                        WHERE UserID = %s
+                    """, (g_level, g_xp, g_bets, g_vol, user_id))
+        else:
+            # Aunque la apuesta sea menor a 25, necesitamos las stats básicas para los triggers.
+            cursor.execute("SELECT GamblerLevel, GamblerXP, TotalValidBets, TotalBetVolume FROM GamblerProgress WHERE UserID = %s", (user_id,))
+            gp_row = cursor.fetchone()
+            if not gp_row:
+                g_level, g_xp, g_bets, g_vol = 1, 0, 0, 0
+            else:
+                g_level, g_xp, g_bets, g_vol = gp_row
+
+
 def calculate_risk_profile(avg_bet, win_rate, hot_streak, cold_streak):
     """Calcular el perfil de riesgo del usuario."""
     if avg_bet < 100 and win_rate < 0.4:
@@ -746,6 +815,81 @@ def init_db():
                     UltimaRecarga BIGINT DEFAULT 0
                 )
             """)
+            
+            # --- TABLAS DEL PLAN MAESTRO DE PETS ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS PetsCatalog (
+                    PetID SERIAL PRIMARY KEY,
+                    Name VARCHAR(100) NOT NULL,
+                    Rarity VARCHAR(20) NOT NULL,
+                    Emoji VARCHAR(50) NOT NULL,
+                    Family VARCHAR(50),
+                    Temperament VARCHAR(50),
+                    EffectType VARCHAR(50),
+                    EffectValue DOUBLE PRECISION,
+                    EffectChance DOUBLE PRECISION,
+                    EffectCap INT,
+                    FavoriteGame VARCHAR(50),
+                    EncounterType VARCHAR(50),
+                    CaptureType VARCHAR(50),
+                    CaptureConfig INT,
+                    BaseLeaveChance DOUBLE PRECISION,
+                    FlavorText TEXT,
+                    Enabled INT DEFAULT 1
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPets (
+                    UserPetID SERIAL PRIMARY KEY,
+                    UserID BIGINT NOT NULL,
+                    PetID INT NOT NULL,
+                    IsActive INT DEFAULT 0,
+                    Status VARCHAR(20) DEFAULT 'Normal',
+                    Loyalty INT DEFAULT 50,
+                    Mood VARCHAR(20) DEFAULT 'Feliz',
+                    RecruitedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    GamesWithOwner INT DEFAULT 0,
+                    WinsWithOwner INT DEFAULT 0,
+                    LossesWithOwner INT DEFAULT 0
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GamblerProgress (
+                    UserID BIGINT PRIMARY KEY,
+                    GamblerLevel INT DEFAULT 1,
+                    GamblerXP INT DEFAULT 0,
+                    TotalValidBets INT DEFAULT 0,
+                    TotalBetVolume BIGINT DEFAULT 0,
+                    LastLevelUpAt TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPetEvents (
+                    EventID SERIAL PRIMARY KEY,
+                    UserID BIGINT NOT NULL,
+                    PetID INT,
+                    EventType VARCHAR(50) NOT NULL,
+                    Details TEXT,
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPetEncounterState (
+                    UserID BIGINT NOT NULL,
+                    EncounterType VARCHAR(50) NOT NULL,
+                    FailedEncounters INT DEFAULT 0,
+                    LastEncounterAt TIMESTAMP,
+                    LastEncounterPetID INT,
+                    SpecialProgress INT DEFAULT 0,
+                    PRIMARY KEY (UserID, EncounterType)
+                )
+            """)
+            # ---------------------------------------
+
             
             # Tabla: Transactions
             cursor.execute("""

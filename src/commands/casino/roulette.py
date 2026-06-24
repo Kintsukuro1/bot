@@ -5,6 +5,7 @@ import random
 import asyncio
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 # Definición de números
@@ -125,6 +126,10 @@ class RouletteView(discord.ui.View):
             await asyncio.to_thread(add_balance, self.user_id, winnings)
             await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Ruleta: Ganó apostando a {bet_type}")
             await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'win', profit, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, profit)
+            except Exception:
+                pass
             
             embed.color = discord.Color.green()
             embed.title = "🎰 Ruleta - ¡Ganaste!"
@@ -139,6 +144,10 @@ class RouletteView(discord.ui.View):
             nuevo_saldo = self.balance
             await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet_amount, f"Ruleta: Perdió apostando a {bet_type}")
             await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, 0)
+            except Exception:
+                pass
             
             embed.color = discord.Color.red()
             embed.title = "🎰 Ruleta - Perdiste"

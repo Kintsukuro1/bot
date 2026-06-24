@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 class Crash(commands.Cog):
@@ -324,6 +325,10 @@ class CrashView(discord.ui.View):
                         await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
                         await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
+                        try:
+                            await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, 0)
+                        except Exception:
+                            pass
                         
                         resultado_embed = discord.Embed(
                             title="🛡️ Crash Casino - ¡Salvado por Ticket!",
@@ -338,6 +343,10 @@ class CrashView(discord.ui.View):
                         nuevo_saldo = self.saldo
                         await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+                        try:
+                            await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, 0)
+                        except Exception:
+                            pass
                         
                         resultado_embed = discord.Embed(
                             title="💥 Crash Casino - ¡Explotó!",
@@ -364,6 +373,10 @@ class CrashView(discord.ui.View):
                     await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
                     await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{self.current_mult:.2f}")
                     await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
+                    try:
+                        await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
+                    except Exception:
+                        pass
                     
                     # Barra completa para victoria
                     bar = self._progress_bar_blocks(15, 15, explosion=False)

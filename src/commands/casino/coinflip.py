@@ -5,6 +5,7 @@ import random
 import asyncio
 from typing import Optional
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -59,7 +60,15 @@ class CoinflipDuelView(discord.ui.View):
             
             # Registrar historial con dificultad neutral 0.0 (duelo PVP justo)
             await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenger_balance + self.apuesta)
+            try:
+                await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, self.apuesta)
+            except Exception:
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenged_balance)
+            try:
+                await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, 0)
+            except Exception:
+                pass
         else:
             await asyncio.to_thread(add_balance, self.challenged.id, self.apuesta * 2)
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenged.display_name}")
@@ -67,7 +76,15 @@ class CoinflipDuelView(discord.ui.View):
             
             # Registrar historial
             await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenger_balance - self.apuesta)
+            try:
+                await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, 0)
+            except Exception:
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenged_balance + self.apuesta * 2)
+            try:
+                await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, self.apuesta)
+            except Exception:
+                pass
             
         # Embed de resultado final
         embed = discord.Embed(
@@ -218,6 +235,10 @@ class CoinflipView(discord.ui.View):
             
             # Registrar resultado para el sistema de dificultad
             await asyncio.to_thread(record_game_result, user_id, 'coinflip', self.apuesta, 'win', ganancia, difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'coinflip', self.apuesta, ganancia)
+            except Exception:
+                pass
             
             embed = discord.Embed(
                 title="🎉 ¡GANASTE!",
@@ -238,6 +259,10 @@ class CoinflipView(discord.ui.View):
             
             # Registrar resultado para el sistema de dificultad
             await asyncio.to_thread(record_game_result, user_id, 'coinflip', self.apuesta, 'loss', 0, difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'coinflip', self.apuesta, 0)
+            except Exception:
+                pass
             
             # El usuario sólo pierde cuando no acierta
             razon = "No acertaste el resultado"

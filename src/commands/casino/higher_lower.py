@@ -5,6 +5,7 @@ import random
 import asyncio
 from typing import Optional, Dict, Any
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 # Cartas y sus valores

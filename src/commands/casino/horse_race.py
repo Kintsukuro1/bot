@@ -6,6 +6,7 @@ import asyncio
 from typing import Dict, List, Tuple
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, add_balance
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 HORSES = [
@@ -242,11 +243,19 @@ class HorseRaceView(discord.ui.View):
                 
                 await asyncio.to_thread(registrar_transaccion, user_id, winnings, f"Caballos: Ganador x{winner_mult} + Pozo")
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'win', profit, diff_mod, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, user_id, 'horse_race', bet_amt, profit)
+                except Exception:
+                    pass
                 
                 winners_text += f"✅ {user.mention} ganó **{winnings}** monedas.\n"
             else:
                 balance = await asyncio.to_thread(get_balance, user_id)
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'loss', 0, diff_mod, balance)
+                try:
+                    await process_post_game_events(interaction, user_id, 'horse_race', bet_amt, 0)
+                except Exception:
+                    pass
                 winners_text += f"❌ {user.display_name} perdió **{bet_amt}** monedas.\n"
                 
         if not winners_text:

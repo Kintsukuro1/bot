@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 CHOICES = {
@@ -137,7 +138,15 @@ class RPSMainView(discord.ui.View):
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, self.bet, "Empate PPT (Devolución)")
             
             await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'tie', 0, diff_1, bal_1 + self.bet)
+            try:
+                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
+            except Exception:
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'tie', 0, diff_2, bal_2 + self.bet)
+            try:
+                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
+            except Exception:
+                pass
 
             embed.title = "🤝 ¡Empate!"
             embed.color = discord.Color.light_grey()
@@ -149,7 +158,15 @@ class RPSMainView(discord.ui.View):
             await asyncio.to_thread(registrar_transaccion, self.challenger.id, pozo, f"Ganó PPT vs {self.challenged.display_name}")
             
             await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'win', self.bet, diff_1, bal_1 + pozo)
+            try:
+                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, self.bet)
+            except Exception:
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'loss', 0, diff_2, bal_2)
+            try:
+                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
+            except Exception:
+                pass
 
             embed.title = f"👑 ¡{self.challenger.display_name} gana!"
             embed.color = discord.Color.green()
@@ -161,7 +178,15 @@ class RPSMainView(discord.ui.View):
             await asyncio.to_thread(registrar_transaccion, self.challenged.id, pozo, f"Ganó PPT vs {self.challenger.display_name}")
             
             await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'loss', 0, diff_1, bal_1)
+            try:
+                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
+            except Exception:
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'win', self.bet, diff_2, bal_2 + pozo)
+            try:
+                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, self.bet)
+            except Exception:
+                pass
 
             embed.title = f"👑 ¡{self.challenged.display_name} gana!"
             embed.color = discord.Color.green()

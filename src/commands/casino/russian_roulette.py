@@ -6,6 +6,7 @@ import asyncio
 from typing import List
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 class RRLobbyView(discord.ui.View):
@@ -154,6 +155,10 @@ class RRGameView(discord.ui.View):
             diff, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, current_player.id, self.bet, 'russian_roulette')
             bal = await asyncio.to_thread(get_balance, current_player.id)
             await asyncio.to_thread(record_game_result, current_player.id, 'russian_roulette', self.bet, 'loss', 0, diff, bal)
+            try:
+                await process_post_game_events(interaction, current_player.id, 'russian_roulette', self.bet, 0)
+            except Exception:
+                pass
             
             self.players.pop(self.current_turn)
             # Recargar y girar cilindro
@@ -184,6 +189,10 @@ class RRGameView(discord.ui.View):
         nuevo_saldo = await asyncio.to_thread(get_balance, winner.id)
         await asyncio.to_thread(registrar_transaccion, winner.id, pozo, f"Ganó Ruleta Rusa (Pozo de {self.initial_players_count} jugadores)")
         await asyncio.to_thread(record_game_result, winner.id, 'russian_roulette', self.bet, 'win', profit, diff, nuevo_saldo)
+        try:
+            await process_post_game_events(interaction, winner.id, 'russian_roulette', self.bet, profit)
+        except Exception:
+            pass
         
         embed = self.message.embeds[0]
         embed.color = discord.Color.gold()

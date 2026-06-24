@@ -6,6 +6,7 @@ import asyncio
 from typing import List
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 # Cálculo del multiplicador de Mines (combinatoria clásica)
@@ -153,6 +154,10 @@ class MinesView(discord.ui.View):
             nuevo_saldo = self.balance
             await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Timeout ({self.bombs} bombas)")
             await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, self.user_id, 'mines', self.bet, 0)
+            except Exception:
+                pass
             
             try:
                 if self.message:
@@ -198,6 +203,10 @@ class MinesView(discord.ui.View):
         nuevo_saldo = self.balance
         await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Perdida ({self.bombs} bombas)")
         await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+        try:
+            await process_post_game_events(interaction, self.user_id, 'mines', self.bet, 0)
+        except Exception:
+            pass
 
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.red()
@@ -261,6 +270,10 @@ class MinesView(discord.ui.View):
         await asyncio.to_thread(add_balance, self.user_id, winnings)
         await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Mines: Retiro x{multiplier:.2f} ({self.bombs} bombas)")
         await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'win', profit, self.difficulty_modifier, nuevo_saldo)
+        try:
+            await process_post_game_events(interaction, self.user_id, 'mines', self.bet, profit)
+        except Exception:
+            pass
 
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()

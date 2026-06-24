@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 suits = ["♠", "♥", "♦", "♣"]
@@ -92,6 +93,10 @@ class BlackjackView(discord.ui.View):
             nuevo_saldo = self.saldo
             await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: se pasó de 21")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'blackjack', self.apuesta, 0)
+            except Exception:
+                pass
             
             embed_in_progress.add_field(name="💥 ¡Te pasaste!", value=f"❌ Perdiste **{self.apuesta}** monedas", inline=False)
             embed_in_progress.color = discord.Color.red()
@@ -148,6 +153,10 @@ class BlackjackView(discord.ui.View):
             await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
             await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: dealer se pasó")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'win', ganancia, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'blackjack', self.apuesta, ganancia)
+            except Exception:
+                pass
             
             embed.add_field(name="🎉 ¡Ganaste!", value=f"✅ El dealer se pasó\n**+{ganancia}** monedas", inline=False)
             embed.color = discord.Color.green()
@@ -158,6 +167,10 @@ class BlackjackView(discord.ui.View):
             await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
             await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: ganó al dealer")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'win', ganancia, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'blackjack', self.apuesta, ganancia)
+            except Exception:
+                pass
             
             embed.add_field(name="🎉 ¡Ganaste!", value=f"✅ Tu mano es mejor\n**+{ganancia}** monedas", inline=False)
             embed.color = discord.Color.green()
@@ -166,6 +179,10 @@ class BlackjackView(discord.ui.View):
             nuevo_saldo = self.saldo
             await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: perdió contra dealer")
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'blackjack', self.apuesta, 0)
+            except Exception:
+                pass
             
             embed.add_field(name="😞 Perdiste", value=f"❌ El dealer tiene mejor mano\n**-{self.apuesta}** monedas", inline=False)
             embed.color = discord.Color.red()
@@ -174,6 +191,10 @@ class BlackjackView(discord.ui.View):
             nuevo_saldo = self.saldo + self.apuesta
             await asyncio.to_thread(add_balance, user_id, self.apuesta)
             await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'draw', 0, self.difficulty_modifier, nuevo_saldo)
+            try:
+                await process_post_game_events(interaction, user_id, 'blackjack', self.apuesta, 0)
+            except Exception:
+                pass
             
             embed.add_field(name="🤝 ¡Empate!", value="🟰 Misma puntuación\nRecuperas tu apuesta", inline=False)
             embed.color = discord.Color.yellow()
@@ -248,6 +269,10 @@ class Blackjack(commands.Cog):
             if dealer_value == 21:
                 # Empate
                 await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'draw', 0, difficulty_modifier, saldo)
+                try:
+                    await process_post_game_events(interaction, user_id, 'blackjack', apuesta, 0)
+                except Exception:
+                    pass
                 embed.add_field(name="🤝 ¡Empate!", value="🟰 Ambos tienen blackjack\nRecuperas tu apuesta", inline=False)
                 embed.color = discord.Color.yellow()
             else:
@@ -262,6 +287,10 @@ class Blackjack(commands.Cog):
                 await asyncio.to_thread(add_balance, user_id, apuesta + ganancia)
                 await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: blackjack natural")
                 await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'win', ganancia, difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, user_id, 'blackjack', apuesta, ganancia)
+                except Exception:
+                    pass
                 
                 embed.add_field(name="🎉 ¡BLACKJACK!", value=f"✅ **+{ganancia}** monedas (1.5x)", inline=False)
                 embed.color = discord.Color.gold()

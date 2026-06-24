@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 class Slots(commands.Cog):
@@ -119,6 +120,10 @@ class Slots(commands.Cog):
                 
                 await asyncio.to_thread(registrar_transaccion, user_id, profit, f"Slots: {payout_desc}{ticket_desc}")
                 await asyncio.to_thread(record_game_result, user_id, 'slots', apuesta, 'win', profit, difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, user_id, 'slots', apuesta, profit)
+                except Exception:
+                    pass
                 
                 title = '🎰 ¡Felicidades! ¡Has ganado!'
                 color = discord.Color.green()
@@ -129,6 +134,10 @@ class Slots(commands.Cog):
                 nuevo_saldo = saldo_usuario
                 await asyncio.to_thread(registrar_transaccion, user_id, -apuesta, "Slots: sin premio")
                 await asyncio.to_thread(record_game_result, user_id, 'slots', apuesta, 'loss', 0, difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, user_id, 'slots', apuesta, 0)
+                except Exception:
+                    pass
                 
                 title = '🎰 Lo siento, has perdido.'
                 color = discord.Color.red()
