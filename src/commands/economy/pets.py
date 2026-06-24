@@ -214,21 +214,18 @@ async def send_proc_message(interaction, emoji, name, amount, effect_type):
     except Exception as e:
         logger.warning(f"No se pudo enviar mensaje de proc de mascota: {e}")
 
-        raise
 async def send_escape_message(interaction, emoji, name):
     try:
         await interaction.channel.send(f"💔 *Tu {emoji} **{name}** te mira con decepción tras tus fracasos... y te abandona.*")
     except Exception as e:
         logger.warning(f"No se pudo enviar mensaje de escape de mascota: {e}")
 
-        raise
 async def send_revive_message(interaction, emoji, name):
     try:
         await interaction.channel.send(f"🔥 *Tu {emoji} **{name}** arde en cenizas y resurge, negándose a abandonarte.*")
     except Exception as e:
         logger.warning(f"No se pudo enviar mensaje de resurrección de mascota: {e}")
 
-        raise
 async def send_encounter_ui(interaction, user_id, pet_data):
     try:
         embed = discord.Embed(
@@ -250,7 +247,6 @@ async def send_encounter_ui(interaction, user_id, pet_data):
     except Exception as e:
         logger.warning(f"No se pudo enviar interfaz de encuentro de mascota: {e}")
 
-        raise
 class CaptureView(discord.ui.View):
     def __init__(self, user_id, pet_data):
         super().__init__(timeout=60)

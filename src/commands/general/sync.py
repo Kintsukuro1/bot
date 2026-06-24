@@ -43,8 +43,8 @@ class SyncCommand(commands.Cog):
                 await ctx.send(f"✅ Comandos locales limpiados. {len(synced)} comandos globales sincronizados exitosamente.")
         except Exception as e:
             await ctx.send(f"❌ Error al sincronizar comandos: {str(e)}")
-
             raise
+
 async def setup(bot):
     await bot.add_cog(SyncCommand(bot))
     print("SyncCommand cog loaded successfully.")

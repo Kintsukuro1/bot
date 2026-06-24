@@ -156,7 +156,7 @@ class HorseRaceView(discord.ui.View):
         try:
             await self.message.edit(embed=embed, view=self)
         except:
-            pass
+            raise
 
     async def run_race(self):
         self.started = True

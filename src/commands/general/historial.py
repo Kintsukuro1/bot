@@ -58,8 +58,8 @@ class Historial(commands.Cog):
         except Exception as e:
             print(f"Error al obtener historial: {e}")
             await interaction.response.send_message("❌ Ocurrió un error al obtener el historial de transacciones.", ephemeral=True)
-
             raise
+
 async def setup(bot):
     await bot.add_cog(Historial(bot))
     print("Historial cog loaded successfully.")

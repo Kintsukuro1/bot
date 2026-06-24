@@ -141,14 +141,13 @@ class RPSMainView(discord.ui.View):
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
             except Exception:
-                raise
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'tie', 0, diff_2, bal_2 + self.bet)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
             except Exception:
                 pass
 
-                raise
             embed.title = "🤝 ¡Empate!"
             embed.color = discord.Color.light_grey()
             embed.description += "Ambos reciben su apuesta de vuelta."
@@ -162,14 +161,13 @@ class RPSMainView(discord.ui.View):
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, self.bet)
             except Exception:
-                raise
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'loss', 0, diff_2, bal_2)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
             except Exception:
                 pass
 
-                raise
             embed.title = f"👑 ¡{self.challenger.display_name} gana!"
             embed.color = discord.Color.green()
             embed.description += f"**{self.challenger.display_name}** se lleva el pozo de **{pozo}** monedas."
@@ -183,14 +181,13 @@ class RPSMainView(discord.ui.View):
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
             except Exception:
-                raise
+                pass
             await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'win', self.bet, diff_2, bal_2 + pozo)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, self.bet)
             except Exception:
                 pass
 
-                raise
             embed.title = f"👑 ¡{self.challenged.display_name} gana!"
             embed.color = discord.Color.green()
             embed.description += f"**{self.challenged.display_name}** se lleva el pozo de **{pozo}** monedas."
@@ -198,7 +195,7 @@ class RPSMainView(discord.ui.View):
         try:
             await self.message.edit(embed=embed, view=None)
         except:
-            pass
+            raise
 
     async def on_timeout(self):
         self.clear_items()
@@ -218,7 +215,7 @@ class RPSMainView(discord.ui.View):
                     
                 await self.message.edit(embed=embed, view=None)
         except:
-            pass
+            raise
 
 class RPSBet(commands.Cog):
     def __init__(self, bot):

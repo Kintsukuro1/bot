@@ -62,7 +62,7 @@ class RouletteView(discord.ui.View):
                 embed.set_footer(text="Tu apuesta te ha sido devuelta.")
                 await self.message.edit(embed=embed, view=self)
         except:
-            pass
+            raise
 
     def check_win(self, bet_type: str, winning_number: int) -> float:
         if winning_number == 0:
@@ -123,7 +123,6 @@ class RouletteView(discord.ui.View):
             except Exception:
                 pass
             
-                raise
             embed.color = discord.Color.green()
             embed.title = "🎰 Ruleta - ¡Ganaste!"
             embed.description = (
@@ -142,7 +141,6 @@ class RouletteView(discord.ui.View):
             except Exception:
                 pass
             
-                raise
             embed.color = discord.Color.red()
             embed.title = "🎰 Ruleta - Perdiste"
             embed.description = (

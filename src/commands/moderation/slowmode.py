@@ -26,7 +26,7 @@ class Slowmode(commands.Cog):
             raise
         except Exception as e:
             await interaction.response.send_message(f"❌ Ocurrió un error al intentar cambiar el slowmode: {e}", ephemeral=True)
-
             raise
+
 async def setup(bot):
     await bot.add_cog(Slowmode(bot))

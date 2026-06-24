@@ -41,7 +41,7 @@ class Purge(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
-
             raise
+
 async def setup(bot):
     await bot.add_cog(Purge(bot))

@@ -304,7 +304,7 @@ class Robar(commands.Cog):
                 await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
-
             raise
+
 async def setup(bot):
     await bot.add_cog(Robar(bot))

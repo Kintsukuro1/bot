@@ -97,7 +97,7 @@ class TieDecisionView(discord.ui.View):
             if self.message:
                 await self.message.edit(view=self)
         except:
-            pass
+            raise
 
 class CasinoWarView(discord.ui.View):
     def __init__(self, user_id):

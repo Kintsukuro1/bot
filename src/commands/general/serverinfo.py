@@ -18,7 +18,6 @@ class ServerInfo(commands.Cog):
                 except Exception:
                     owner = None
 
-                    raise
             owner_display = owner.mention if owner and hasattr(owner, "mention") else f"ID: {guild.owner_id}"
 
             embed = discord.Embed(
@@ -34,7 +33,7 @@ class ServerInfo(commands.Cog):
             await interaction.response.send_message(embed=embed)
         except Exception as e:
             await interaction.response.send_message(f"Ocurrió un error: {e}", ephemeral=True)
-
             raise
+
 async def setup(bot):
     await bot.add_cog(ServerInfo(bot))

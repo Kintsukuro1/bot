@@ -20,8 +20,8 @@ class Minas(commands.Cog):
         except Exception as e:
             print(f"[Minas] Error cargando minas desde DB: {e}")
             self.minas_activas = {}
-
             raise
+
     @app_commands.command(name="poner_minas", description="Coloca minas explosivas ocultas en un canal específico.")
     @app_commands.describe(
         cantidad="Número de minas a colocar",
@@ -119,11 +119,9 @@ class Minas(commands.Cog):
                         color=discord.Color.orange()
                     )
                     await message.channel.send(embed=embed_error)
-                    raise
                 except Exception as e:
                     print(f"Error al mutear por mina: {e}")
 
-                    raise
     @app_commands.command(name="sacar_minas", description="Elimina todas las minas de un canal específico.")
     @app_commands.describe(
         canal="El canal donde se eliminarán las minas (opcional, por defecto el canal actual)"

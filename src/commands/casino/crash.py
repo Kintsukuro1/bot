@@ -128,7 +128,6 @@ class CrashView(discord.ui.View):
                 await interaction.response.send_message("El juego ya ha terminado.", ephemeral=True)
             except discord.InteractionResponded:
                 await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
-                raise
             return
         
         # CAPTURA INSTANTÁNEA del multiplicador actual para evitar cambios del bucle
@@ -188,7 +187,7 @@ class CrashView(discord.ui.View):
                 try:
                     item.disabled = True
                 except AttributeError:
-                    raise  # Algunos items pueden no tener disabled
+                    pass  # Algunos items pueden no tener disabled
             
             # Intentar responder a la interacción
             try:
@@ -212,7 +211,6 @@ class CrashView(discord.ui.View):
                 except:
                     # Como último recurso, enviar un nuevo mensaje
                     await interaction.followup.send(embed=resultado_embed, ephemeral=True)
-                raise
             
         except Exception as e:
             # En caso de error, enviar mensaje de error
@@ -222,7 +220,8 @@ class CrashView(discord.ui.View):
                 else:
                     await interaction.followup.send("❌ Error procesando el retiro. Contacta al administrador.", ephemeral=True)
             except:
-                raise
+                pass
+            raise
         finally:
             self.stop()
 
@@ -294,7 +293,6 @@ class CrashView(discord.ui.View):
                         except Exception:
                             pass
                     
-                            raise
                     # Esperar antes del siguiente paso
                     await asyncio.sleep(sleep_time)
                 
@@ -337,7 +335,6 @@ class CrashView(discord.ui.View):
                         except Exception:
                             pass
                         
-                            raise
                         resultado_embed = discord.Embed(
                             title="🛡️ Crash Casino - ¡Salvado por Ticket!",
                             description=(
@@ -356,7 +353,6 @@ class CrashView(discord.ui.View):
                         except Exception:
                             pass
                         
-                            raise
                         resultado_embed = discord.Embed(
                             title="💥 Crash Casino - ¡Explotó!",
                             description=(
@@ -387,7 +383,6 @@ class CrashView(discord.ui.View):
                     except Exception:
                         pass
                     
-                        raise
                     # Barra completa para victoria
                     bar = self._progress_bar_blocks(15, 15, explosion=False)
                     resultado_embed = discord.Embed(
@@ -412,7 +407,6 @@ class CrashView(discord.ui.View):
                     except:
                         pass
                         
-                    raise
         except Exception as e:
             # En caso de error, marcar como terminado
             self.juego_terminado = True

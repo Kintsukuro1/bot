@@ -160,7 +160,6 @@ class RRGameView(discord.ui.View):
             except Exception:
                 pass
             
-                raise
             self.players.pop(self.current_turn)
             # Recargar y girar cilindro
             self.chamber_slots = 6
