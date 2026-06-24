@@ -290,16 +290,98 @@ class MinesView(discord.ui.View):
         
         await interaction.response.edit_message(embed=embed, view=self)
 
+class MinesSetupView(discord.ui.View):
+    def __init__(self, user_id: int, apuesta: int, user_name: str):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.apuesta = apuesta
+        self.user_name = user_name
+        self.bombas = 3
+        
+        options = []
+        for i in range(1, 20):
+            mult = calculate_multiplier(i, 20, 1)
+            options.append(discord.SelectOption(label=f"{i} Bombas", description=f"Primer multiplicador: x{mult:.2f}", value=str(i), default=(i==3)))
+            
+        self.select_bombas = discord.ui.Select(placeholder="Selecciona la cantidad de bombas...", options=options)
+        self.select_bombas.callback = self.select_callback
+        self.add_item(self.select_bombas)
+        
+        self.btn_start = discord.ui.Button(label="Comenzar Juego", style=discord.ButtonStyle.success)
+        self.btn_start.callback = self.start_callback
+        self.add_item(self.btn_start)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Esta no es tu partida.", ephemeral=True)
+            return
+            
+        self.bombas = int(self.select_bombas.values[0])
+        for opt in self.select_bombas.options:
+            opt.default = (opt.value == str(self.bombas))
+            
+        mult = calculate_multiplier(self.bombas, 20, 1)
+        embed = interaction.message.embeds[0]
+        embed.description = (
+            f"💰 Apuesta: **{self.apuesta}**\n"
+            f"💣 Bombas seleccionadas: **{self.bombas}**\n\n"
+            f"Multiplicador al primer acierto: **x{mult:.2f}**\n"
+            "A mayor cantidad de bombas, mayor el riesgo y las ganancias."
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def start_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Esta no es tu partida.", ephemeral=True)
+            return
+            
+        await interaction.response.defer()
+        
+        await asyncio.to_thread(ensure_user, self.user_id, self.user_name)
+        success, saldo_usuario = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
+        if not success:
+            await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
+            return
+            
+        difficulty_modifier, explanation = await asyncio.to_thread(
+            DynamicDifficulty.calculate_dynamic_difficulty, self.user_id, self.apuesta, 'mines'
+        )
+
+        view = MinesView(self.user_id, self.apuesta, self.bombas, difficulty_modifier, saldo_usuario)
+        
+        embed = discord.Embed(
+            title="💣 Buscaminas",
+            description=(
+                f"💰 Apuesta: **{self.apuesta}**\n"
+                f"💣 Bombas: **{self.bombas}**\n"
+                f"💎 Gemas: **0 / {20 - self.bombas}**\n\n"
+                f"Multiplicador actual: **x1.00**\n"
+                f"Próximo multiplicador: **x{calculate_multiplier(self.bombas, 20, 1):.2f}**"
+            ),
+            color=discord.Color.blue()
+        )
+        
+        await interaction.edit_original_response(embed=embed, view=view)
+        view.message = interaction.message
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        try:
+            if hasattr(self, 'message') and self.message:
+                await self.message.edit(view=self)
+        except:
+            pass
+
 class Mines(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @app_commands.command(name="mines", description="Juega al Buscaminas. Encuentra diamantes y evita las bombas.")
     @app_commands.describe(
-        apuesta="Cantidad a apostar",
-        bombas="Cantidad de bombas en el tablero (1-19, por defecto 3)"
+        apuesta="Cantidad a apostar"
     )
-    async def mines(self, interaction: discord.Interaction, apuesta: int, bombas: int = 3):
+    async def mines(self, interaction: discord.Interaction, apuesta: int):
         user_id = interaction.user.id
         user_name = interaction.user.name
         
@@ -307,32 +389,15 @@ class Mines(commands.Cog):
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
             
-        if bombas < 1 or bombas > 19:
-            await interaction.response.send_message("❌ La cantidad de bombas debe estar entre 1 y 19.", ephemeral=True)
-            return
-
-        await asyncio.to_thread(ensure_user, user_id, user_name)
-        
-        success, saldo_usuario = await asyncio.to_thread(deduct_balance, user_id, apuesta)
-        if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
-            return
-
-        # Calcular dificultad
-        difficulty_modifier, explanation = await asyncio.to_thread(
-            DynamicDifficulty.calculate_dynamic_difficulty, user_id, apuesta, 'mines'
-        )
-
-        view = MinesView(user_id, apuesta, bombas, difficulty_modifier, saldo_usuario)
+        view = MinesSetupView(user_id, apuesta, user_name)
         
         embed = discord.Embed(
-            title="💣 Buscaminas",
+            title="💣 Configuración de Buscaminas",
             description=(
                 f"💰 Apuesta: **{apuesta}**\n"
-                f"💣 Bombas: **{bombas}**\n"
-                f"💎 Gemas: **0 / {20 - bombas}**\n\n"
-                f"Multiplicador actual: **x1.00**\n"
-                f"Próximo multiplicador: **x{calculate_multiplier(bombas, 20, 1):.2f}**"
+                f"💣 Bombas seleccionadas: **3**\n\n"
+                f"Multiplicador al primer acierto: **x{calculate_multiplier(3, 20, 1):.2f}**\n"
+                "A mayor cantidad de bombas, mayor el riesgo y las ganancias."
             ),
             color=discord.Color.blue()
         )

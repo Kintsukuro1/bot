@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from src.db import get_balance, deduct_balance, set_balance, registrar_transaccion, get_provably_fair_seeds, advance_provably_fair_nonce
+from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, get_provably_fair_seeds, advance_provably_fair_nonce
 from src.utils.provably_fair import get_uniform_integer
 
 # Definición simple de baraja
@@ -45,7 +45,7 @@ class WarSettings(discord.ui.Modal, title="Apuesta para Casino War"):
             await interaction.response.send_message("❌ Monto inválido.", ephemeral=True)
             return
 
-        saldo = get_balance(interaction.user.id)
+        saldo = await asyncio.to_thread(get_balance, interaction.user.id)
         if saldo < apuesta:
             await interaction.response.send_message("❌ Saldo insuficiente.", ephemeral=True)
             return
@@ -79,7 +79,7 @@ class TieDecisionView(discord.ui.View):
             await interaction.response.send_message("❌ Solo el creador puede usar esto.", ephemeral=True)
             return
             
-        saldo = get_balance(self.user_id)
+        saldo = await asyncio.to_thread(get_balance, self.user_id)
         if saldo < self.apuesta:
             await interaction.response.send_message("❌ Saldo insuficiente para ir a la Guerra.", ephemeral=True)
             return
@@ -123,30 +123,36 @@ class CasinoWarView(discord.ui.View):
             await interaction.response.send_message("⚠️ Por favor configura tu apuesta primero.", ephemeral=True)
             return
             
+        await asyncio.to_thread(ensure_user, self.user_id)
+
         # Descontar saldo
-        success, nuevo_saldo = deduct_balance(self.user_id, self.apuesta)
+        success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
         if not success:
             await interaction.response.send_message("❌ Saldo insuficiente.", ephemeral=True)
             return
             
         self.clear_items()
         
-        player_card, player_val, nonce1 = draw_card_pf(self.user_id)
-        dealer_card, dealer_val, nonce2 = draw_card_pf(self.user_id)
+        player_card, player_val, nonce1 = await asyncio.to_thread(draw_card_pf, self.user_id)
+        dealer_card, dealer_val, nonce2 = await asyncio.to_thread(draw_card_pf, self.user_id)
         
         embed = discord.Embed(title="⚔️ Casino War", color=discord.Color.blue())
         embed.add_field(name="Tus Cartas", value=f"🃏 **{player_card}**", inline=True)
         embed.add_field(name="Crupier", value=f"🃏 **{dealer_card}**", inline=True)
         
         if player_val > dealer_val:
-            pago = self.apuesta * 2
-            set_balance(self.user_id, nuevo_saldo + pago)
-            registrar_transaccion(self.user_id, pago, "Ganancia Casino War")
-            embed.description = f"**¡GANASTE!** Tu carta es mayor.\nGanancia: {pago} monedas."
+            profit = self.apuesta
+            await asyncio.to_thread(add_balance, self.user_id, self.apuesta * 2)
+            await asyncio.to_thread(registrar_transaccion, self.user_id, profit, "Ganancia Casino War")
+            saldo_final = nuevo_saldo + self.apuesta * 2
+            await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'win', profit, 0.0, saldo_final)
+            embed.description = f"**¡GANASTE!** Tu carta es mayor.\nGanancia: {self.apuesta * 2} monedas."
             embed.color = discord.Color.green()
             await interaction.response.edit_message(embed=embed, view=None)
             
         elif player_val < dealer_val:
+            await asyncio.to_thread(registrar_transaccion, self.user_id, -self.apuesta, "Pérdida Casino War")
+            await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'loss', 0, 0.0, nuevo_saldo)
             embed.description = "**¡PERDISTE!** La banca tiene una carta mayor."
             embed.color = discord.Color.red()
             await interaction.response.edit_message(embed=embed, view=None)
@@ -164,39 +170,46 @@ class CasinoWarView(discord.ui.View):
             
             if tie_view.decision == "Surrender":
                 devolucion = int(self.apuesta * 0.5)
-                set_balance(self.user_id, get_balance(self.user_id) + devolucion)
+                await asyncio.to_thread(add_balance, self.user_id, devolucion)
+                await asyncio.to_thread(registrar_transaccion, self.user_id, -(self.apuesta - devolucion), "Casino War: Rendición")
+                await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'loss', 0, 0.0, nuevo_saldo + devolucion)
                 embed.description = f"Te has rendido. Recuperas {devolucion} monedas."
                 embed.color = discord.Color.orange()
                 await interaction.edit_original_response(embed=embed, view=None)
                 
             elif tie_view.decision == "War":
                 # Cobrar la otra apuesta
-                success, _ = deduct_balance(self.user_id, self.apuesta)
+                success, _ = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
                 if not success:
                     embed.description = "❌ No tenías saldo para la Guerra. Cancelando y rindiendo la mano automáticamente."
                     devolucion = int(self.apuesta * 0.5)
-                    set_balance(self.user_id, get_balance(self.user_id) + devolucion)
+                    await asyncio.to_thread(add_balance, self.user_id, devolucion)
                     await interaction.edit_original_response(embed=embed, view=None)
                     return
                 
                 # Quema de cartas (simulada por nonces extra)
                 for _ in range(3):
-                    advance_provably_fair_nonce(self.user_id)
+                    await asyncio.to_thread(advance_provably_fair_nonce, self.user_id)
                 
-                war_player_card, war_player_val, n3 = draw_card_pf(self.user_id)
-                war_dealer_card, war_dealer_val, n4 = draw_card_pf(self.user_id)
+                war_player_card, war_player_val, n3 = await asyncio.to_thread(draw_card_pf, self.user_id)
+                war_dealer_card, war_dealer_val, n4 = await asyncio.to_thread(draw_card_pf, self.user_id)
                 
                 embed.add_field(name="Tu Carta (Guerra)", value=f"🃏 **{war_player_card}**", inline=True)
                 embed.add_field(name="Crupier (Guerra)", value=f"🃏 **{war_dealer_card}**", inline=True)
                 
                 if war_player_val >= war_dealer_val:
-                    # Gana el dinero de la guerra (1:1), empata la original
-                    pago = self.apuesta * 3  # (1 original devuelta + 1 guerra devuelta + 1 ganancia guerra)
-                    set_balance(self.user_id, get_balance(self.user_id) + pago)
-                    registrar_transaccion(self.user_id, pago, "Ganancia Casino War (Guerra)")
+                    pago = self.apuesta * 3
+                    profit = self.apuesta
+                    await asyncio.to_thread(add_balance, self.user_id, pago)
+                    await asyncio.to_thread(registrar_transaccion, self.user_id, profit, "Ganancia Casino War (Guerra)")
+                    saldo_final = await asyncio.to_thread(get_balance, self.user_id)
+                    await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta * 2, 'win', profit, 0.0, saldo_final)
                     embed.description = f"**¡GANASTE LA GUERRA!**\nGanancia total: {pago} monedas."
                     embed.color = discord.Color.green()
                 else:
+                    saldo_final = await asyncio.to_thread(get_balance, self.user_id)
+                    await asyncio.to_thread(registrar_transaccion, self.user_id, -(self.apuesta * 2), "Pérdida Casino War (Guerra)")
+                    await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta * 2, 'loss', 0, 0.0, saldo_final)
                     embed.description = "**¡PERDISTE LA GUERRA!**"
                     embed.color = discord.Color.red()
                     

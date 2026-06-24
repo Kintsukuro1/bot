@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import math
-from src.db import get_balance, deduct_balance, set_balance, registrar_transaccion, get_provably_fair_seeds, advance_provably_fair_nonce
+from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, get_provably_fair_seeds, advance_provably_fair_nonce
 from src.utils.provably_fair import get_uniform_float
 
 # Definición de multiplicadores según riesgo (bajo, medio, alto) y filas (8 a 16)
@@ -64,7 +64,7 @@ class PlinkoSettings(discord.ui.Modal, title="Configurar Plinko"):
             await interaction.response.send_message("❌ Filas inválidas.", ephemeral=True)
             return
 
-        saldo = get_balance(interaction.user.id)
+        saldo = await asyncio.to_thread(get_balance, interaction.user.id)
         if saldo < apuesta:
             await interaction.response.send_message("❌ Saldo insuficiente.", ephemeral=True)
             return
@@ -116,9 +116,11 @@ class PlinkoView(discord.ui.View):
         if not self.configurado:
             await interaction.response.send_message("⚠️ Por favor configura tu apuesta primero.", ephemeral=True)
             return
-            
+
+        await asyncio.to_thread(ensure_user, self.user_id)
+
         # Descontar saldo
-        success, nuevo_saldo = deduct_balance(self.user_id, self.apuesta)
+        success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
         if not success:
             await interaction.response.send_message("❌ Saldo insuficiente.", ephemeral=True)
             return
@@ -126,8 +128,8 @@ class PlinkoView(discord.ui.View):
         # Iniciar juego (Provably Fair)
         self.clear_items()
         
-        seeds = get_provably_fair_seeds(self.user_id)
-        nonce = advance_provably_fair_nonce(self.user_id)
+        seeds = await asyncio.to_thread(get_provably_fair_seeds, self.user_id)
+        nonce = await asyncio.to_thread(advance_provably_fair_nonce, self.user_id)
         
         # Calcular trayectoria usando Provably Fair
         path = []
@@ -145,10 +147,17 @@ class PlinkoView(discord.ui.View):
         # El bucket final es la suma de los desplazamientos a la derecha
         multiplicador = PLINKO_PAYOUTS[self.filas][self.riesgo][position]
         pago_final = int(self.apuesta * multiplicador)
+        profit = pago_final - self.apuesta
         
         if pago_final > 0:
-            set_balance(self.user_id, nuevo_saldo + pago_final)
-            registrar_transaccion(self.user_id, pago_final, "Ganancia Plinko")
+            await asyncio.to_thread(add_balance, self.user_id, pago_final)
+            await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Plinko: x{multiplicador}")
+        else:
+            await asyncio.to_thread(registrar_transaccion, self.user_id, -self.apuesta, "Plinko: sin premio")
+
+        saldo_final = nuevo_saldo + pago_final
+        result_str = 'win' if profit > 0 else 'loss'
+        await asyncio.to_thread(record_game_result, self.user_id, 'plinko', self.apuesta, result_str, max(0, profit), 0.0, saldo_final)
             
         # Animación de Plinko muy básica
         embed = discord.Embed(title="🎾 Plinko en progreso...", color=discord.Color.orange())

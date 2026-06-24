@@ -5,16 +5,16 @@ import random
 import asyncio
 from typing import Dict, List, Tuple
 
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, add_balance
+from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
-HORSES = [
-    {"name": "Relámpago", "emoji": "⚡"},
-    {"name": "Sombra", "emoji": "🌑"},
-    {"name": "Tornado", "emoji": "🌪️"},
-    {"name": "Furia", "emoji": "🔥"},
-    {"name": "Brisa", "emoji": "🍃"}
+HORSE_TEMPLATES = [
+    {"emoji": "⚡"},
+    {"emoji": "🌑"},
+    {"emoji": "🌪️"},
+    {"emoji": "🔥"},
+    {"emoji": "🍃"}
 ]
 
 POSSIBLE_NAMES = [
@@ -30,22 +30,22 @@ SECRET_HORSES = [
     "turbulent waters"
 ]
 
-def randomize_horse_names():
-    names = random.sample(POSSIBLE_NAMES, len(HORSES))
+def create_horses():
+    """Creates a fresh, independent list of horses for a single race."""
+    horses = [{"name": "", "emoji": t["emoji"]} for t in HORSE_TEMPLATES]
+    names = random.sample(POSSIBLE_NAMES, len(horses))
     
     # 5% chance para un caballo secreto
     if random.random() < 0.05:
         secret_horse = random.choice(SECRET_HORSES)
-        replace_idx = random.randint(0, len(HORSES) - 1)
+        replace_idx = random.randint(0, len(horses) - 1)
         names[replace_idx] = secret_horse
 
-    for i in range(len(HORSES)):
-        HORSES[i]['name'] = names[i]
-
-# Inicializar nombres aleatorios al cargar el módulo
-randomize_horse_names()
-
-HORSE_DOPING = {i: 0 for i in range(len(HORSES))}
+    for i in range(len(horses)):
+        horses[i]['name'] = names[i]
+    
+    doping = {i: 0 for i in range(len(horses))}
+    return horses, doping
 
 
 class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
@@ -60,8 +60,8 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
         super().__init__()
         self.race_view = race_view
         self.horse_idx = horse_idx
-        self.horse_name = HORSES[horse_idx]['name']
-        self.horse_emoji = HORSES[horse_idx]['emoji']
+        self.horse_name = race_view.horses[horse_idx]['name']
+        self.horse_emoji = race_view.horses[horse_idx]['emoji']
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -92,8 +92,11 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
             if old_bet > 0:
                 await asyncio.to_thread(add_balance, user_id, old_bet)
                 await asyncio.to_thread(registrar_transaccion, user_id, old_bet, "Devolución Apuesta Anterior Caballos")
-                
-            await asyncio.to_thread(add_balance, user_id, -bet_amount)
+            
+            success, _ = await asyncio.to_thread(deduct_balance, user_id, bet_amount)
+            if not success:
+                await interaction.response.send_message("❌ No tienes suficiente saldo.", ephemeral=True)
+                return
             await asyncio.to_thread(registrar_transaccion, user_id, -bet_amount, f"Apuesta Caballos: {self.horse_name}")
             
             self.race_view.bets[user_id] = {
@@ -106,10 +109,10 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
         await self.race_view.update_embed()
 
 class HorseSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, horses):
         options = [
             discord.SelectOption(label=h['name'], emoji=h['emoji'], value=str(i))
-            for i, h in enumerate(HORSES)
+            for i, h in enumerate(horses)
         ]
         super().__init__(placeholder="Elige un caballo para apostar...", min_values=1, max_values=1, options=options)
 
@@ -131,16 +134,19 @@ class HorseRaceView(discord.ui.View):
         self.message = None
         self.lock = asyncio.Lock()
         
-        # Generar multiplicadores aleatorios (cuotas) para cada caballo (entre 1.5 y 5.0)
-        self.multipliers = [round(random.uniform(1.5, 5.0), 1) for _ in HORSES]
+        # Create independent horse data for this race
+        self.horses, self.horse_doping = create_horses()
         
-        self.add_item(HorseSelect())
+        # Generar multiplicadores aleatorios (cuotas) para cada caballo (entre 1.5 y 5.0)
+        self.multipliers = [round(random.uniform(1.5, 5.0), 1) for _ in self.horses]
+        
+        self.add_item(HorseSelect(self.horses))
 
     async def update_embed(self):
         if not self.message: return
         embed = self.message.embeds[0]
         
-        bets_text = "\n".join([f"{data['user'].display_name}: **{data['amount']}** a {HORSES[data['horse_idx']]['emoji']}" for data in self.bets.values()])
+        bets_text = "\n".join([f"{data['user'].display_name}: **{data['amount']}** a {self.horses[data['horse_idx']]['emoji']}" for data in self.bets.values()])
         if not bets_text:
             bets_text = "Nadie ha apostado aún."
             
@@ -169,18 +175,18 @@ class HorseRaceView(discord.ui.View):
             await self.channel.send("🏁 ¡La carrera ha comenzado! (No hay participantes)")
 
         # Estado de la carrera (distancia 0 a 20)
-        positions = [0] * len(HORSES)
+        positions = [0] * len(self.horses)
         race_length = 20
         winner_idx = -1
 
         emojis_pista = []
         caballos_muertos = []
-        for i in range(len(HORSES)):
-            if HORSE_DOPING[i] > 3:
+        for i in range(len(self.horses)):
+            if self.horse_doping[i] > 3:
                 emojis_pista.append("💀")
-                caballos_muertos.append(HORSES[i]['name'])
+                caballos_muertos.append(self.horses[i]['name'])
             else:
-                emojis_pista.append(HORSES[i]['emoji'])
+                emojis_pista.append(self.horses[i]['emoji'])
 
         if caballos_muertos:
             embed.description = f"⚠️ **¡ATENCIÓN!** {', '.join(caballos_muertos)} ha sufrido un infarto por sobredosis de doping antes de iniciar la carrera.\n\n"
@@ -191,14 +197,14 @@ class HorseRaceView(discord.ui.View):
             await asyncio.sleep(1.5)
             
             # Avanzar caballos aleatoriamente
-            for i in range(len(HORSES)):
-                if HORSE_DOPING[i] > 3:
+            for i in range(len(self.horses)):
+                if self.horse_doping[i] > 3:
                     # El caballo murió por sobredosis, no avanza
                     pass
                 else:
                     # Caballos con multiplicador más bajo (favoritos) tienen un leve bonus de velocidad
                     speed_bonus = (5.0 - self.multipliers[i]) * 0.2
-                    doping_bonus = HORSE_DOPING[i] * 1.5
+                    doping_bonus = self.horse_doping[i] * 1.5
                     move = random.randint(1, 3) + random.random() * speed_bonus + doping_bonus
                     positions[i] += int(move)
                 
@@ -209,7 +215,7 @@ class HorseRaceView(discord.ui.View):
                         
             # Dibujar pista
             track = ""
-            for i, h in enumerate(HORSES):
+            for i, h in enumerate(self.horses):
                 pos = min(positions[i], race_length)
                 line = "➖" * pos + emojis_pista[i] + "➖" * (race_length - pos) + " 🏁"
                 track += f"{line}\n"
@@ -220,7 +226,7 @@ class HorseRaceView(discord.ui.View):
             await self.message.edit(embed=embed, view=self)
 
         # Carrera terminada
-        winner_horse = HORSES[winner_idx]
+        winner_horse = self.horses[winner_idx]
         winner_mult = self.multipliers[winner_idx]
         
         embed.title = f"🏆 ¡{winner_horse['name']} ({winner_horse['emoji']}) GANA LA CARRERA! 🏆"
@@ -254,19 +260,11 @@ class HorseRaceView(discord.ui.View):
                 
                 await asyncio.to_thread(registrar_transaccion, user_id, winnings, f"Caballos: Ganador x{winner_mult} + Pozo")
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'win', profit, diff_mod, nuevo_saldo)
-                try:
-                    await process_post_game_events(interaction, user_id, 'horse_race', bet_amt, profit)
-                except Exception:
-                    pass
                 
                 winners_text += f"✅ {user.mention} ganó **{winnings}** monedas.\n"
             else:
                 balance = await asyncio.to_thread(get_balance, user_id)
                 await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'loss', 0, diff_mod, balance)
-                try:
-                    await process_post_game_events(interaction, user_id, 'horse_race', bet_amt, 0)
-                except Exception:
-                    pass
                 winners_text += f"❌ {user.display_name} perdió **{bet_amt}** monedas.\n"
                 
         if not winners_text:
@@ -274,13 +272,6 @@ class HorseRaceView(discord.ui.View):
             
         embed.add_field(name="Resultados de las apuestas", value=winners_text)
         await self.message.edit(embed=embed, view=None)
-
-        # Resetear el estado de doping después de la carrera
-        for i in HORSE_DOPING:
-            HORSE_DOPING[i] = 0
-
-        # Cambiar nombres para la próxima carrera
-        randomize_horse_names()
 
 class HorseRace(commands.Cog):
     def __init__(self, bot):
@@ -300,7 +291,7 @@ class HorseRace(commands.Cog):
             view = HorseRaceView(interaction.channel)
             
             desc = "**Caballos en pista:**\n"
-            for i, h in enumerate(HORSES):
+            for i, h in enumerate(view.horses):
                 desc += f"{h['emoji']} **{h['name']}** - Cuota: **x{view.multipliers[i]}**\n"
                 
             desc += "\nTienen **60 segundos** para hacer sus apuestas utilizando el menú de abajo."

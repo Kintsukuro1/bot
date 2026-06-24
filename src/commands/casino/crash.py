@@ -67,8 +67,11 @@ class Crash(commands.Cog):
         # Algoritmo clásico y justo de Crash: M = (1 - edge) / (1 - U)
         val = (1.0 - edge) / (1.0 - U_adj)
         
-        # El límite mínimo siempre es 1.0. Si U < edge, val será < 1.0 y se ajustará a 1.0 (choque instantáneo)
-        crash_point = max(1.0, round(val, 2))
+        # Quitar la probabilidad de que explote en 1 (choque instantáneo)
+        if val <= 1.0:
+            val = random.uniform(1.05, 1.25)
+            
+        crash_point = round(val, 2)
             
         # Asegurar límites razonables para el bot (mínimo 1.0, máximo 25.0)
         crash_point = min(25.0, crash_point)
@@ -261,7 +264,8 @@ class CrashView(discord.ui.View):
                     next_mult = round(self.current_mult + increment, 2)
                     
                     if next_mult >= self.crash_point:
-                        # Llegamos al límite. Romper el bucle y explotar sin dormir.
+                        # Llegamos al límite. Romper el bucle y actualizar al multiplicador exacto del crash.
+                        self.current_mult = self.crash_point
                         break
                         
                     # Incrementar multiplicador

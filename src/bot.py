@@ -307,10 +307,13 @@ async def on_slash_error(interaction: discord.Interaction, error):
         return
     
     logger.error(f"[SLASH ERROR] {command}: {type(error).__name__} - {error}")
-    await interaction.response.send_message(
-        "❌ **Error inesperado**", 
-        ephemeral=True
-    )
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ **Error inesperado**", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ **Error inesperado**", ephemeral=True)
+    except Exception:
+        pass
 
 # No se necesita inicialización de wavelink ya que no usaremos funciones de música
 

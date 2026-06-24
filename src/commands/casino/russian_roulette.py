@@ -189,10 +189,6 @@ class RRGameView(discord.ui.View):
         nuevo_saldo = await asyncio.to_thread(get_balance, winner.id)
         await asyncio.to_thread(registrar_transaccion, winner.id, pozo, f"Ganó Ruleta Rusa (Pozo de {self.initial_players_count} jugadores)")
         await asyncio.to_thread(record_game_result, winner.id, 'russian_roulette', self.bet, 'win', profit, diff, nuevo_saldo)
-        try:
-            await process_post_game_events(interaction, winner.id, 'russian_roulette', self.bet, profit)
-        except Exception:
-            pass
         
         embed = self.message.embeds[0]
         embed.color = discord.Color.gold()

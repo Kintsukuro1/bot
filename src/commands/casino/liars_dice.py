@@ -4,7 +4,8 @@ from discord import app_commands
 import random
 import uuid
 import time
-from src.db import get_balance, deduct_balance, set_balance, registrar_transaccion, save_multiplayer_game, get_multiplayer_game, delete_multiplayer_game
+import asyncio
+from src.db import get_balance, deduct_balance, add_balance, registrar_transaccion, save_multiplayer_game, get_multiplayer_game, delete_multiplayer_game
 
 # Helpers para el motor
 def generate_dice(count):
@@ -92,14 +93,16 @@ class LiarsDiceView(discord.ui.View):
         for i in range(min_qty, max_rango + 1):
             opciones_qty.append(discord.SelectOption(label=f"Cantidad: {i}", value=str(i)))
             
-        select_qty = discord.ui.Select(placeholder="1. Selecciona Cantidad...", options=opciones_qty, custom_id="sel_qty", row=1)
+        select_qty = discord.ui.Select(placeholder="1. Selecciona Cantidad...", options=opciones_qty, row=1)
+        select_qty.callback = self.select_qty_callback
         
         # Select para el valor (1 al 6)
         opciones_val = []
         for i in range(1, 7):
             opciones_val.append(discord.SelectOption(label=f"Valor: {i}", emoji="🎲", value=str(i)))
             
-        select_val = discord.ui.Select(placeholder="2. Selecciona Valor de la Cara...", options=opciones_val, custom_id="sel_val", row=2)
+        select_val = discord.ui.Select(placeholder="2. Selecciona Valor de la Cara...", options=opciones_val, row=2)
+        select_val.callback = self.select_val_callback
         
         # Botón para confirmar apuesta
         btn_apostar = discord.ui.Button(label="Subir Apuesta", style=discord.ButtonStyle.primary, row=3)
@@ -111,6 +114,18 @@ class LiarsDiceView(discord.ui.View):
         
         self.select_qty = select_qty
         self.select_val = select_val
+
+    async def select_qty_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.game.get_current_player():
+            await interaction.response.send_message("❌ No es tu turno.", ephemeral=True)
+            return
+        await interaction.response.defer()
+
+    async def select_val_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.game.get_current_player():
+            await interaction.response.send_message("❌ No es tu turno.", ephemeral=True)
+            return
+        await interaction.response.defer()
 
     async def btn_ver_callback(self, interaction: discord.Interaction):
         if interaction.user.id not in self.game.players:
@@ -163,10 +178,10 @@ class LiarsDiceView(discord.ui.View):
         
         for pid in self.game.players:
             if pid != perdedor:
-                set_balance(pid, get_balance(pid) + pago_por_ganador)
-                registrar_transaccion(pid, pago_por_ganador, "Ganancia Liar's Dice")
+                await asyncio.to_thread(add_balance, pid, pago_por_ganador)
+                await asyncio.to_thread(registrar_transaccion, pid, pago_por_ganador, "Ganancia Liar's Dice")
                 
-        delete_multiplayer_game(self.game.game_id)
+        await asyncio.to_thread(delete_multiplayer_game, self.game.game_id)
         
         embed = discord.Embed(
             title="🎲 Resolución: ¡Mentiroso!",
@@ -213,7 +228,7 @@ class LiarsDiceView(discord.ui.View):
         }
         self.game.next_turn()
         
-        save_multiplayer_game(self.game.game_id, "liars_dice", self.game.to_dict())
+        await asyncio.to_thread(save_multiplayer_game, self.game.game_id, "liars_dice", self.game.to_dict())
         
         await interaction.response.defer()
         
@@ -254,13 +269,13 @@ class LobbyView(discord.ui.View):
             return
             
         # Cobrar apuesta
-        success, _ = deduct_balance(interaction.user.id, self.game.bet)
+        success, _ = await asyncio.to_thread(deduct_balance, interaction.user.id, self.game.bet)
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para pagar la entrada.", ephemeral=True)
             return
             
         self.game.players.append(interaction.user.id)
-        save_multiplayer_game(self.game.game_id, "liars_dice", self.game.to_dict())
+        await asyncio.to_thread(save_multiplayer_game, self.game.game_id, "liars_dice", self.game.to_dict())
         
         await interaction.response.defer()
         
@@ -282,7 +297,7 @@ class LobbyView(discord.ui.View):
         await interaction.response.defer()
         
         self.game.start_game()
-        save_multiplayer_game(self.game.game_id, "liars_dice", self.game.to_dict())
+        await asyncio.to_thread(save_multiplayer_game, self.game.game_id, "liars_dice", self.game.to_dict())
         
         embed = generar_embed_juego(self.game)
         view = LiarsDiceView(self.game)
@@ -294,8 +309,8 @@ class LobbyView(discord.ui.View):
         if self.game.status == "Lobby":
             # Devolver apuestas a los que entraron
             for pid in self.game.players:
-                set_balance(pid, get_balance(pid) + self.game.bet)
-            delete_multiplayer_game(self.game.game_id)
+                await asyncio.to_thread(add_balance, pid, self.game.bet)
+            await asyncio.to_thread(delete_multiplayer_game, self.game.game_id)
             
             for item in self.children:
                 item.disabled = True
@@ -317,14 +332,14 @@ class LiarsDiceCog(commands.Cog):
             await interaction.response.send_message("❌ Apuesta inválida.", ephemeral=True)
             return
             
-        success, _ = deduct_balance(interaction.user.id, apuesta)
+        success, _ = await asyncio.to_thread(deduct_balance, interaction.user.id, apuesta)
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para crear la mesa.", ephemeral=True)
             return
             
         game_id = str(uuid.uuid4())[:8]
         game = LiarsDiceGame(game_id, interaction.user.id, apuesta, [interaction.user.id])
-        save_multiplayer_game(game.game_id, "liars_dice", game.to_dict())
+        await asyncio.to_thread(save_multiplayer_game, game.game_id, "liars_dice", game.to_dict())
         
         embed = discord.Embed(
             title="🎲 Mesa de Dados de Mentiroso",

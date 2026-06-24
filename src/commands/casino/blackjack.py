@@ -221,6 +221,15 @@ class BlackjackView(discord.ui.View):
             for item in self.children:
                 if hasattr(item, 'disabled'):
                     item.disabled = True
+            
+            # Register the loss since bet was already deducted
+            user_id = self.user.id
+            try:
+                saldo_actual = await asyncio.to_thread(get_balance, user_id)
+                await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: timeout (pérdida)")
+                await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, saldo_actual)
+            except Exception:
+                pass
 
 class Blackjack(commands.Cog):
     def __init__(self, bot):
