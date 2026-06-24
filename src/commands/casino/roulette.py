@@ -94,20 +94,6 @@ class RouletteView(discord.ui.View):
         
         # Tirar número
         winning_number = random.randint(0, 36)
-        
-        # Aplicar Dificultad (Redraw)
-        # Si la dificultad es positiva (difícil), y gana, pequeña chance de reroll a algo perdedor
-        # Si es negativa (fácil), y pierde, pequeña chance de reroll a algo ganador
-        multiplier = self.check_win(bet_type, winning_number)
-        
-        if self.difficulty_modifier > 0 and multiplier > 0:
-            if random.random() < self.difficulty_modifier * 0.4:
-                winning_number = random.randint(0, 36)
-                multiplier = self.check_win(bet_type, winning_number)
-        elif self.difficulty_modifier < 0 and multiplier == 0:
-            if random.random() < abs(self.difficulty_modifier) * 0.3:
-                winning_number = random.randint(0, 36)
-                multiplier = self.check_win(bet_type, winning_number)
 
         # Evaluar color del número ganador
         if winning_number == 0:
@@ -116,8 +102,14 @@ class RouletteView(discord.ui.View):
             win_color = "🔴"
         else:
             win_color = "⚫"
+        
+        # Determinar resultado del giro (100% justo y reproducible)
+        multiplier = self.check_win(bet_type, winning_number)
 
-        winnings = int(self.bet_amount * multiplier)
+        # Ajuste de dificultad a las ganancias de ruleta
+        mult_adjustment = 1.0 - (self.difficulty_modifier * 0.15)
+        mult_adjustment = max(0.80, min(1.20, mult_adjustment))
+        winnings = int(self.bet_amount * multiplier * mult_adjustment)
         profit = winnings - self.bet_amount
 
         if multiplier > 0:

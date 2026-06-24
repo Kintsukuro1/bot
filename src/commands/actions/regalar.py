@@ -2,52 +2,10 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from src.db import get_balance, set_balance, ensure_user, registrar_transaccion
+import logging
+from src.services import UserService, EconomyService
 
-def _preparar_regalo_db(remitente_id, remitente_name, destinatario_id, destinatario_name, cantidad):
-    ensure_user(remitente_id, remitente_name)
-    ensure_user(destinatario_id, destinatario_name)
-
-    saldo_remitente = get_balance(remitente_id)
-    if saldo_remitente < cantidad:
-        return "no_balance", saldo_remitente
-
-    return "ok", saldo_remitente
-
-def _confirmar_regalo_db(remitente_id, destinatario_id, cantidad, remitente_name, destinatario_name):
-    from src.db import db_cursor
-
-    with db_cursor() as cursor:
-        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s FOR UPDATE", (remitente_id,))
-        row = cursor.fetchone()
-        saldo_actual = row[0] if row else 0
-
-        if saldo_actual < cantidad:
-            return "no_balance", {"saldo_actual": saldo_actual}
-
-        cursor.execute(
-            "UPDATE Users SET Balance = Balance - %s WHERE UserID = %s",
-            (cantidad, remitente_id)
-        )
-        cursor.execute("""
-            INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
-            ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
-        """, (destinatario_id, cantidad))
-        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (destinatario_id,))
-        saldo_destinatario_final = cursor.fetchone()[0]
-        cursor.execute("""
-            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-        """, (remitente_id, -cantidad, f"Regalo enviado a {destinatario_name}"))
-        cursor.execute("""
-            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-        """, (destinatario_id, cantidad, f"Regalo recibido de {remitente_name}"))
-
-    return "ok", {
-        "saldo_remitente_final": saldo_actual - cantidad,
-        "saldo_destinatario_final": saldo_destinatario_final
-    }
+logger = logging.getLogger(__name__)
 
 class Regalar(commands.Cog):
     def __init__(self, bot):
@@ -83,17 +41,15 @@ class Regalar(commands.Cog):
             await interaction.response.send_message("❌ La cantidad máxima para regalar es de 50,000 monedas por transacción.", ephemeral=True)
             return
         
-        # Asegurar usuarios y verificar saldo fuera del event loop
-        status, saldo_remitente = await asyncio.to_thread(
-            _preparar_regalo_db,
-            interaction.user.id,
-            interaction.user.name,
-            usuario.id,
-            usuario.name,
-            cantidad
-        )
-        if status == "no_balance":
-            await interaction.response.send_message(f"❌ No tienes suficiente saldo. Tu saldo actual: {saldo_remitente:,} monedas.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        
+        # Asegurar usuarios y obtener saldo asíncronamente
+        await UserService.ensure_user(interaction.user.id, interaction.user.name)
+        await UserService.ensure_user(usuario.id, usuario.name)
+        saldo_remitente = await UserService.get_balance(interaction.user.id)
+        
+        if saldo_remitente < cantidad:
+            await interaction.followup.send(f"❌ No tienes suficiente saldo. Tu saldo actual: {saldo_remitente:,} monedas.", ephemeral=True)
             return
         
         # Crear embed de confirmación
@@ -121,7 +77,7 @@ class Regalar(commands.Cog):
         # Crear vista con botones de confirmación
         view = ConfirmGiftView(interaction.user, usuario, cantidad, saldo_remitente)
         
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         message = await interaction.original_response()
         view.message = message
 
@@ -148,26 +104,24 @@ class ConfirmGiftView(discord.ui.View):
         self.confirmado = True
         
         try:
-            status, data = await asyncio.to_thread(
-                _confirmar_regalo_db,
+            # Transferencia atómica de saldo
+            success, saldo_remitente_final, saldo_destinatario_final = await EconomyService.transfer_balance(
                 self.remitente.id,
                 self.destinatario.id,
                 self.cantidad,
-                self.remitente.name,
-                self.destinatario.name
+                "Regalo"
             )
 
-            if status == "no_balance":
+            if not success:
+                # Obtener saldo fresco para informar al emisor
+                saldo_fresco = await UserService.get_balance(self.remitente.id)
                 embed = discord.Embed(
                     title="❌ Regalo Cancelado",
-                    description=f"No tienes suficiente saldo al momento de confirmar. Saldo actual: {data['saldo_actual']:,} monedas.",
+                    description=f"No tienes suficiente saldo al momento de confirmar. Saldo actual: {saldo_fresco:,} monedas.",
                     color=discord.Color.red()
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
                 return
-
-            saldo_remitente_final = data["saldo_remitente_final"]
-            saldo_destinatario_final = data["saldo_destinatario_final"]
             
             # Embed de éxito
             embed = discord.Embed(
@@ -189,7 +143,6 @@ class ConfirmGiftView(discord.ui.View):
                 value=f"Saldo: {saldo_destinatario_final:,} monedas",
                 inline=True
             )
-            
             embed.set_footer(text="¡Gracias por tu generosidad! 💝")
             
             # Desactivar botones
@@ -198,7 +151,7 @@ class ConfirmGiftView(discord.ui.View):
             
             await interaction.edit_original_response(embed=embed, view=self)
             
-            # Intentar notificar al destinatario (si está en el mismo canal)
+            # Intentar notificar al destinatario de forma pública
             try:
                 mention_embed = discord.Embed(
                     title="🎁 ¡Has recibido un regalo!",
@@ -210,16 +163,15 @@ class ConfirmGiftView(discord.ui.View):
                 )
                 mention_embed.set_footer(text="Usa /plata para ver tu saldo actualizado")
                 
-                await interaction.followup.send(
+                await interaction.channel.send(
                     content=f"{self.destinatario.mention}",
-                    embed=mention_embed,
-                    ephemeral=False
+                    embed=mention_embed
                 )
-            except:
-                # Si no se puede notificar, no es crítico
-                pass
+            except Exception as ex:
+                logger.warning(f"No se pudo enviar mensaje público de notificación de regalo: {ex}")
                 
         except Exception as e:
+            logger.error(f"Error al procesar regalo: {e}", exc_info=True)
             embed = discord.Embed(
                 title="❌ Error al Procesar Regalo",
                 description="Ocurrió un error al procesar la transacción. Por favor, intenta de nuevo.",
@@ -268,4 +220,4 @@ class ConfirmGiftView(discord.ui.View):
 
 async def setup(bot):
     await bot.add_cog(Regalar(bot))
-    print("Regalar cog loaded successfully.")
+    logger.info("Regalar cog loaded successfully.")

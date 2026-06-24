@@ -12,19 +12,13 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {
 Write-Host "Usando:" -NoNewline
 python --version
 
-# Instalar dependencias si es necesario
-if (!(Test-Path -Path "requirements.txt")) {
-    Write-Host "Creando archivo requirements.txt..." -ForegroundColor Yellow
-    @"
-discord.py>=2.0.0
-wavelink==2.6.2
-psycopg2-binary
-python-dotenv
-"@ | Out-File -FilePath "requirements.txt" -Encoding utf8
+# Instalar dependencias si existe requirements.txt
+if (Test-Path -Path "requirements.txt") {
+    Write-Host "Verificando dependencias..." -ForegroundColor Cyan
+    python -m pip install -r requirements.txt
+} else {
+    Write-Host "ADVERTENCIA: No se encontró requirements.txt. Iniciando sin instalar dependencias..." -ForegroundColor Yellow
 }
-
-Write-Host "Verificando dependencias..." -ForegroundColor Cyan
-python -m pip install -r requirements.txt
 
 # Iniciar el bot
 try {

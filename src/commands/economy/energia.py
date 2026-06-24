@@ -36,11 +36,12 @@ class Energia(commands.Cog):
         """Comando para mostrar la energía del usuario."""
         user_id = interaction.user.id
         
-        # Asegurar que el usuario existe
-        ensure_user(user_id, interaction.user.name)
+        # Asegurar que el usuario existe de forma asíncrona
+        from src.services import UserService
+        await UserService.ensure_user(user_id, interaction.user.name)
         
-        # Obtener información de energía
-        info = get_energia_info(user_id)
+        # Obtener información de energía en un hilo
+        info = await asyncio.to_thread(get_energia_info, user_id)
         
         # Crear barra de energía visual
         porcentaje = info['energia_actual'] / 100
@@ -110,15 +111,16 @@ class Energia(commands.Cog):
         user_id = target_user.id
         
         try:
-            with db_cursor() as cursor:
-                # Obtener datos raw de la base de datos
-                cursor.execute("""
-                    SELECT UserID, Username, Balance, Energia, UltimaRecarga
-                    FROM Users 
-                    WHERE UserID = %s
-                """, (user_id,))
+            def fetch_debug():
+                with db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT UserID, Username, Balance, Energia, UltimaRecarga
+                        FROM Users 
+                        WHERE UserID = %s
+                    """, (user_id,))
+                    return cursor.fetchone()
                 
-                result = cursor.fetchone()
+            result = await asyncio.to_thread(fetch_debug)
                 
             if not result:
                 estado = "❌ Usuario no encontrado en la base de datos"
@@ -126,6 +128,7 @@ class Energia(commands.Cog):
                 user_db_id, username, balance, energia, ultima_recarga = result
                 tiempo_actual = int(time.time())
                 
+                energia_calc = await asyncio.to_thread(get_energia, user_id)
                 estado = (
                     f"**UserID:** {user_db_id}\n"
                     f"**Username:** {username}\n"
@@ -134,7 +137,7 @@ class Energia(commands.Cog):
                     f"**UltimaRecarga (raw):** {ultima_recarga}\n"
                     f"**Tiempo actual:** {tiempo_actual}\n"
                     f"**Diferencia:** {tiempo_actual - (ultima_recarga or 0)} segundos\n"
-                    f"**Energía calculada:** {get_energia(user_id)}"
+                    f"**Energía calculada:** {energia_calc}"
                 )
                 
         except Exception as e:

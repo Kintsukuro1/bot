@@ -138,6 +138,15 @@ class CoinflipDuelView(discord.ui.View):
             await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
             for item in self.children:
                 item.disabled = True
+            try:
+                if hasattr(self, 'message') and self.message:
+                    embed = self.message.embeds[0]
+                    embed.color = discord.Color.red()
+                    embed.title = "⚔️ Duelo Cancelado"
+                    embed.description += "\n\n⌛ **El duelo ha expirado.** Las monedas del retador han sido devueltas."
+                    await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
 
 
 class CoinflipView(discord.ui.View):
@@ -308,14 +317,8 @@ class Coinflip(commands.Cog):
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
 
-        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
-        if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
-            return
-        
-        # Si se especificó un usuario para retar, iniciar duelo
+        # Si se especificó un usuario para retar, realizar todas las validaciones antes de descontar saldo
         if retar:
-            # Validaciones para duelos
             if retar.id == interaction.user.id:
                 await interaction.response.send_message("❌ No puedes retarte a ti mismo.", ephemeral=True)
                 return
@@ -335,7 +338,15 @@ class Coinflip(commands.Cog):
                     ephemeral=True
                 )
                 return
-            
+
+        # Descontar el saldo del retador
+        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        if not success:
+            await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
+            return
+        
+        # Si se especificó un usuario para retar, iniciar duelo
+        if retar:
             # Crear embed de reto
             embed = discord.Embed(
                 title="⚔️ Reto de Duelo - Coinflip",
@@ -354,6 +365,7 @@ class Coinflip(commands.Cog):
             duel_view = CoinflipDuelView(interaction.user, retar, apuesta)
             
             await interaction.response.send_message(embed=embed, view=duel_view)
+            duel_view.message = await interaction.original_response()
             return
         
         # Juego normal (sin duelo)

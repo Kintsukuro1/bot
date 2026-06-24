@@ -53,25 +53,6 @@ class MineButton(discord.ui.Button):
 
         self.revealed = True
         
-        # Aplicar Dificultad Dinámica sutilmente (Suerte)
-        # Si la dificultad es muy alta y saca diamante, pequeña chance de convertirlo en bomba si no ha avanzado mucho
-        # Si la dificultad es muy baja y saca bomba, pequeña chance de salvarlo
-        if self.is_bomb and view.difficulty_modifier < -0.1 and random.random() < abs(view.difficulty_modifier) * 0.5:
-            # Salvado por la suerte (baja dificultad)
-            self.is_bomb = False
-            # Mover la bomba a un lugar no revelado
-            unrevealed = [c for c in view.children if isinstance(c, MineButton) and not c.revealed and not c.is_bomb]
-            if unrevealed:
-                random.choice(unrevealed).is_bomb = True
-
-        if not self.is_bomb and view.difficulty_modifier > 0.1 and view.diamonds_found > 2 and random.random() < view.difficulty_modifier * 0.3:
-            # Castigado por la alta dificultad (cambia gema por bomba repentinamente)
-            self.is_bomb = True
-            # Quitar bomba de otro lado
-            unrevealed_bombs = [c for c in view.children if isinstance(c, MineButton) and not c.revealed and c.is_bomb]
-            if unrevealed_bombs:
-                random.choice(unrevealed_bombs).is_bomb = False
-
         if self.is_bomb:
             self.style = discord.ButtonStyle.danger
             self.emoji = "💣"
@@ -101,13 +82,15 @@ class CashoutButton(discord.ui.Button):
         await view.process_win(interaction)
 
 class MinesView(discord.ui.View):
-    def __init__(self, user_id: int, bet: int, bombs: int, difficulty_modifier: float, balance: int):
+    def __init__(self, user_id: int, bet: int, bombs: int, difficulty_modifier: float, balance: int, client: discord.Client = None, channel: discord.abc.Messageable = None):
         super().__init__(timeout=120)
         self.user_id = user_id
         self.bet = bet
         self.bombs = bombs
         self.difficulty_modifier = difficulty_modifier
         self.balance = balance
+        self.client = client
+        self.channel = channel
         self.diamonds_found = 0
         self.game_over = False
         self.total_cells = 20 # 5x4 grid
@@ -154,13 +137,28 @@ class MinesView(discord.ui.View):
             nuevo_saldo = self.balance
             await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Timeout ({self.bombs} bombas)")
             await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
-            try:
-                await process_post_game_events(interaction, self.user_id, 'mines', self.bet, 0)
-            except Exception:
-                pass
             
+            user_obj = None
+            if self.channel and hasattr(self.channel, 'guild') and self.channel.guild:
+                user_obj = self.channel.guild.get_member(self.user_id)
+            if not user_obj and self.client:
+                user_obj = self.client.get_user(self.user_id)
+
+            if self.client and self.channel and user_obj:
+                class DummyInteraction:
+                    def __init__(self, client, channel, user):
+                        self.client = client
+                        self.channel = channel
+                        self.user = user
+
+                dummy_inter = DummyInteraction(self.client, self.channel, user_obj)
+                try:
+                    await process_post_game_events(dummy_inter, self.user_id, 'mines', self.bet, 0)
+                except Exception:
+                    pass
+
             try:
-                if self.message:
+                if hasattr(self, 'message') and self.message:
                     embed = self.message.embeds[0]
                     embed.color = discord.Color.dark_red()
                     embed.title = "💥 Mines - ¡Se acabó el tiempo!"
@@ -170,8 +168,12 @@ class MinesView(discord.ui.View):
                 pass
 
     async def update_game(self, interaction: discord.Interaction):
-        current_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found)
-        next_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found + 1)
+        # Ajustar house edge según la dificultad (dificultad positiva aumenta house edge, negativa lo reduce)
+        house_edge = 0.05 + (self.difficulty_modifier * 0.04)
+        house_edge = max(0.01, min(0.15, house_edge))
+        
+        current_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found, house_edge)
+        next_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found + 1, house_edge)
         
         current_win = int(self.bet * current_multiplier)
         
@@ -262,7 +264,11 @@ class MinesView(discord.ui.View):
         self.game_over = True
         self.reveal_all()
         
-        multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found)
+        # Ajustar house edge según la dificultad
+        house_edge = 0.05 + (self.difficulty_modifier * 0.04)
+        house_edge = max(0.01, min(0.15, house_edge))
+        
+        multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found, house_edge)
         winnings = int(self.bet * multiplier)
         profit = winnings - self.bet
         
@@ -347,7 +353,7 @@ class MinesSetupView(discord.ui.View):
             DynamicDifficulty.calculate_dynamic_difficulty, self.user_id, self.apuesta, 'mines'
         )
 
-        view = MinesView(self.user_id, self.apuesta, self.bombas, difficulty_modifier, saldo_usuario)
+        view = MinesView(self.user_id, self.apuesta, self.bombas, difficulty_modifier, saldo_usuario, client=interaction.client, channel=interaction.channel)
         
         embed = discord.Embed(
             title="💣 Buscaminas",
@@ -362,7 +368,7 @@ class MinesSetupView(discord.ui.View):
         )
         
         await interaction.edit_original_response(embed=embed, view=view)
-        view.message = interaction.message
+        view.message = await interaction.original_response()
 
     async def on_timeout(self):
         for item in self.children:

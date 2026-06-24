@@ -62,7 +62,7 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 # Validar token inmediatamente
 if TOKEN:
     if len(TOKEN) > 50:
-        logger.info(f"[TOKEN] Token cargado: {TOKEN[:6]}...{TOKEN[-4:]}")
+        logger.info("[TOKEN] Token cargado correctamente")
     else:
         logger.warning("[TOKEN] El token cargado parece ser demasiado corto, puede no ser válido")
 else:
@@ -302,6 +302,14 @@ async def on_slash_error(interaction: discord.Interaction, error):
     if isinstance(error, discord.app_commands.MissingPermissions):
         await interaction.response.send_message(
             "❌ **Error:** Permisos insuficientes.", 
+            ephemeral=True
+        )
+        return
+
+    if isinstance(error, discord.app_commands.BotMissingPermissions):
+        missing = ", ".join(error.missing_permissions)
+        await interaction.response.send_message(
+            f"❌ **Error:** El bot no tiene los permisos necesarios para ejecutar este comando. Requiere: `{missing}`", 
             ephemeral=True
         )
         return

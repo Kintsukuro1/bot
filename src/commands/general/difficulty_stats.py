@@ -1,8 +1,9 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import asyncio
 from src.utils.dynamic_difficulty import DynamicDifficulty
-from src.db import ensure_user
+from src.services import UserService
 
 class DifficultyStats(commands.Cog):
     def __init__(self, bot):
@@ -12,10 +13,10 @@ class DifficultyStats(commands.Cog):
     async def stats(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         user_name = interaction.user.name
-        ensure_user(user_id, user_name)
+        await UserService.ensure_user(user_id, user_name)
         
-        # Obtener estadísticas detalladas
-        stats = DynamicDifficulty.get_difficulty_stats(user_id)
+        # Obtener estadísticas detalladas de forma asíncrona
+        stats = await asyncio.to_thread(DynamicDifficulty.get_difficulty_stats, user_id)
         
         if stats['status'] == 'new_player':
             embed = discord.Embed(

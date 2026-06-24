@@ -5,15 +5,26 @@ Este módulo proporciona acceso simplificado a las funciones de base de datos Po
 import psycopg2
 import os
 import threading
+import logging
 from contextlib import contextmanager
 from psycopg2.pool import ThreadedConnectionPool
+from dotenv import load_dotenv
+
+# Cargar variables de entorno del archivo .env ubicado en la raíz del proyecto
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+
+logger = logging.getLogger(__name__)
 
 # Configurar conexión cargando desde variables de entorno con fallbacks seguros de PostgreSQL
 host = os.getenv('DB_HOST', 'localhost')
 port = os.getenv('DB_PORT', '5432')
 database = os.getenv('DB_NAME', 'CasinoBot')
 username = os.getenv('DB_USER', 'postgres')
-password = os.getenv('DB_PASSWORD', '123')
+password = os.getenv('DB_PASSWORD')
+
+if not password:
+    raise ValueError("ERROR CRÍTICO DE CONFIGURACIÓN: La variable de entorno 'DB_PASSWORD' no está configurada en el archivo .env.")
+
 pool_min = int(os.getenv('DB_POOL_MIN', '1'))
 pool_max = int(os.getenv('DB_POOL_MAX', '10'))
 
@@ -162,6 +173,40 @@ def registrar_transaccion(user_id, amount, tipo):
             INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
             VALUES (%s, %s, %s, %s)
         """, (user_id, amount, tipo, datetime.now()))
+
+def transfer_balance(from_user_id, to_user_id, amount, reason):
+    """Realiza una transferencia atómica de saldo entre dos usuarios."""
+    from datetime import datetime
+    with db_cursor() as cursor:
+        # Verificar saldo del emisor
+        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (from_user_id,))
+        row = cursor.fetchone()
+        if not row or row[0] < amount:
+            return False, 0, 0
+        
+        # Descontar del emisor
+        cursor.execute("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (amount, from_user_id))
+        from_new_balance = cursor.fetchone()[0]
+        
+        # Sumar al receptor
+        cursor.execute("""
+            INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
+            ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
+            RETURNING Balance
+        """, (to_user_id, amount))
+        to_new_balance = cursor.fetchone()[0]
+        
+        # Registrar transacciones
+        cursor.execute("""
+            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+            VALUES (%s, %s, %s, %s)
+        """, (from_user_id, -amount, f"Transferencia: {reason} (a {to_user_id})", datetime.now()))
+        cursor.execute("""
+            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+            VALUES (%s, %s, %s, %s)
+        """, (to_user_id, amount, f"Transferencia: {reason} (de {from_user_id})", datetime.now()))
+        
+        return True, from_new_balance, to_new_balance
 
 def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
     """Agrega un item al inventario del usuario."""
@@ -924,23 +969,23 @@ def init_db():
                     (database,)
                 )
                 if cursor.fetchone():
-                    print(f"Base de datos '{database}' encontrada.")
+                    logger.info(f"Base de datos '{database}' encontrada.")
                 else:
-                    print(f"Base de datos '{database}' no existe. Creandola...")
+                    logger.info(f"Base de datos '{database}' no existe. Creandola...")
                     cursor.execute(
                         sql.SQL("CREATE DATABASE {}").format(
-                            sql.Identifier(database)
+                             sql.Identifier(database)
                         )
                     )
-                    print(f"Base de datos '{database}' creada exitosamente.")
+                    logger.info(f"Base de datos '{database}' creada exitosamente.")
         finally:
             conn_admin.close()
     except Exception as e:
-        print(f"Error al verificar/crear la base de datos: {e}")
+        logger.error(f"Error al verificar/crear la base de datos: {e}")
         raise
 
     # 2. Conectar a la base de datos y crear todas las tablas
-    print(f"🔄 Inicializando tablas en la base de datos '{database}'...")
+    logger.info(f"🔄 Inicializando tablas en la base de datos '{database}'...")
     try:
         with db_cursor() as cursor:
             # Tabla: Users

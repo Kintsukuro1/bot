@@ -441,5 +441,3 @@ class DynamicDifficulty:
             print(f"Error obteniendo ganancias totales: {e}")
             return 0
 
-# Inicializar el sistema al importar
-DynamicDifficulty.init_difficulty_db()

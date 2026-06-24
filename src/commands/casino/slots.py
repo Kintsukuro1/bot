@@ -49,15 +49,7 @@ class Slots(commands.Cog):
             # Evaluar resultado natural
             unique_count = len(set(result))
             
-            # 2. Aplicar redraw sutil según dificultad
-            if difficulty_modifier > 0 and unique_count in [1, 2]:
-                if random.random() < (difficulty_modifier * 0.4):
-                    result = [random.choice(symbols) for _ in range(3)]
-                    unique_count = len(set(result))
-            elif difficulty_modifier < 0 and unique_count == 3:
-                if random.random() < (abs(difficulty_modifier) * 0.4):
-                    result = [random.choice(symbols) for _ in range(3)]
-                    unique_count = len(set(result))
+            # 2. El resultado base de slots es 100% aleatorio (sin redraws ocultos)
 
             # Si el jugador tiene "Suerte Eterna", forzar un par si no se sacó nada
             if unique_count == 3 and prob_bonus > 0 and random.random() < prob_bonus:
@@ -111,7 +103,10 @@ class Slots(commands.Cog):
                         ticket_multiplier = 2.0
                         ticket_desc = " 🎫 (Ticket x2 aplicado)"
                         
-                winnings = int(apuesta * multiplier * ganancia_bonus * ticket_multiplier)
+                # Ajuste de dificultad a los multiplicadores
+                mult_adjustment = 1.0 - (difficulty_modifier * 0.20)
+                mult_adjustment = max(0.70, min(1.30, mult_adjustment))
+                winnings = int(apuesta * multiplier * ganancia_bonus * ticket_multiplier * mult_adjustment)
                 profit = winnings - apuesta
                 
                 # add_balance is atomic, returns None, so we re-fetch balance or just calculate

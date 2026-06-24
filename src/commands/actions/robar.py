@@ -177,38 +177,6 @@ class Robar(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
-        self._init_robo_tables()
-    
-    def _init_robo_tables(self):
-        """Inicializa las tablas necesarias para el sistema de robo en PostgreSQL."""
-        try:
-            with db_cursor() as cursor:
-                # Tabla para registrar robos y protecciones
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS RoboStats (
-                        UserID BIGINT PRIMARY KEY,
-                        LastRoboTime TIMESTAMP,
-                        LastRobadoTime TIMESTAMP,
-                        RobosExitosos INT DEFAULT 0,
-                        RobosFallidos INT DEFAULT 0,
-                        TotalRobado BIGINT DEFAULT 0,
-                        TotalPerdido BIGINT DEFAULT 0,
-                        ProteccionActiva BOOLEAN DEFAULT FALSE
-                    )
-                """)
-                
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS RoboLog (
-                        LogID SERIAL PRIMARY KEY,
-                        LadronID BIGINT NOT NULL,
-                        VictimaID BIGINT NOT NULL,
-                        CantidadRobada BIGINT NOT NULL,
-                        Exitoso BOOLEAN NOT NULL,
-                        Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-        except Exception as e:
-            print(f"Error al crear tablas de robo: {e}")
     
     @app_commands.command(name="robar", description="Intenta robar dinero a otro usuario")
     @app_commands.describe(

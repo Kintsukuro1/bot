@@ -1,8 +1,10 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import asyncio
-from src.db import ensure_user, db_cursor, get_top_minas
+import logging
+from src.services import UserService, LeaderboardService
+
+logger = logging.getLogger(__name__)
 
 class Top(commands.Cog):
     def __init__(self, bot):
@@ -11,32 +13,25 @@ class Top(commands.Cog):
     @app_commands.command(name="top", description="Muestra el top de usuarios con más monedas en el servidor.")
     async def top(self, interaction: discord.Interaction):
         guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("❌ Este comando solo puede usarse en un servidor.", ephemeral=True)
+            return
+
         user_id = interaction.user.id
         user_name = interaction.user.name
-        ensure_user(user_id, user_name)  # Asegura registro y datos del usuario
         
-        # Obtener los IDs de los miembros del servidor para filtrar por base de datos
+        # Asegura registro y datos del usuario de forma asíncrona
+        await UserService.ensure_user(user_id, user_name)
+        
+        # Obtener los IDs de los miembros del servidor para filtrar
         member_ids = tuple(m.id for m in guild.members)
         
         await interaction.response.defer()
         
         try:
-            # Ejecutar la consulta en un hilo secundario
-            def query_top():
-                with db_cursor() as cursor:
-                    if member_ids:
-                        if len(member_ids) == 1:
-                            cursor.execute("SELECT UserID, Balance, UserName FROM Users WHERE UserID = %s ORDER BY Balance DESC LIMIT 10", (member_ids[0],))
-                        else:
-                            cursor.execute("SELECT UserID, Balance, UserName FROM Users WHERE UserID IN %s ORDER BY Balance DESC LIMIT 10", (member_ids,))
-                    else:
-                        cursor.execute("SELECT UserID, Balance, UserName FROM Users ORDER BY Balance DESC LIMIT 10")
-                    return cursor.fetchall()
-            
-            rows = await asyncio.to_thread(query_top)
-            
+            rows = await LeaderboardService.get_top_richest(member_ids, limit=10)
         except Exception as e:
-            print(f"Error querying top users: {e}")
+            logger.error(f"Error querying top users: {e}", exc_info=True)
             await interaction.followup.send("❌ Ocurrió un error al obtener el ranking.", ephemeral=True)
             return
             
@@ -76,7 +71,7 @@ class Top(commands.Cog):
             desc += f"└ 🪙 `{balance:,}` monedas | `{progress_bar}`\n\n"
             
         embed = discord.Embed(
-            title=f"🏆 Top 10 usuarios más ricos",
+            title="🏆 Top 10 usuarios más ricos",
             description=desc,
             color=discord.Color.gold()
         )
@@ -87,20 +82,23 @@ class Top(commands.Cog):
     @app_commands.command(name="top_minas", description="Muestra el top de usuarios que más minas han pisado en el servidor.")
     async def top_minas(self, interaction: discord.Interaction):
         guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("❌ Este comando solo puede usarse en un servidor.", ephemeral=True)
+            return
+
         user_id = interaction.user.id
         user_name = interaction.user.name
-        ensure_user(user_id, user_name)
+        
+        await UserService.ensure_user(user_id, user_name)
         
         member_ids = tuple(m.id for m in guild.members)
         
         await interaction.response.defer()
         
         try:
-            # Ejecutar la consulta en un hilo secundario
-            rows = await asyncio.to_thread(get_top_minas, 10, member_ids)
-            
+            rows = await LeaderboardService.get_top_minas_victims(member_ids, limit=10)
         except Exception as e:
-            print(f"Error querying top minas: {e}")
+            logger.error(f"Error querying top minas: {e}", exc_info=True)
             await interaction.followup.send("❌ Ocurrió un error al obtener el ranking.", ephemeral=True)
             return
             
@@ -131,7 +129,7 @@ class Top(commands.Cog):
             desc += f"{medal} **{nombre}**: `{minas_pisadas}` minas pisadas\n\n"
             
         embed = discord.Embed(
-            title=f"💣 Top Víctimas de Minas",
+            title="💣 Top Víctimas de Minas",
             description=desc,
             color=discord.Color.dark_red()
         )
@@ -141,4 +139,4 @@ class Top(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Top(bot))
-    print("Top cog loaded successfully.")
+    logger.info("Top cog loaded successfully.")

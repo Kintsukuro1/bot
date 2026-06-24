@@ -3,8 +3,11 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import random
+import logging
 
 from src.db import db_cursor, add_balance, deduct_balance
+
+logger = logging.getLogger(__name__)
 
 async def process_post_game_events(interaction: discord.Interaction, user_id: int, game_type: str, bet_amount: int, profit: int):
     """
@@ -208,17 +211,20 @@ async def send_proc_message(interaction, emoji, name, amount, effect_type):
             await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** recuperó **{amount:,}** monedas de tus pérdidas!*")
         else:
             await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** encontró **{amount:,}** monedas extra!*")
-    except: pass
+    except Exception as e:
+        logger.warning(f"No se pudo enviar mensaje de proc de mascota: {e}")
 
 async def send_escape_message(interaction, emoji, name):
     try:
         await interaction.channel.send(f"💔 *Tu {emoji} **{name}** te mira con decepción tras tus fracasos... y te abandona.*")
-    except: pass
+    except Exception as e:
+        logger.warning(f"No se pudo enviar mensaje de escape de mascota: {e}")
 
 async def send_revive_message(interaction, emoji, name):
     try:
         await interaction.channel.send(f"🔥 *Tu {emoji} **{name}** arde en cenizas y resurge, negándose a abandonarte.*")
-    except: pass
+    except Exception as e:
+        logger.warning(f"No se pudo enviar mensaje de resurrección de mascota: {e}")
 
 async def send_encounter_ui(interaction, user_id, pet_data):
     try:
@@ -238,7 +244,8 @@ async def send_encounter_ui(interaction, user_id, pet_data):
             embed.add_field(name="Requisito", value="Requiere que demuestres tu valor (Condición especial).")
             
         await interaction.channel.send(content=f"<@{user_id}>", embed=embed, view=view)
-    except: pass
+    except Exception as e:
+        logger.warning(f"No se pudo enviar interfaz de encuentro de mascota: {e}")
 
 class CaptureView(discord.ui.View):
     def __init__(self, user_id, pet_data):
