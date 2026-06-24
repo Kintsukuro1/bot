@@ -738,15 +738,7 @@ def fix_timestamps_energia():
             WHERE UltimaRecarga > %s OR UltimaRecarga < %s
         """, (tiempo_actual, tiempo_actual, tiempo_actual - 86400 * 30))
 
-def get_lottery_tickets():
-    with db_cursor() as cursor:
-        cursor.execute("SELECT UserID FROM LotteryTickets")
-        return [row[0] for row in cursor.fetchall()]
 
-def buy_lottery_tickets(user_id, count):
-    with db_cursor() as cursor:
-        args = [(user_id,)] * count
-        cursor.executemany("INSERT INTO LotteryTickets (UserID) VALUES (%s)", args)
 
 def get_provably_fair_seeds(user_id: int):
     """Obtiene las semillas actuales del usuario, o las genera si no existen."""
@@ -889,15 +881,7 @@ def update_pet_stats(user_id: int, win: bool):
                 WHERE UserID = %s AND IsActive = 1
             """, (user_id,))
 
-def clear_lottery():
-    with db_cursor() as cursor:
-        cursor.execute("TRUNCATE TABLE LotteryTickets")
 
-def get_lottery_pot(ticket_price=100, base_pot=5000):
-    with db_cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) FROM LotteryTickets")
-        count = cursor.fetchone()[0]
-        return base_pot + (count * ticket_price)
 
 def get_all_minas():
     """Obtiene todas las minas activas en todos los canales."""
