@@ -207,37 +207,67 @@ async def on_ready():
 
 ALLOWED_CHANNEL_ID = 1519533661806923866
 
+def _is_casino_command(ctx_or_interaction) -> bool:
+    """Verifica si el comando invocado pertenece al módulo de casino."""
+    is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
+    if is_interaction:
+        interaction = ctx_or_interaction
+        if interaction.command:
+            module_name = getattr(interaction.command, 'module', None)
+            if module_name and module_name.startswith('src.commands.casino'):
+                return True
+            binding = getattr(interaction.command, 'binding', None)
+            if binding:
+                binding_module = binding.__class__.__module__
+                if binding_module.startswith('src.commands.casino'):
+                    return True
+    else:
+        ctx = ctx_or_interaction
+        if ctx.command:
+            if ctx.command.cog:
+                cog_module = ctx.command.cog.__class__.__module__
+                if cog_module.startswith('src.commands.casino'):
+                    return True
+            module_name = getattr(ctx.command, 'module', None)
+            if module_name and module_name.startswith('src.commands.casino'):
+                return True
+    return False
+
 @bot.check
 async def global_prefix_check(ctx):
-    # Permitir si es el canal designado
-    if ctx.channel and ctx.channel.id == ALLOWED_CHANNEL_ID:
-        return True
-        
-    # Permitir si el usuario es administrador
-    if ctx.guild and ctx.author:
-        member = ctx.author
-        if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
-            return True
-            
-    # Si no cumple, responder y bloquear
-    await ctx.send("Aweonao estas en otro canal que no es <#1519533661806923866>")
-    return False
+    # Restringir solo si el comando es de casino
+    if _is_casino_command(ctx):
+        # Si el servidor actual tiene el canal designado de casino
+        if ctx.guild and ctx.guild.get_channel(ALLOWED_CHANNEL_ID):
+            # Si no es el canal designado
+            if not ctx.channel or ctx.channel.id != ALLOWED_CHANNEL_ID:
+                # Permitir si el usuario es administrador
+                if ctx.author:
+                    member = ctx.author
+                    if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
+                        return True
+                # Si no cumple, responder y bloquear
+                await ctx.send("Aweonao estas en otro canal que no es <#1519533661806923866>")
+                return False
+    return True
 
 @bot.tree.interaction_check
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
-    # Permitir si es el canal designado
-    if interaction.channel and interaction.channel.id == ALLOWED_CHANNEL_ID:
-        return True
-        
-    # Permitir si el usuario es administrador
-    if interaction.guild and interaction.user:
-        member = interaction.user
-        if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
-            return True
-            
-    # Si no cumple, responder y bloquear
-    await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>")
-    return False
+    # Restringir solo si el comando es de casino
+    if _is_casino_command(interaction):
+        # Si el servidor actual tiene el canal designado de casino
+        if interaction.guild and interaction.guild.get_channel(ALLOWED_CHANNEL_ID):
+            # Si no es el canal designado
+            if not interaction.channel or interaction.channel.id != ALLOWED_CHANNEL_ID:
+                # Permitir si el usuario es administrador
+                if interaction.user:
+                    member = interaction.user
+                    if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
+                        return True
+                # Si no cumple, responder y bloquear
+                await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>")
+                return False
+    return True
 
 LOGS_CHANNEL_ID = 1519413696206737559
 

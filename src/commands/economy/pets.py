@@ -21,6 +21,16 @@ async def process_post_game_events(interaction: discord.Interaction, user_id: in
     if bet_amount <= 0:
         return
 
+    # Si es Context, envolverlo en un objeto compatible con Interaction
+    if not isinstance(interaction, discord.Interaction):
+        class ContextWrapper:
+            def __init__(self, ctx):
+                self.ctx = ctx
+                self.client = ctx.bot
+                self.channel = ctx.channel
+                self.user = ctx.author
+        interaction = ContextWrapper(interaction)
+
     # Evitamos bloquear el event loop con las consultas DB
     await asyncio.to_thread(_process_db_logic, interaction, user_id, game_type, bet_amount, profit)
 

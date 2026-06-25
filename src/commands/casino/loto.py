@@ -145,8 +145,11 @@ class Loto(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="loto_draw", description="[ADMIN] Fuerza el sorteo del loto de forma manual e inmediata.")
-    @commands.is_owner()
     async def loto_draw(self, interaction: discord.Interaction):
+        if not await self.bot.is_owner(interaction.user):
+            await interaction.response.send_message("❌ No tienes permisos para usar este comando.", ephemeral=True)
+            return
+            
         await interaction.response.defer(thinking=True)
         try:
             results = await LotteryService.draw_lottery()

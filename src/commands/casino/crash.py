@@ -88,7 +88,7 @@ class Crash(commands.Cog):
             ),
             color=discord.Color.orange()
         )
-        view = CrashView(user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation)
+        view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation)
         
         if is_slash:
             await ctx_or_interaction.response.send_message(embed=embed, view=view)
@@ -100,8 +100,9 @@ class Crash(commands.Cog):
         await view.run_crash(msg, embed)
 
 class CrashView(discord.ui.View):
-    def __init__(self, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation=""):
+    def __init__(self, ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation=""):
         super().__init__(timeout=15)
+        self.ctx_or_interaction = ctx_or_interaction
         self.user = user
         self.apuesta = apuesta
         self.saldo = saldo
@@ -157,6 +158,11 @@ class CrashView(discord.ui.View):
             await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 
                              'win' if ganancia_neta > 0 else 'loss', 
                              max(0, ganancia_neta), self.difficulty_modifier, nuevo_saldo)
+            
+            try:
+                await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
+            except Exception:
+                pass
             
             # Determinar color y mensaje según si ganó o perdió
             if ganancia_neta > 0:
@@ -331,7 +337,7 @@ class CrashView(discord.ui.View):
                         await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
                         try:
-                            await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, 0)
+                            await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
                         except Exception:
                             pass
                         
@@ -349,7 +355,7 @@ class CrashView(discord.ui.View):
                         await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{self.current_mult:.2f}")
                         await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
                         try:
-                            await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, 0)
+                            await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
                         except Exception:
                             pass
                         
@@ -379,7 +385,7 @@ class CrashView(discord.ui.View):
                     await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{self.current_mult:.2f}")
                     await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
                     try:
-                        await process_post_game_events(interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
+                        await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
                     except Exception:
                         pass
                     
