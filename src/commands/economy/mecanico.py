@@ -200,7 +200,7 @@ class MecanicoView(discord.ui.View):
         
         puntuacion_total = (precision_reparacion + bonus_diagnostico + bonus_herramientas + 
                            bonus_eficiencia + self.precision_bonus - penalizacion_falsos)
-        puntuacion_total = max(10, min(100, puntuacion_total))
+        puntuacion_total = max(10, min(120, puntuacion_total))
         
         await self._completar_trabajo(interaction, puntuacion_total, problemas_reparados_correctos, 
                                     len(problemas_objetivo), len(problemas_falsos_detectados))
@@ -417,14 +417,14 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
             "problemas": ["frenos gastados", "batería descargada"],
             "dificultad": "Fácil",
             "nivel_min": 0,
-            "recompensa_base": 200
+            "recompensa_base": 350
         },
         {
             "nombre": "🏍️ Motocicleta Clásica",
             "problemas": ["carburador sucio", "cadena floja"],
             "dificultad": "Fácil",
             "nivel_min": 0,
-            "recompensa_base": 200
+            "recompensa_base": 350
         },
         
         # Medio (Nivel 3-5)
@@ -433,14 +433,14 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
             "problemas": ["motor irregular", "transmisión dura", "luces fundidas"],
             "dificultad": "Medio",
             "nivel_min": 3,
-            "recompensa_base": 310
+            "recompensa_base": 480
         },
         {
             "nombre": "🏎️ Auto Deportivo",
             "problemas": ["motor sobrecalentado", "panel eléctrico defectuoso", "luces fundidas"],
             "dificultad": "Medio",
             "nivel_min": 3,
-            "recompensa_base": 310
+            "recompensa_base": 480
         },
         
         # Difícil (Nivel 6-8)
@@ -449,7 +449,7 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
             "problemas": ["frenos de aire", "motor diesel", "escape roto", "chasis dañado"],
             "dificultad": "Difícil",
             "nivel_min": 6,
-            "recompensa_base": 480
+            "recompensa_base": 650
         },
         
         # Maestro (Nivel 9-10)
@@ -458,7 +458,7 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
             "problemas": ["hélice rota", "motor irregular", "panel eléctrico defectuoso", "fuga de combustible", "tren de aterrizaje"],
             "dificultad": "Maestro",
             "nivel_min": 9,
-            "recompensa_base": 700
+            "recompensa_base": 900
         }
     ]
     
