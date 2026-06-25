@@ -205,6 +205,40 @@ async def on_ready():
     logger.info("=" * 50)
     logger.info("[STATUS] Bot listo y funcionando")
 
+ALLOWED_CHANNEL_ID = 1519533661806923866
+
+@bot.check
+async def global_prefix_check(ctx):
+    # Permitir si es el canal designado
+    if ctx.channel and ctx.channel.id == ALLOWED_CHANNEL_ID:
+        return True
+        
+    # Permitir si el usuario es administrador
+    if ctx.guild and ctx.author:
+        member = ctx.author
+        if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
+            return True
+            
+    # Si no cumple, responder y bloquear
+    await ctx.send("Aweonao estas en otro canal que no es <#1519533661806923866>")
+    return False
+
+@bot.tree.interaction_check
+async def global_interaction_check(interaction: discord.Interaction) -> bool:
+    # Permitir si es el canal designado
+    if interaction.channel and interaction.channel.id == ALLOWED_CHANNEL_ID:
+        return True
+        
+    # Permitir si el usuario es administrador
+    if interaction.guild and interaction.user:
+        member = interaction.user
+        if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
+            return True
+            
+    # Si no cumple, responder y bloquear
+    await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>")
+    return False
+
 LOGS_CHANNEL_ID = 1519413696206737559
 
 async def send_command_log(ctx_or_interaction, success: bool, error_msg: Optional[str] = None):
@@ -276,6 +310,9 @@ async def on_command_error(ctx, error):
     """Manejo mejorado de errores para comandos tradicionales."""
     if isinstance(error, commands.CommandNotFound):
         logger.debug(f"CommandNotFound: {error} (invoked by {ctx.author} in #{ctx.channel})")
+        return
+        
+    if type(error) is commands.CheckFailure:
         return
     
     # Enviar log de error al canal
@@ -359,6 +396,9 @@ async def reload_cog(ctx, cog: Optional[str] = None):
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):
     """Manejo de errores para comandos slash."""
+    if type(error) is discord.app_commands.CheckFailure:
+        return
+        
     # Enviar log de error al canal
     await send_command_log(interaction, success=False, error_msg=str(error))
     
