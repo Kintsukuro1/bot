@@ -327,6 +327,7 @@ class PetsMasterCog(commands.Cog):
 
     @app_commands.command(name="pets", description="Muestra tu colección de mascotas.")
     async def pets_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = interaction.user.id
         
         def _get_pets():
@@ -342,7 +343,7 @@ class PetsMasterCog(commands.Cog):
         pets = await asyncio.to_thread(_get_pets)
         
         if not pets:
-            await interaction.response.send_message("No tienes ninguna mascota en tu colección. ¡Juega en el casino para encontrar una!", ephemeral=True)
+            await interaction.followup.send("No tienes ninguna mascota en tu colección. ¡Juega en el casino para encontrar una!", ephemeral=True)
             return
             
         embed = discord.Embed(title=f"🐾 Colección de {interaction.user.display_name}", color=discord.Color.blurple())
@@ -355,10 +356,11 @@ class PetsMasterCog(commands.Cog):
                 inline=False
             )
             
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="pet_equipar", description="Equipa una mascota de tu colección usando su ID.")
     async def pet_equipar_cmd(self, interaction: discord.Interaction, pet_id: int):
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         
         def _equip():
@@ -372,12 +374,13 @@ class PetsMasterCog(commands.Cog):
                 
         success = await asyncio.to_thread(_equip)
         if success:
-            await interaction.response.send_message(f"✅ Has equipado la mascota ID `{pet_id}` exitosamente.")
+            await interaction.followup.send(f"✅ Has equipado la mascota ID `{pet_id}` exitosamente.", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ No se encontró esa mascota en tu colección.", ephemeral=True)
+            await interaction.followup.send("❌ No se encontró esa mascota en tu colección.", ephemeral=True)
 
     @app_commands.command(name="apostador", description="Muestra tu progreso y Nivel de Apostador.")
     async def apostador_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = interaction.user.id
         
         def _get_level():
@@ -394,7 +397,7 @@ class PetsMasterCog(commands.Cog):
         embed.add_field(name="Nivel", value=f"**{level}** / 50")
         embed.add_field(name="Experiencia", value=f"{xp} / {req_xp} XP")
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(PetsMasterCog(bot))
