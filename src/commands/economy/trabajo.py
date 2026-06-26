@@ -5,6 +5,36 @@ import asyncio
 from src.db import get_balance, ensure_user
 from .energia import get_energia
 
+class PatchedInteractionResponse:
+    def __init__(self, original_response, interaction):
+        self._original = original_response
+        self._interaction = interaction
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+    async def send_message(self, *args, **kwargs):
+        if self._original.is_done():
+            kwargs.pop('delete_after', None)
+            return await self._interaction.followup.send(*args, **kwargs)
+        return await self._original.send_message(*args, **kwargs)
+
+class PatchedInteraction:
+    def __init__(self, original_interaction):
+        self.__dict__['_original'] = original_interaction
+        self.__dict__['_response'] = PatchedInteractionResponse(original_interaction.response, self)
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._original, name, value)
+
+    @property
+    def response(self):
+        return self._response
+
+
 def _get_energia_menu_data(user_id):
     from .energia import tiempo_hasta_recarga_completa
     from .niveles_trabajo import get_energia_trabajo, TIPOS_TRABAJO
@@ -39,13 +69,17 @@ class TrabajoView(discord.ui.View):
         super().__init__(timeout=60)
         self.user = user
 
+    async def _iniciar_trabajo_safe(self, interaction: discord.Interaction, iniciar_func):
+        await interaction.response.defer()
+        await iniciar_func(PatchedInteraction(interaction))
+
     @discord.ui.button(label="💻 Hacker", style=discord.ButtonStyle.primary, emoji="💻", row=0)
     async def trabajo_hacker(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .hacker import iniciar_trabajo_hacker
-        await iniciar_trabajo_hacker(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_hacker)
 
     @discord.ui.button(label="👨‍🍳 Chef", style=discord.ButtonStyle.secondary, emoji="👨‍🍳", row=0)
     async def trabajo_chef(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -53,7 +87,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .chef import iniciar_trabajo_chef
-        await iniciar_trabajo_chef(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_chef)
 
     @discord.ui.button(label="🎨 Artista", style=discord.ButtonStyle.secondary, emoji="🎨", row=0)
     async def trabajo_artista(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -61,7 +95,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .artista import iniciar_trabajo_artista
-        await iniciar_trabajo_artista(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_artista)
 
     @discord.ui.button(label="🔧 Mecánico", style=discord.ButtonStyle.secondary, emoji="🔧", row=0)
     async def trabajo_mecanico(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -69,7 +103,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .mecanico import iniciar_trabajo_mecanico
-        await iniciar_trabajo_mecanico(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_mecanico)
 
     @discord.ui.button(label="⛏️ Minero", style=discord.ButtonStyle.secondary, emoji="⛏️", row=0)
     async def trabajo_minero(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -77,7 +111,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .minero import iniciar_trabajo_minero
-        await iniciar_trabajo_minero(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_minero)
 
     @discord.ui.button(label="🎣 Pescador", style=discord.ButtonStyle.secondary, emoji="🎣", row=1)
     async def trabajo_pescador(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -85,7 +119,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .pescador import iniciar_trabajo_pescador
-        await iniciar_trabajo_pescador(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_pescador)
 
     @discord.ui.button(label="✈️ Piloto", style=discord.ButtonStyle.secondary, emoji="✈️", row=1)
     async def trabajo_piloto(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -93,7 +127,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .piloto import iniciar_trabajo_piloto
-        await iniciar_trabajo_piloto(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_piloto)
 
     @discord.ui.button(label="🗡️ Cazarrecompensas", style=discord.ButtonStyle.secondary, emoji="🗡️", row=1)
     async def trabajo_cazarrecompensas(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -101,7 +135,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .cazarrecompensas import iniciar_trabajo_cazarrecompensas
-        await iniciar_trabajo_cazarrecompensas(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_cazarrecompensas)
 
     @discord.ui.button(label="⚕️ Médico", style=discord.ButtonStyle.secondary, emoji="⚕️", row=1)
     async def trabajo_medico(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -109,7 +143,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .medico import iniciar_trabajo_medico
-        await iniciar_trabajo_medico(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_medico)
 
     @discord.ui.button(label="🥷 Ladrón", style=discord.ButtonStyle.secondary, emoji="🥷", row=1)
     async def trabajo_ladron(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -117,7 +151,7 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .ladron import iniciar_trabajo_ladron
-        await iniciar_trabajo_ladron(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_ladron)
 
     @discord.ui.button(label="🔬 Científico", style=discord.ButtonStyle.secondary, emoji="🔬", row=2)
     async def trabajo_cientifico(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -125,13 +159,14 @@ class TrabajoView(discord.ui.View):
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
         from .cientifico import iniciar_trabajo_cientifico
-        await iniciar_trabajo_cientifico(interaction)
+        await self._iniciar_trabajo_safe(interaction, iniciar_trabajo_cientifico)
 
     @discord.ui.button(label="⚡ Ver Energía", style=discord.ButtonStyle.success, emoji="⚡", row=3)
     async def ver_energia(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
             
         user_id = interaction.user.id
         energia_actual, tiempo_recarga, requerimientos = await asyncio.to_thread(
@@ -172,13 +207,14 @@ class TrabajoView(discord.ui.View):
             inline=False
         )
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="📊 Niveles", style=discord.ButtonStyle.success, emoji="📊", row=3)
     async def ver_niveles(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ No puedes usar este menú.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
         
         # Importar las funciones de niveles de trabajo
         from .niveles_trabajo import (
@@ -236,7 +272,7 @@ class TrabajoView(discord.ui.View):
         
         # Crear vista con botones para detalles
         view = BotonesDetallesView(interaction.user)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 class BotonDetallesTrabajo(discord.ui.Button):
     def __init__(self, tipo_trabajo, nombre_trabajo):
@@ -244,6 +280,7 @@ class BotonDetallesTrabajo(discord.ui.Button):
         self.tipo_trabajo = tipo_trabajo
     
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         from .niveles_trabajo import (
             get_resumen_nivel, 
             crear_embed_nivel,
@@ -304,16 +341,17 @@ class BotonDetallesTrabajo(discord.ui.Button):
             inline=False
         )
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 class BotonTablaProgresion(discord.ui.Button):
     def __init__(self):
         super().__init__(style=discord.ButtonStyle.primary, label="📋 Ver Tabla de Progresión")
     
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         from .niveles_trabajo import crear_embed_progresion_global
         embed = crear_embed_progresion_global()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 class BotonesDetallesView(discord.ui.View):
     def __init__(self, user):

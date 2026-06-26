@@ -77,8 +77,7 @@ class Regalar(commands.Cog):
         # Crear vista con botones de confirmación
         view = ConfirmGiftView(interaction.user, usuario, cantidad, saldo_remitente)
         
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        message = await interaction.original_response()
+        message = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         view.message = message
 
 class ConfirmGiftView(discord.ui.View):

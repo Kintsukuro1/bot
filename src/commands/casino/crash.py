@@ -92,9 +92,7 @@ class Crash(commands.Cog):
         view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation)
         
         if is_slash:
-            await ctx_or_interaction.followup.send(embed=embed, view=view)
-            # Obtener el mensaje para pasarlo a la vista
-            msg = await ctx_or_interaction.original_response()
+            msg = await ctx_or_interaction.followup.send(embed=embed, view=view)
         else:
             msg = await ctx_or_interaction.send(embed=embed, view=view)
             

@@ -419,6 +419,9 @@ async def on_slash_error(interaction: discord.Interaction, error):
         return
     
     logger.error(f"[SLASH ERROR] {command}: {type(error).__name__} - {error}")
+    if DEBUG:
+        import traceback
+        logger.error("".join(traceback.format_exception(type(error), error, error.__traceback__)))
     try:
         if interaction.response.is_done():
             await interaction.followup.send("❌ **Error inesperado**", ephemeral=True)
