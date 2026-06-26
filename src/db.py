@@ -1398,7 +1398,7 @@ def init_db():
                 ON RoboLog (VictimaID, Timestamp DESC)
             """)
             
-        print("✅ Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
+        logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
     except Exception as e:
-        print(f"❌ Error inicializando las tablas de la base de datos: {e}")
+        logger.error(f"Error inicializando las tablas de la base de datos: {e}")
         raise e
