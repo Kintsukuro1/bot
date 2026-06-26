@@ -39,6 +39,7 @@ class CapturaQTEView(discord.ui.View):
         super().__init__(timeout=4.0) # 4 segundos para reaccionar
         self.user_id = user_id
         self.capturado = False
+        self.last_interaction = None
 
     @discord.ui.button(label="¡ATRAPAR!", style=discord.ButtonStyle.danger, emoji="🕸️")
     async def btn_atrapar(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -46,6 +47,7 @@ class CapturaQTEView(discord.ui.View):
             return
         
         self.capturado = True
+        self.last_interaction = interaction
         await interaction.response.defer()
         self.stop()
 
@@ -58,6 +60,7 @@ class PerfiladoGridView(discord.ui.View):
         self.target_r = target_r
         self.target_c = target_c
         self.estado = "Jugando" # Jugando, Encontrado, Fallado, Timeout
+        self.last_interaction = None
         
         for row in range(3):
             for col in range(3):
@@ -83,6 +86,7 @@ class PerfiladoGridView(discord.ui.View):
                 for item in self.children:
                     item.disabled = True
                     
+                self.last_interaction = interaction
                 await interaction.response.defer()
                 self.stop()
             else:
@@ -94,6 +98,7 @@ class PerfiladoGridView(discord.ui.View):
                     self.estado = "Fallado"
                     for item in self.children:
                         item.disabled = True
+                    self.last_interaction = interaction
                     await interaction.response.defer()
                     self.stop()
                 else:
@@ -162,7 +167,10 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
         embed_qte.set_footer(text="Tienes menos de 4 segundos...")
         
         qte_view = CapturaQTEView(user_id)
-        await msg.edit(content=None, embed=embed_qte, view=qte_view)
+        if grid_view.last_interaction:
+            await grid_view.last_interaction.edit_original_response(content=None, embed=embed_qte, view=qte_view)
+        else:
+            await msg.edit(content=None, embed=embed_qte, view=qte_view)
         
         await qte_view.wait()
         
@@ -180,7 +188,10 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
                 description=f"Lograste someter al objetivo y entregarlo a las autoridades.\n\n💰 **Ganancia:** {recompensa} monedas\n📈 **XP:** {xp_ganada}",
                 color=discord.Color.green()
             )
-            await msg.edit(embed=embed_final, view=None)
+            if qte_view.last_interaction:
+                await qte_view.last_interaction.edit_original_response(embed=embed_final, view=None)
+            else:
+                await msg.edit(embed=embed_final, view=None)
         else:
             # Se escapó en el QTE, recompensa parcial
             recompensa_parcial = int(recompensa_base * 0.4)
@@ -195,7 +206,10 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
                 description=f"Fuiste demasiado lento y huyó de la escena. Sin embargo, vendiste la información de su paradero.\n\n💰 **Ganancia:** {recompensa_parcial} monedas\n📈 **XP:** {xp_parcial}",
                 color=discord.Color.orange()
             )
-            await msg.edit(embed=embed_final, view=None)
+            if qte_view.last_interaction:
+                await qte_view.last_interaction.edit_original_response(embed=embed_final, view=None)
+            else:
+                await msg.edit(embed=embed_final, view=None)
             
     elif grid_view.estado == "Fallado":
         embed_fallo = discord.Embed(
@@ -203,7 +217,10 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
             description="Revisaste las zonas equivocadas y el fugitivo ya abandonó la ciudad. Misión fallida.",
             color=discord.Color.red()
         )
-        await msg.edit(content=None, embed=embed_fallo, view=None)
+        if grid_view.last_interaction:
+            await grid_view.last_interaction.edit_original_response(content=None, embed=embed_fallo, view=None)
+        else:
+            await msg.edit(content=None, embed=embed_fallo, view=None)
         
     elif grid_view.estado == "Timeout":
         embed_fallo = discord.Embed(
@@ -211,4 +228,7 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
             description="Tardaste mucho analizando las pistas y perdiste tu ventana de oportunidad.",
             color=discord.Color.dark_gray()
         )
-        await msg.edit(content=None, embed=embed_fallo, view=None)
+        if grid_view.last_interaction:
+            await grid_view.last_interaction.edit_original_response(content=None, embed=embed_fallo, view=None)
+        else:
+            await msg.edit(content=None, embed=embed_fallo, view=None)

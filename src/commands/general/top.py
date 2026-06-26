@@ -17,6 +17,8 @@ class Top(commands.Cog):
             await interaction.response.send_message("❌ Este comando solo puede usarse en un servidor.", ephemeral=True)
             return
 
+        await interaction.response.defer()
+
         user_id = interaction.user.id
         user_name = interaction.user.name
         
@@ -25,8 +27,6 @@ class Top(commands.Cog):
         
         # Obtener los IDs de los miembros del servidor para filtrar
         member_ids = tuple(m.id for m in guild.members)
-        
-        await interaction.response.defer()
         
         try:
             rows = await LeaderboardService.get_top_richest(member_ids, limit=10)
@@ -86,14 +86,14 @@ class Top(commands.Cog):
             await interaction.response.send_message("❌ Este comando solo puede usarse en un servidor.", ephemeral=True)
             return
 
+        await interaction.response.defer()
+
         user_id = interaction.user.id
         user_name = interaction.user.name
         
         await UserService.ensure_user(user_id, user_name)
         
         member_ids = tuple(m.id for m in guild.members)
-        
-        await interaction.response.defer()
         
         try:
             rows = await LeaderboardService.get_top_minas_victims(member_ids, limit=10)

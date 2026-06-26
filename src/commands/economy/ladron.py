@@ -22,6 +22,7 @@ class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
     async def on_submit(self, interaction: discord.Interaction):
         self.view_parent.input_recibido = self.codigo_input.value.strip()
         self.view_parent.tiempo_submit = time.time()
+        self.view_parent.last_interaction = interaction
         await interaction.response.defer()
         self.view_parent.stop()
 
@@ -31,6 +32,7 @@ class LadronHackView(discord.ui.View):
         self.user_id = user_id
         self.input_recibido = None
         self.tiempo_submit = 0
+        self.last_interaction = None
 
     @discord.ui.button(label="Introducir PIN", style=discord.ButtonStyle.primary, emoji="🔓")
     async def btn_pin(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -47,12 +49,14 @@ class LadronGanzuaView(discord.ui.View):
         super().__init__(timeout=15)
         self.user_id = user_id
         self.usar_ganzua = False
+        self.last_interaction = None
 
     @discord.ui.button(label="Usar Ganzúa Electrónica", style=discord.ButtonStyle.success, emoji="🛠️")
     async def btn_ganzua(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return
         self.usar_ganzua = True
+        self.last_interaction = interaction
         await interaction.response.defer()
         self.stop()
         
@@ -61,6 +65,7 @@ class LadronGanzuaView(discord.ui.View):
         if interaction.user.id != self.user_id:
             return
         self.usar_ganzua = False
+        self.last_interaction = interaction
         await interaction.response.defer()
         self.stop()
 
@@ -69,12 +74,14 @@ class LadronRutaView(discord.ui.View):
         super().__init__(timeout=30)
         self.user_id = user_id
         self.ruta = None
+        self.last_interaction = None
 
     @discord.ui.button(label="Ruta Sigilosa", style=discord.ButtonStyle.primary, emoji="🥷")
     async def btn_sigilo(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return
         self.ruta = "sigilo"
+        self.last_interaction = interaction
         await interaction.response.defer()
         self.stop()
 
@@ -83,6 +90,7 @@ class LadronRutaView(discord.ui.View):
         if interaction.user.id != self.user_id:
             return
         self.ruta = "fuerza"
+        self.last_interaction = interaction
         await interaction.response.defer()
         self.stop()
 
@@ -117,8 +125,12 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed_ruta, view=ruta_view)
     await ruta_view.wait()
     
+    latest_interaction = interaction
+    if ruta_view.last_interaction:
+        latest_interaction = ruta_view.last_interaction
+
     if ruta_view.ruta is None:
-        await interaction.edit_original_response(content="⏳ Tardaste mucho en decidir. Abortando atraco.", embed=None, view=None)
+        await latest_interaction.edit_original_response(content="⏳ Tardaste mucho en decidir. Abortando atraco.", embed=None, view=None)
         return
         
     consumir_energia(user_id, energia_req)
@@ -134,7 +146,7 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         )
         tiempo_mostrar = 5 if tiene_penetracion else 3
         embed_juego.set_footer(text=f"El PIN desaparecerá en {tiempo_mostrar} segundos...")
-        await interaction.edit_original_response(embed=embed_juego, view=None)
+        await latest_interaction.edit_original_response(embed=embed_juego, view=None)
         
         await asyncio.sleep(tiempo_mostrar)
         
@@ -144,9 +156,11 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
             color=discord.Color.orange()
         )
         hack_view = LadronHackView(user_id, 20)
-        await interaction.edit_original_response(embed=embed_oculto, view=hack_view)
+        await latest_interaction.edit_original_response(embed=embed_oculto, view=hack_view)
         
         await hack_view.wait()
+        if hack_view.last_interaction:
+            latest_interaction = hack_view.last_interaction
         respuesta_correcta = pin_secreto
         multiplicador_pago = random.uniform(1.0, 1.3)
         
@@ -161,10 +175,12 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         
         hack_view = LadronHackView(user_id, 10)
         start_time = time.time()
-        await interaction.edit_original_response(embed=embed_juego, view=hack_view)
+        await latest_interaction.edit_original_response(embed=embed_juego, view=hack_view)
         
         await hack_view.wait()
-        
+        if hack_view.last_interaction:
+            latest_interaction = hack_view.last_interaction
+            
         # Validación extra de tiempo para Fuerza Bruta
         if hack_view.input_recibido and (hack_view.tiempo_submit - start_time) > 10.5:
             hack_view.input_recibido = "" # Tardó mucho
@@ -187,7 +203,7 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
             description=f"Lograste abrir la bóveda y escapar con el botín.\n\n💰 **Ganancia:** {recompensa} monedas\n📈 **XP:** {xp_ganada}",
             color=discord.Color.green()
         )
-        await interaction.edit_original_response(embed=embed_final, view=None)
+        await latest_interaction.edit_original_response(embed=embed_final, view=None)
         
     else:
         # FALLO
@@ -198,8 +214,10 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
                 color=discord.Color.orange()
             )
             ganzua_view = LadronGanzuaView(user_id)
-            await interaction.edit_original_response(embed=embed_fallo, view=ganzua_view)
+            await latest_interaction.edit_original_response(embed=embed_fallo, view=ganzua_view)
             await ganzua_view.wait()
+            if ganzua_view.last_interaction:
+                latest_interaction = ganzua_view.last_interaction
             
             if ganzua_view.usar_ganzua:
                 embed_escapo = discord.Embed(
@@ -208,7 +226,7 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
                     color=discord.Color.dark_gray()
                 )
                 add_experiencia_trabajo(user_id, tipo_trabajo, int(xp_ganada * 0.2))
-                await interaction.edit_original_response(embed=embed_escapo, view=None)
+                await latest_interaction.edit_original_response(embed=embed_escapo, view=None)
                 return
                 
         # Arrestado
@@ -224,4 +242,4 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
             description=f"Fallaste el atraco. La policía te atrapó.\n\n💸 **Multa Pagada:** {multa} monedas.",
             color=discord.Color.red()
         )
-        await interaction.edit_original_response(embed=embed_arresto, view=None)
+        await latest_interaction.edit_original_response(embed=embed_arresto, view=None)

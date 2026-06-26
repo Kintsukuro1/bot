@@ -17,6 +17,8 @@ HORSE_TEMPLATES = [
     {"emoji": "🍃"}
 ]
 
+HORSES = [{"name": "", "emoji": t["emoji"]} for t in HORSE_TEMPLATES]
+
 POSSIBLE_NAMES = [
     "Foot licker",
     "Trash can",
@@ -30,22 +32,36 @@ SECRET_HORSES = [
     "turbulent waters"
 ]
 
+def randomize_horse_names():
+    names = random.sample(POSSIBLE_NAMES, len(HORSES))
+    for i in range(len(HORSES)):
+        HORSES[i]['name'] = names[i]
+
+# Inicializar nombres aleatorios al cargar el módulo
+randomize_horse_names()
+
+HORSE_DOPING = {i: 0 for i in range(len(HORSES))}
+
 def create_horses():
-    """Creates a fresh, independent list of horses for a single race."""
-    horses = [{"name": "", "emoji": t["emoji"]} for t in HORSE_TEMPLATES]
-    names = random.sample(POSSIBLE_NAMES, len(horses))
+    """Creates a copy of the current global horses and their doping levels for a single race, then resets the global doping and randomizes the names for the next race."""
+    global HORSE_DOPING
     
-    # 5% chance para un caballo secreto
+    race_horses = [h.copy() for h in HORSES]
+    
+    # 5% chance para un caballo secreto en la carrera
     if random.random() < 0.05:
         secret_horse = random.choice(SECRET_HORSES)
-        replace_idx = random.randint(0, len(horses) - 1)
-        names[replace_idx] = secret_horse
+        replace_idx = random.randint(0, len(race_horses) - 1)
+        race_horses[replace_idx]['name'] = secret_horse
 
-    for i in range(len(horses)):
-        horses[i]['name'] = names[i]
+    race_doping = HORSE_DOPING.copy()
     
-    doping = {i: 0 for i in range(len(horses))}
-    return horses, doping
+    # Resetear el estado de doping global y cambiar nombres globales para la siguiente carrera
+    for i in HORSE_DOPING:
+        HORSE_DOPING[i] = 0
+    randomize_horse_names()
+    
+    return race_horses, race_doping
 
 
 class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
