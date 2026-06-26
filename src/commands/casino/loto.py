@@ -27,11 +27,11 @@ class Loto(commands.Cog):
             results = await LotteryService.draw_lottery()
             await self.announce_draw_results(results)
         except Exception as e:
-            logger.error(f"Error durante el sorteo automático de lotería: {e}")
-
             raise
+
     @app_commands.command(name="loto", description="Muestra el pozo acumulado del loto del casino y tus boletos comprados hoy.")
     async def loto(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
@@ -80,7 +80,7 @@ class Loto(commands.Cog):
         )
         
         embed.set_footer(text="¡2% de todas las apuestas en juegos individuales se añaden al pozo!")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="loto_comprar", description="Compra un boleto de loto. Selecciona 4 números del 1 al 25.")
     @app_commands.describe(
@@ -97,13 +97,14 @@ class Loto(commands.Cog):
         num3: Optional[int] = None, 
         num4: Optional[int] = None
     ):
+        await interaction.response.defer()
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
         # Validar si el usuario ya tiene el límite de boletos antes de procesar
         current_count = await LotteryService.get_user_tickets(user_id)
         if current_count >= 5:
-            await interaction.response.send_message("❌ Ya has alcanzado el límite de 5 boletos de loto para hoy.", ephemeral=True)
+            await interaction.followup.send("❌ Ya has alcanzado el límite de 5 boletos de loto para hoy.", ephemeral=True)
             return
 
         # Colectar los números ingresados
@@ -111,11 +112,11 @@ class Loto(commands.Cog):
         
         # Validar rangos e duplicados de los ingresados
         if any(n < 1 or n > 25 for n in entered):
-            await interaction.response.send_message("❌ Todos los números del loto deben estar entre 1 y 25.", ephemeral=True)
+            await interaction.followup.send("❌ Todos los números del loto deben estar entre 1 y 25.", ephemeral=True)
             return
             
         if len(set(entered)) != len(entered):
-            await interaction.response.send_message("❌ Los números ingresados no pueden repetirse.", ephemeral=True)
+            await interaction.followup.send("❌ Los números ingresados no pueden repetirse.", ephemeral=True)
             return
             
         # Autocompletar los números faltantes de forma aleatoria
@@ -131,7 +132,7 @@ class Loto(commands.Cog):
         success, message, new_balance = await LotteryService.purchase_ticket(user_id, numbers)
         
         if not success:
-            await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+            await interaction.followup.send(f"❌ {message}", ephemeral=True)
             return
             
         embed = discord.Embed(
@@ -141,8 +142,7 @@ class Loto(commands.Cog):
         )
         embed.add_field(name="Precio", value="500 monedas", inline=True)
         embed.add_field(name="Tu saldo actual", value=f"{new_balance:,} monedas", inline=True)
-        
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="loto_draw", description="[ADMIN] Fuerza el sorteo del loto de forma manual e inmediata.")
     async def loto_draw(self, interaction: discord.Interaction):
