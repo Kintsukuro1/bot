@@ -158,7 +158,13 @@ class AuctionView(discord.ui.View):
                 inline=False
             )
             
-        await interaction.response.edit_message(embed=embed, view=self)
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except discord.InteractionResponded:
+            await interaction.edit_original_response(embed=embed, view=self)
 
 class ArtistaView(discord.ui.View):
     def __init__(self, user, obra_objetivo, recompensa_base, nivel):
@@ -356,7 +362,13 @@ class ArtistaView(discord.ui.View):
                 puntuacion_total, colores_correctos, len(colores_objetivo),
                 self.pinceladas, self.creatividad_bonus, estilo_feedback
             )
-            await interaction.response.edit_message(embed=embed, view=view)
+            try:
+                if interaction.response.is_done():
+                    await interaction.edit_original_response(embed=embed, view=view)
+                else:
+                    await interaction.response.edit_message(embed=embed, view=view)
+            except discord.InteractionResponded:
+                await interaction.edit_original_response(embed=embed, view=view)
         else:
             # Flujo estándar sin subasta (Nivel < 8)
             await self._completar_trabajo_estandar(interaction, puntuacion_total, colores_correctos, len(colores_objetivo), recompensa_obra, xp_ganada, estilo_feedback)
@@ -433,10 +445,12 @@ class ArtistaView(discord.ui.View):
             )
             
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
             
     async def _actualizar_mensaje(self, interaction, accion):
         progreso_colores = len(self.colores_seleccionados) / 4
@@ -490,10 +504,12 @@ class ArtistaView(discord.ui.View):
         )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
 def _finalizar_artista_db(user_id, recompensa_final, xp_ganada, comprador_msg):
     if recompensa_final > 0:

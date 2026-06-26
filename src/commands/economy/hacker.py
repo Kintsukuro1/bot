@@ -200,10 +200,12 @@ class HackerView(discord.ui.View):
         )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
     
     async def _completar_trabajo(self, interaction, exito):
         # Desactivar todos los botones
@@ -283,10 +285,12 @@ class HackerView(discord.ui.View):
             )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
 class CodigoModal(discord.ui.Modal, title="🎯 Adivinar Código"):
     def __init__(self, codigo_correcto, view):

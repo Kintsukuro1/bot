@@ -211,10 +211,12 @@ class MineroView(discord.ui.View):
         )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
     async def _completar_trabajo(self, interaction, exito):
         # Desactivar todos los botones
@@ -283,10 +285,12 @@ class MineroView(discord.ui.View):
             )
             
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
 def _completar_minero_db(user_id, tipo_trabajo, recompensa_base, mineral_acumulado):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)

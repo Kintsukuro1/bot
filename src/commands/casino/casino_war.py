@@ -225,10 +225,12 @@ class CasinoWarView(discord.ui.View):
             color=discord.Color.blue()
         )
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
 class CasinoWarCog(commands.Cog):
     def __init__(self, bot):

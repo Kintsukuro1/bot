@@ -216,10 +216,12 @@ class PescadorView(discord.ui.View):
         )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
     async def _completar_trabajo(self, interaction, exito, motivo=None):
         self.recoger.disabled = True
@@ -300,10 +302,12 @@ class PescadorView(discord.ui.View):
             )
             
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
     async def _finalizar_con_red(self, interaction):
         user_id = self.user.id
@@ -349,7 +353,13 @@ class PescadorView(discord.ui.View):
                 inline=False
             )
             
-        await interaction.response.edit_message(embed=embed, view=self)
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except discord.InteractionResponded:
+            await interaction.edit_original_response(embed=embed, view=self)
 
 def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pez_objetivo):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)

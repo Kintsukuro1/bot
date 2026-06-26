@@ -250,10 +250,12 @@ class ChefView(discord.ui.View):
         )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
     
     async def _completar_trabajo(self, interaction, puntuacion, correctos, faltantes, extras, secreto_multiplier=1.0, secreto_feedback="", secreto_xp_bonus=0, temp_multiplier=1.0, temp_feedback=""):
         # Desactivar todos los botones
@@ -346,10 +348,12 @@ class ChefView(discord.ui.View):
             )
         
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
-            raise
 
 def _completar_chef_db(user_id, tipo_trabajo, recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, secreto_xp_bonus, preparacion_perfecta):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
