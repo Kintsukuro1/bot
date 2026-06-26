@@ -35,6 +35,8 @@ class Energia(commands.Cog):
     @app_commands.command(name="energia", description="Ver tu estado de energía actual")
     async def energia_command(self, interaction: discord.Interaction):
         """Comando para mostrar la energía del usuario."""
+        await interaction.response.defer()
+        
         user_id = interaction.user.id
         
         # Asegurar que el usuario existe de forma asíncrona
@@ -102,12 +104,14 @@ class Energia(commands.Cog):
         
         embed.set_footer(text="Usa /trabajo para empezar a trabajar")
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="energia_debug", description="Información de debug del sistema de energía")
     @app_commands.default_permissions(administrator=True)
     async def energia_debug(self, interaction: discord.Interaction, usuario: Optional[discord.Member] = None):
         """Comando de debug para administradores."""
+        await interaction.response.defer(ephemeral=True)
+        
         target_user = usuario or interaction.user
         user_id = target_user.id
         
@@ -158,7 +162,7 @@ class Energia(commands.Cog):
         embed.color = discord.Color.orange()
         embed.set_footer(text="💡 Esta información es para debugging del sistema de energía")
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Energia(bot))

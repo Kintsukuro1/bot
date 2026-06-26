@@ -23,6 +23,7 @@ class Crash(commands.Cog):
 
     async def _crash_game(self, ctx_or_interaction, apuesta: int, is_slash: bool = False):
         if is_slash:
+            await ctx_or_interaction.response.defer()
             user = ctx_or_interaction.user
             user_id = user.id
             user_name = user.name
@@ -35,7 +36,7 @@ class Crash(commands.Cog):
         if apuesta <= 0:
             error_msg = "❌ La apuesta debe ser mayor a 0."
             if is_slash:
-                await ctx_or_interaction.response.send_message(error_msg, ephemeral=True)
+                await ctx_or_interaction.followup.send(error_msg, ephemeral=True)
             else:
                 await ctx_or_interaction.send(error_msg)
             return
@@ -44,7 +45,7 @@ class Crash(commands.Cog):
         if not success:
             error_msg = f"❌ No tienes suficiente saldo para esa apuesta."
             if is_slash:
-                await ctx_or_interaction.response.send_message(error_msg, ephemeral=True)
+                await ctx_or_interaction.followup.send(error_msg, ephemeral=True)
             else:
                 await ctx_or_interaction.send(error_msg)
             return
@@ -91,7 +92,7 @@ class Crash(commands.Cog):
         view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation)
         
         if is_slash:
-            await ctx_or_interaction.response.send_message(embed=embed, view=view)
+            await ctx_or_interaction.followup.send(embed=embed, view=view)
             # Obtener el mensaje para pasarlo a la vista
             msg = await ctx_or_interaction.original_response()
         else:
@@ -130,6 +131,9 @@ class CrashView(discord.ui.View):
             except discord.InteractionResponded:
                 await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
             return
+        
+        # Defer immediately to prevent interaction timeout
+        await interaction.response.defer()
         
         # CAPTURA INSTANTÁNEA del multiplicador actual para evitar cambios del bucle
         mult_al_retirarse = self.current_mult
@@ -197,16 +201,10 @@ class CrashView(discord.ui.View):
             
             # Intentar responder a la interacción
             try:
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=resultado_embed, view=self)
+                if interaction.response.is_done():
+                    await interaction.edit_original_response(embed=resultado_embed, view=self)
                 else:
-                    # Usar followup solo si hay un mensaje válido
-                    if interaction.message and hasattr(interaction.message, 'id'):
-                        await interaction.followup.edit_message(interaction.message.id, embed=resultado_embed, view=self)
-                    elif self.msg and hasattr(self.msg, 'edit'):
-                        await self.msg.edit(embed=resultado_embed, view=self)
-                    else:
-                        await interaction.followup.send(embed=resultado_embed, ephemeral=True)
+                    await interaction.response.edit_message(embed=resultado_embed, view=self)
             except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
                 # Si falla, intentar editar el mensaje directamente
                 try:

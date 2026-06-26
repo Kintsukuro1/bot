@@ -193,6 +193,7 @@ class Robar(commands.Cog):
     async def _robar_logica(self, ctx_or_interaction, victima: discord.Member, porcentaje: int = 10, is_slash: bool = False):
         """Lógica principal del comando robar."""
         if is_slash:
+            await ctx_or_interaction.response.defer()
             ladron = ctx_or_interaction.user
         else:
             ladron = ctx_or_interaction.author
@@ -206,7 +207,7 @@ class Robar(commands.Cog):
         if victima.bot:
             respuesta = "❌ No puedes robar a un bot."
             if is_slash:
-                await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
             return
@@ -214,7 +215,7 @@ class Robar(commands.Cog):
         if ladron_id == victima_id:
             respuesta = "❌ No puedes robarte a ti mismo."
             if is_slash:
-                await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
             return
@@ -222,7 +223,7 @@ class Robar(commands.Cog):
         if porcentaje < 1 or porcentaje > 25:
             respuesta = "❌ El porcentaje debe estar entre 1% y 25%."
             if is_slash:
-                await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
             return
@@ -230,7 +231,7 @@ class Robar(commands.Cog):
         try:
             # Enviar mensaje inicial
             if is_slash:
-                await ctx_or_interaction.response.send_message("🕵️ Intentando robar... espera el resultado...", ephemeral=False)
+                await ctx_or_interaction.followup.send("🕵️ Intentando robar... espera el resultado...", ephemeral=False)
                 msg = await ctx_or_interaction.original_response()
             else:
                 msg = await ctx_or_interaction.send("🕵️ Intentando robar... espera el resultado...")

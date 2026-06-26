@@ -10,6 +10,7 @@ class Daily(commands.Cog):
     @discord.app_commands.command(name="daily", description="Reclama tu recompensa diaria.")
     async def daily(self, interaction: discord.Interaction):
         """Reclama tu recompensa diaria."""
+        await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name
         
@@ -30,7 +31,7 @@ class Daily(commands.Cog):
                     description=f"Vuelve en **{hours}h {minutes}m {seconds}s** para reclamar de nuevo.",
                     color=discord.Color.orange()
                 )
-                await interaction.response.send_message(embed=embed)
+                await interaction.followup.send(embed=embed)
                 return
 
             # Si success es True, data es el monto de la recompensa
@@ -39,10 +40,10 @@ class Daily(commands.Cog):
                 description=f"Has recibido **{data}** monedas.\nRacha: **{streak}** días.\nSaldo actual: **{balance}**",
                 color=discord.Color.green()
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             
         except Exception as e:
-            await interaction.response.send_message(f"Ocurrió un error al reclamar la recompensa diaria: {e}", ephemeral=True)
+            await interaction.followup.send(f"Ocurrió un error al reclamar la recompensa diaria: {e}", ephemeral=True)
             raise
 
 # Añadir el cog al bot

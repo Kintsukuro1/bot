@@ -51,6 +51,7 @@ class BlackjackView(discord.ui.View):
             await interaction.response.send_message("No puedes usar este botón.", ephemeral=True)
             return
             
+        await interaction.response.defer()
         from src.db import deduct_balance
         success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user.id, self.apuesta)
         if not success:
@@ -73,6 +74,7 @@ class BlackjackView(discord.ui.View):
             await interaction.response.send_message("No puedes usar este botón.", ephemeral=True)
             return
             
+        await interaction.response.defer()
         # Remover el botón de dividir si piden carta
         for child in self.children:
             if getattr(child, "label", "") == "✂️ Dividir":
@@ -114,6 +116,7 @@ class BlackjackView(discord.ui.View):
             await interaction.response.send_message("No puedes usar este botón.", ephemeral=True)
             return
             
+        await interaction.response.defer()
         if self.current_hand_idx < len(self.player_hands) - 1:
             self.current_hand_idx += 1
             await self._update_ui(interaction, f"🛑 Te plantaste en la Mano {self.current_hand_idx}.")
@@ -139,7 +142,10 @@ class BlackjackView(discord.ui.View):
         embed.add_field(name="🤖 Dealer", value=f"{self.dealer_hand[0]} 🎴 \n**Visible: {dealer_visible}**", inline=False)
         embed.add_field(name="💰 Apuesta Total", value=f"{self.apuesta * len(self.player_hands)} monedas", inline=True)
         
-        await interaction.response.edit_message(embed=embed, view=self)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self)
 
     async def _finish_game(self, interaction):
         user_id = self.user.id
@@ -211,7 +217,7 @@ class BlackjackView(discord.ui.View):
                 item.disabled = True
                 
         if interaction.response.is_done():
-            await interaction.followup.edit_message(message_id=interaction.message.id, embed=embed, view=self)
+            await interaction.edit_original_response(embed=embed, view=self)
         else:
             await interaction.response.edit_message(embed=embed, view=self)
 
@@ -238,17 +244,18 @@ class Blackjack(commands.Cog):
     @app_commands.command(name="blackjack", description="Juega una partida de blackjack contra la casa")
     @app_commands.describe(apuesta="Cantidad de monedas a apostar")
     async def blackjack(self, interaction: discord.Interaction, apuesta: int):
+        await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)
         
         if apuesta <= 0:
-            await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
+            await interaction.followup.send("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
             
         success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
         if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
+            await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
 
         difficulty_modifier, difficulty_explanation = await asyncio.to_thread(
@@ -302,13 +309,13 @@ class Blackjack(commands.Cog):
                 embed.color = discord.Color.gold()
                 embed.set_field_at(3, name="💳 Saldo actual", value=f"{nuevo_saldo} monedas", inline=True)
             
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             return
         
         view = BlackjackView(interaction.user, apuesta, saldo, deck, player_hand, dealer_hand, difficulty_modifier, difficulty_explanation)
         embed.set_footer(text="Usa los botones para tomar tu decisión ⏳ Tiempo límite: 60 segundos")
         
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Blackjack(bot))

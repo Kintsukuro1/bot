@@ -311,21 +311,22 @@ class Coinflip(commands.Cog):
         retar="Usuario al que quieres retar a un duelo (opcional)"
     )
     async def coinflip(self, interaction: discord.Interaction, apuesta: int, retar: Optional[discord.Member] = None):
+        await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)  # Asegura registro y datos del usuario
         if apuesta <= 0:
-            await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
+            await interaction.followup.send("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
 
         # Si se especificó un usuario para retar, realizar todas las validaciones antes de descontar saldo
         if retar:
             if retar.id == interaction.user.id:
-                await interaction.response.send_message("❌ No puedes retarte a ti mismo.", ephemeral=True)
+                await interaction.followup.send("❌ No puedes retarte a ti mismo.", ephemeral=True)
                 return
             
             if retar.bot:
-                await interaction.response.send_message("❌ No puedes retar a un bot.", ephemeral=True)
+                await interaction.followup.send("❌ No puedes retar a un bot.", ephemeral=True)
                 return
             
             # Asegurar que el retado esté registrado
@@ -333,7 +334,7 @@ class Coinflip(commands.Cog):
             challenged_balance = await asyncio.to_thread(get_balance, retar.id)
             
             if challenged_balance < apuesta:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"❌ {retar.display_name} no tiene suficiente saldo para este duelo. "
                     f"Necesita al menos {apuesta} monedas (tiene {challenged_balance}).", 
                     ephemeral=True
@@ -343,7 +344,7 @@ class Coinflip(commands.Cog):
         # Descontar el saldo del retador
         success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
         if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
+            await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
         
         # Si se especificó un usuario para retar, iniciar duelo
@@ -365,7 +366,7 @@ class Coinflip(commands.Cog):
             # Crear vista de duelo
             duel_view = CoinflipDuelView(interaction.user, retar, apuesta)
             
-            await interaction.response.send_message(embed=embed, view=duel_view)
+            await interaction.followup.send(embed=embed, view=duel_view)
             duel_view.message = await interaction.original_response()
             return
         
@@ -386,7 +387,7 @@ class Coinflip(commands.Cog):
         # Crear vista con botones
         view = CoinflipView(interaction.user, apuesta, saldo)
         
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Coinflip(bot))

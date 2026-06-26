@@ -342,6 +342,7 @@ class Trabajo(commands.Cog):
 
     @app_commands.command(name="trabajo", description="Explora los trabajos disponibles y gana dinero")
     async def trabajo(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name
         saldo_actual, energia_actual, trabajos = await asyncio.to_thread(
@@ -397,7 +398,7 @@ class Trabajo(commands.Cog):
         
         # Crear vista con botones
         view = TrabajoView(interaction.user)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Trabajo(bot))
