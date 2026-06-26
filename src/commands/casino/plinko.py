@@ -235,4 +235,4 @@ class PlinkoCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(PlinkoCog(bot))
-    print("✅ Plinko command loaded.")
+    print("Plinko command loaded.")

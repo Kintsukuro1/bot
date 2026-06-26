@@ -73,4 +73,4 @@ class ProvablyFairView(discord.ui.View):
 
 async def setup(bot):
     await bot.add_cog(ProvablyFair(bot))
-    print("✅ Provably Fair command loaded.")
+    print("Provably Fair command loaded.")

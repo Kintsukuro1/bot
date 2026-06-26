@@ -15,16 +15,17 @@ class Slots(commands.Cog):
     @app_commands.describe(apuesta="Cantidad a apostar")
     async def slots(self, interaction: discord.Interaction, apuesta: int):
         try:
+            await interaction.response.defer()
             user_id = interaction.user.id
             user_name = interaction.user.name
             await asyncio.to_thread(ensure_user, user_id, user_name)
             if apuesta <= 0:
-                await interaction.response.send_message("La apuesta debe ser mayor a 0.", ephemeral=True)
+                await interaction.followup.send("La apuesta debe ser mayor a 0.", ephemeral=True)
                 return
 
             success, saldo_usuario = await asyncio.to_thread(deduct_balance, user_id, apuesta)
             if not success:
-                await interaction.response.send_message("No tienes suficiente saldo para esa apuesta.", ephemeral=True)
+                await interaction.followup.send("No tienes suficiente saldo para esa apuesta.", ephemeral=True)
                 return
 
             # Calcular dificultad dinámica
@@ -145,10 +146,10 @@ class Slots(commands.Cog):
                 color=color
             )
             embed.set_footer(text=footer)
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
         except Exception as e:
             try:
-                await interaction.response.send_message(f"Ocurrió un error: {e}", ephemeral=True)
+                await interaction.followup.send(f"Ocurrió un error: {e}", ephemeral=True)
             except:
                 pass
             raise

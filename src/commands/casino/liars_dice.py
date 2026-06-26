@@ -353,4 +353,4 @@ class LiarsDiceCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(LiarsDiceCog(bot))
-    print("✅ Liar's Dice command loaded.")
+    print("Liar's Dice command loaded.")
