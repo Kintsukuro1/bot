@@ -6,9 +6,9 @@ from src.db import get_balance, ensure_user
 from .energia import get_energia
 
 class PatchedInteractionResponse:
-    def __init__(self, original_response, interaction):
+    def __init__(self, original_response, patched_interaction):
         self._original = original_response
-        self._interaction = interaction
+        self._patched_interaction = patched_interaction
 
     def __getattr__(self, name):
         return getattr(self._original, name)
@@ -16,13 +16,22 @@ class PatchedInteractionResponse:
     async def send_message(self, *args, **kwargs):
         if self._original.is_done():
             kwargs.pop('delete_after', None)
-            return await self._interaction.followup.send(*args, **kwargs)
+            msg = await self._patched_interaction.followup.send(*args, **kwargs)
+            # Track this message so edit_original_response can target it
+            self._patched_interaction.__dict__['_followup_message'] = msg
+            return msg
         return await self._original.send_message(*args, **kwargs)
+
+    async def defer(self, *args, **kwargs):
+        if self._original.is_done():
+            return  # Already deferred, skip silently
+        return await self._original.defer(*args, **kwargs)
 
 class PatchedInteraction:
     def __init__(self, original_interaction):
         self.__dict__['_original'] = original_interaction
         self.__dict__['_response'] = PatchedInteractionResponse(original_interaction.response, self)
+        self.__dict__['_followup_message'] = None
 
     def __getattr__(self, name):
         return getattr(self._original, name)
@@ -33,6 +42,12 @@ class PatchedInteraction:
     @property
     def response(self):
         return self._response
+
+    async def edit_original_response(self, **kwargs):
+        """If a followup message was created, edit that instead of the original."""
+        if self.__dict__['_followup_message'] is not None:
+            return await self.__dict__['_followup_message'].edit(**kwargs)
+        return await self._original.edit_original_response(**kwargs)
 
 
 def _get_energia_menu_data(user_id):

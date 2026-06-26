@@ -189,7 +189,9 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         multiplicador_pago = random.uniform(1.5, 2.0)
 
     # Evaluación de resultados
-    recompensa_base, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+    from .niveles_trabajo import TIPOS_TRABAJO
+    recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
+    xp_ganada = TIPOS_TRABAJO[tipo_trabajo].get('xp_por_trabajo', 10)
     
     if hack_view.input_recibido == respuesta_correcta:
         # ÉXITO

@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header, TIPOS_TRABAJO
 
 # Reactivos posibles y sus pesos (impacto en la inestabilidad)
 REACTIVOS = {
@@ -200,7 +200,8 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
     view = discord.ui.View() # Empty view
     
     if game.status == "Ganado":
-        recompensa, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+        recompensa = get_recompensa_trabajo(tipo_trabajo, user_id)
+        xp_ganada = TIPOS_TRABAJO[tipo_trabajo].get('xp_por_trabajo', 10)
         
         if game.inestabilidad == 0:
             recompensa = int(recompensa * 1.5) # Bono por perfección
@@ -221,7 +222,8 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         
         # Recompensa parcial si pasó de la ronda 1
         if game.ronda_actual > 1:
-            recompensa, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+            recompensa = get_recompensa_trabajo(tipo_trabajo, user_id)
+            xp_ganada = TIPOS_TRABAJO[tipo_trabajo].get('xp_por_trabajo', 10)
             recompensa_parcial = int(recompensa * 0.3 * (game.ronda_actual - 1))
             xp_parcial = max(1, int(xp_ganada * 0.3))
             

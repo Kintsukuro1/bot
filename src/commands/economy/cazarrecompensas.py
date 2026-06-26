@@ -3,7 +3,7 @@ import asyncio
 import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
-from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header, TIPOS_TRABAJO
 
 def generar_pistas(r, c):
     pistas = []
@@ -155,7 +155,8 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
     
     await grid_view.wait()
     
-    recompensa_base, xp_ganada = get_recompensa_trabajo(tipo_trabajo, user_id)
+    recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
+    xp_ganada = TIPOS_TRABAJO[tipo_trabajo].get('xp_por_trabajo', 10)
     
     if grid_view.estado == "Encontrado":
         # Fase 2: QTE
