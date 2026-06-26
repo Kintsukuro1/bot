@@ -367,8 +367,7 @@ class MinesSetupView(discord.ui.View):
             color=discord.Color.blue()
         )
         
-        await interaction.edit_original_response(embed=embed, view=view)
-        view.message = await interaction.original_response()
+        view.message = await interaction.edit_original_response(embed=embed, view=view)
 
     async def on_timeout(self):
         for item in self.children:
@@ -395,6 +394,8 @@ class Mines(commands.Cog):
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
             
+        await interaction.response.defer()
+        
         view = MinesSetupView(user_id, apuesta, user_name)
         
         embed = discord.Embed(
@@ -408,8 +409,7 @@ class Mines(commands.Cog):
             color=discord.Color.blue()
         )
         
-        await interaction.response.send_message(embed=embed, view=view)
-        view.message = await interaction.original_response()
+        view.message = await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Mines(bot))

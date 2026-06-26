@@ -231,8 +231,7 @@ class Robar(commands.Cog):
         try:
             # Enviar mensaje inicial
             if is_slash:
-                await ctx_or_interaction.followup.send("🕵️ Intentando robar... espera el resultado...", ephemeral=False)
-                msg = await ctx_or_interaction.original_response()
+                msg = await ctx_or_interaction.followup.send("🕵️ Intentando robar... espera el resultado...", ephemeral=False)
             else:
                 msg = await ctx_or_interaction.send("🕵️ Intentando robar... espera el resultado...")
             

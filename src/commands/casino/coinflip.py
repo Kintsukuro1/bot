@@ -366,8 +366,7 @@ class Coinflip(commands.Cog):
             # Crear vista de duelo
             duel_view = CoinflipDuelView(interaction.user, retar, apuesta)
             
-            await interaction.followup.send(embed=embed, view=duel_view)
-            duel_view.message = await interaction.original_response()
+            duel_view.message = await interaction.followup.send(embed=embed, view=duel_view)
             return
         
         # Juego normal (sin duelo)

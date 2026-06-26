@@ -332,11 +332,14 @@ class LiarsDiceCog(commands.Cog):
             await interaction.response.send_message("❌ Apuesta inválida.", ephemeral=True)
             return
             
+        await interaction.response.defer()
+        
         success, _ = await asyncio.to_thread(deduct_balance, interaction.user.id, apuesta)
         if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para crear la mesa.", ephemeral=True)
+            await interaction.followup.send("❌ No tienes suficiente saldo para crear la mesa.", ephemeral=True)
             return
             
+        import uuid
         game_id = str(uuid.uuid4())[:8]
         game = LiarsDiceGame(game_id, interaction.user.id, apuesta, [interaction.user.id])
         await asyncio.to_thread(save_multiplayer_game, game.game_id, "liars_dice", game.to_dict())
@@ -348,8 +351,7 @@ class LiarsDiceCog(commands.Cog):
         )
         
         view = LobbyView(game)
-        await interaction.response.send_message(embed=embed, view=view)
-        view.message = await interaction.original_response()
+        view.message = await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(LiarsDiceCog(bot))
