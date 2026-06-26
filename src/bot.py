@@ -209,44 +209,24 @@ ALLOWED_CHANNEL_ID = 1519533661806923866
 
 @bot.check
 async def global_prefix_check(ctx):
-    # Permitir libremente al dueño del bot
-    if await bot.is_owner(ctx.author):
-        return True
-        
     # Permitir libremente en el servidor de pruebas (Little paradise)
     if ctx.guild and ctx.guild.id == 1019371540908884090:
         return True
         
-    # Si no es el canal designado
+    # Si no es el canal designado, bloquear sin excepciones
     if not ctx.channel or ctx.channel.id != ALLOWED_CHANNEL_ID:
-        # Permitir si el usuario es administrador
-        if ctx.author:
-            member = ctx.author
-            if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
-                return True
-        # Si no cumple, responder y bloquear
         await ctx.send("Aweonao estas en otro canal que no es <#1519533661806923866>")
         return False
     return True
 
 @bot.tree.interaction_check
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
-    # Permitir libremente al dueño del bot
-    if await bot.is_owner(interaction.user):
-        return True
-
     # Permitir libremente en el servidor de pruebas (Little paradise)
     if interaction.guild and interaction.guild.id == 1019371540908884090:
         return True
         
-    # Si no es el canal designado
+    # Si no es el canal designado, bloquear sin excepciones
     if not interaction.channel or interaction.channel.id != ALLOWED_CHANNEL_ID:
-        # Permitir si el usuario es administrador
-        if interaction.user:
-            member = interaction.user
-            if hasattr(member, 'guild_permissions') and member.guild_permissions.administrator:
-                return True
-        # Si no cumple, responder y bloquear
         await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>")
         return False
     return True
