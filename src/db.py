@@ -325,6 +325,66 @@ def usar_item_usuario(user_id, item_id):
         print(f"Error usando ítem: {e}")
         return False
 
+def check_and_register_energy_use(user_id, item_id):
+    """
+    Verifica si un usuario puede usar un objeto de energía (máximo 5 usos al día).
+    Si está bloqueado por cooldown, retorna ('blocked', segundos_restantes).
+    Si supera los 5 usos, inicia un bloqueo de 24 horas y retorna ('blocked_start', 86400).
+    De lo contrario, registra el uso y retorna ('ok', None).
+    """
+    from datetime import datetime, timedelta
+    try:
+        with db_cursor() as cursor:
+            # 1. Verificar si el usuario está bloqueado actualmente por este ítem
+            cursor.execute("""
+                SELECT BlockedUntil FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND BlockedUntil > NOW()
+                ORDER BY BlockedUntil DESC LIMIT 1
+            """, (user_id, item_id))
+            row = cursor.fetchone()
+            if row:
+                blocked_until = row[0]
+                time_remaining = (blocked_until - datetime.now()).total_seconds()
+                return 'blocked', max(0, int(time_remaining))
+
+            # 2. Obtener la cantidad de usos de hoy
+            cursor.execute("""
+                SELECT UsageCount FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+            """, (user_id, item_id))
+            row = cursor.fetchone()
+
+            if row:
+                count = row[0]
+                if count >= 5:
+                    # Intento 6 o superior: iniciar bloqueo de 24 horas
+                    blocked_until = datetime.now() + timedelta(hours=24)
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET BlockedUntil = %s 
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (blocked_until, user_id, item_id))
+                    return 'blocked_start', 86400
+                else:
+                    # Incrementar usos
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET UsageCount = UsageCount + 1 
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (user_id, item_id))
+                    return 'ok', None
+            else:
+                # Primer uso del día
+                cursor.execute("""
+                    INSERT INTO DailyItemUsage (UserID, ItemID, UsageDate, UsageCount) 
+                    VALUES (%s, %s, CURRENT_DATE, 1)
+                """, (user_id, item_id))
+                return 'ok', None
+    except Exception as e:
+        print(f"Error en check_and_register_energy_use: {e}")
+        # En caso de error de BD, por seguridad permitimos el uso
+        return 'ok', None
+
 # Funciones para el sistema de dificultad dinámica
 def get_user_game_stats(user_id):
     """Obtener estadísticas de juego del usuario."""
@@ -1427,6 +1487,18 @@ def init_db():
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_robolog_victima_timestamp
                 ON RoboLog (VictimaID, Timestamp DESC)
+            """)
+            
+            # Tabla: DailyItemUsage para limitar el uso de objetos de energía
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS DailyItemUsage (
+                    UserID BIGINT,
+                    ItemID INT,
+                    UsageDate DATE DEFAULT CURRENT_DATE,
+                    UsageCount INT DEFAULT 0,
+                    BlockedUntil TIMESTAMP,
+                    PRIMARY KEY (UserID, ItemID, UsageDate)
+                )
             """)
             
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")

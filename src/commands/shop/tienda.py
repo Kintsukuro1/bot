@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from src.db import (
     get_balance, set_balance, ensure_user, registrar_transaccion, 
     agregar_item_usuario, usuario_tiene_item, get_user_items, usar_item_usuario,
-    get_energia, set_energia
+    get_energia, set_energia, check_and_register_energy_use
 )
 
 TIENDA = [
@@ -52,6 +52,13 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
         energia_actual = get_energia(user_id)
         if energia_actual >= 100:
             return "energy_full", energia_actual
+
+        # Verificar límites de uso diario de energía (máximo 5 al día)
+        status, time_remaining = check_and_register_energy_use(user_id, 3)
+        if status == 'blocked':
+            return "blocked", time_remaining
+        elif status == 'blocked_start':
+            return "blocked_start", time_remaining
 
         nueva_energia = min(100, energia_actual + 50)
         set_energia(user_id, nueva_energia)
@@ -196,6 +203,12 @@ class Tienda(commands.Cog):
 
         if status == "energy_full":
             await interaction.response.send_message("🔋 Tu energía ya está al máximo (100%). No necesitas usar la bebida ahora.", ephemeral=True)
+            return
+
+        if status in ["blocked", "blocked_start"]:
+            hours = data // 3600
+            minutes = (data % 3600) // 60
+            await interaction.response.send_message(f"🤢 **Te sientes mal, es mejor esperar.**\n⏱️ Cooldown restante: **{hours}h {minutes:02d}m**", ephemeral=True)
             return
 
         if status == "energy_used":
