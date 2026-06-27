@@ -87,7 +87,7 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
                 return
         except ValueError:
             await interaction.response.send_message("❌ Ingresa una cantidad válida.", ephemeral=True)
-            raise
+            return
 
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
