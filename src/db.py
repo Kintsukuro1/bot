@@ -1312,9 +1312,13 @@ def init_db():
                     RobosFallidos INT DEFAULT 0,
                     TotalRobado BIGINT DEFAULT 0,
                     TotalPerdido BIGINT DEFAULT 0,
+                    ThiefLevel INT DEFAULT 1,
+                    ThiefXP BIGINT DEFAULT 0,
                     ProteccionActiva BOOLEAN DEFAULT FALSE
                 )
             """)
+            cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefLevel INT DEFAULT 1")
+            cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefXP BIGINT DEFAULT 0")
             
             # Tabla: RoboLog
             cursor.execute("""
