@@ -273,7 +273,6 @@ class CaptureView(discord.ui.View):
         success = False
         if self.pet_data['cap_type'] == "pay" or self.pet_data['cap_type'] == "pay_and_survive":
             cost = self.pet_data['cap_cost']
-            import asyncio
             from src.db import deduct_balance
             has_money = await asyncio.to_thread(deduct_balance, self.user_id, cost)
             if has_money[0]:
