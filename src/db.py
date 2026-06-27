@@ -863,6 +863,31 @@ def remove_user_pet(user_id: int, user_pet_id: int):
     with db_cursor() as cursor:
         cursor.execute("DELETE FROM UserPets WHERE UserID = %s AND UserPetID = %s", (user_id, user_pet_id))
 
+def rename_user_pet(user_id: int, user_pet_id: int, nickname):
+    """Asigna o quita el apodo de una mascota del usuario. Devuelve (éxito, mensaje o apodo)."""
+    if nickname is not None:
+        nickname = nickname.strip()
+        if not nickname:
+            return False, "El nombre no puede estar vacío."
+        if len(nickname) > 32:
+            return False, "El nombre no puede superar 32 caracteres."
+        if "\n" in nickname or "\r" in nickname:
+            return False, "El nombre no puede contener saltos de línea."
+
+    with db_cursor() as cursor:
+        cursor.execute(
+            "SELECT UserPetID FROM UserPets WHERE UserPetID = %s AND UserID = %s AND Status != 'Escapó'",
+            (user_pet_id, user_id),
+        )
+        if not cursor.fetchone():
+            return False, "No se encontró esa mascota en tu colección."
+
+        cursor.execute(
+            "UPDATE UserPets SET Nickname = %s WHERE UserPetID = %s AND UserID = %s",
+            (nickname, user_pet_id, user_id),
+        )
+        return True, nickname or ""
+
 def update_pet_stats(user_id: int, win: bool):
     """Actualiza las estadísticas de la mascota activa tras un juego de casino."""
     with db_cursor() as cursor:
@@ -1126,6 +1151,7 @@ def init_db():
                     UserPetID SERIAL PRIMARY KEY,
                     UserID BIGINT NOT NULL,
                     PetID INT NOT NULL,
+                    Nickname VARCHAR(32),
                     IsActive INT DEFAULT 0,
                     Status VARCHAR(20) DEFAULT 'Normal',
                     Loyalty INT DEFAULT 50,
@@ -1136,6 +1162,7 @@ def init_db():
                     LossesWithOwner INT DEFAULT 0
                 )
             """)
+            cursor.execute("ALTER TABLE UserPets ADD COLUMN IF NOT EXISTS Nickname VARCHAR(32)")
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS GamblerProgress (
