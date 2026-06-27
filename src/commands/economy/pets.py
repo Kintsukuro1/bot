@@ -327,11 +327,45 @@ class CaptureView(discord.ui.View):
         await inter.response.edit_message(embed=embed, view=self)
 
 # Cogs de Comandos
+
+def _format_loyalty_bar(loyalty, size=10):
+    """Barra visual de lealtad."""
+    filled = min(size, int((loyalty / 100) * size))
+    return "█" * filled + "░" * (size - filled)
+
+def _get_mood_from_loyalty(loyalty):
+    """Devuelve emoji y texto de ánimo basado en la lealtad."""
+    if loyalty >= 75:
+        return "😊", "Feliz"
+    elif loyalty >= 50:
+        return "🙂", "Contenta"
+    elif loyalty >= 25:
+        return "😐", "Neutral"
+    else:
+        return "😢", "Triste"
+
+def _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favorite_game):
+    """Convierte los datos técnicos del efecto en una descripción legible."""
+    pct_chance = int((effect_chance or 0) * 100) if effect_chance else None
+    cap_text = f" (máx {effect_cap:,})" if effect_cap and effect_cap > 0 else ""
+    
+    descriptions = {
+        "multiplier": f"Multiplica tus ganancias x{effect_value:.2f} en cada victoria{cap_text}",
+        "refund": f"Recupera el {int((effect_value or 0) * 100)}% de tu apuesta al perder{cap_text}",
+        "proc_universal": f"{pct_chance}% de encontrar x{effect_value:.1f} de tu apuesta como bonus{cap_text}",
+        "proc_derrota": f"{pct_chance}% de recuperar x{effect_value:.1f} de tu apuesta al perder{cap_text}",
+        "proc_derrota_y_revive": f"{pct_chance}% de recuperar x{effect_value:.1f} al perder + renace si llega a 0 lealtad{cap_text}",
+        "proc_juego": f"{pct_chance}% de bonus x{effect_value:.1f} jugando **{favorite_game or '???'}**{cap_text}",
+        "proc_juego_y_mult": f"{pct_chance}% de bonus x{effect_value:.1f} en **{favorite_game or '???'}**{cap_text}",
+        "proc_high_roller": f"{pct_chance}% de bonus x{effect_value:.1f} en apuestas ≥10% de tu saldo{cap_text}",
+    }
+    return descriptions.get(effect_type, "Habilidad desconocida")
+
 class PetsMasterCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="pets", description="Muestra tu colección de mascotas.")
+    @app_commands.command(name="pets", description="Muestra tu colección de mascotas con sus características y lealtad.")
     async def pets_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id
@@ -339,7 +373,10 @@ class PetsMasterCog(commands.Cog):
         def _get_pets():
             with db_cursor() as c:
                 c.execute("""
-                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.IsActive, up.Loyalty, up.Nickname
+                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.IsActive, up.Loyalty, up.Nickname,
+                           p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame,
+                           p.Family, p.Temperament, p.FlavorText,
+                           up.GamesWithOwner, up.WinsWithOwner, up.LossesWithOwner
                     FROM UserPets up JOIN PetsCatalog p ON up.PetID = p.PetID
                     WHERE up.UserID = %s AND up.Status != 'Escapó'
                     ORDER BY up.IsActive DESC, p.Rarity DESC
@@ -349,25 +386,117 @@ class PetsMasterCog(commands.Cog):
         pets = await asyncio.to_thread(_get_pets)
         
         if not pets:
-            await interaction.followup.send("No tienes ninguna mascota en tu colección. ¡Juega en el casino para encontrar una!", ephemeral=True)
+            embed_empty = discord.Embed(
+                title="🐾 Tu Colección",
+                description=(
+                    "No tienes ninguna mascota en tu colección.\n"
+                    "¡Juega en el casino para encontrar una!\n\n"
+                    "**¿Cómo conseguir mascotas?**\n"
+                    "• Juega cualquier juego de casino\n"
+                    "• Mantén rachas de victorias o derrotas\n"
+                    "• Las mascotas aparecen como encuentros aleatorios"
+                ),
+                color=discord.Color.greyple()
+            )
+            await interaction.followup.send(embed=embed_empty, ephemeral=True)
             return
-            
-        embed = discord.Embed(title=f"🐾 Colección de {interaction.user.display_name}", color=discord.Color.blurple())
         
-        for up_id, p_name, p_emoji, p_rarity, is_active, loyalty, nickname in pets:
-            status = "🟢 Activa" if is_active == 1 else "⚪ Guardada"
-            display_name = display_pet_name(p_name, nickname)
-            title = f"{p_emoji} {display_name} ({p_rarity})"
-            details = f"Estado: {status}\nLealtad: {loyalty}/100\nID: `{up_id}`"
+        embeds = []
+        
+        # Embed principal con resumen
+        embed_main = discord.Embed(
+            title=f"🐾 Colección de {interaction.user.display_name}",
+            description=f"Tienes **{len(pets)}** mascota(s) en tu colección.",
+            color=discord.Color.blurple()
+        )
+        embeds.append(embed_main)
+        
+        for (up_id, p_name, p_emoji, p_rarity, is_active, loyalty, nickname,
+             effect_type, effect_value, effect_chance, effect_cap, favorite_game,
+             family, temperament, flavor_text,
+             games_with, wins_with, losses_with) in pets:
+            
+            status = "🟢 **Activa**" if is_active == 1 else "⚪ Guardada"
+            d_name = display_pet_name(p_name, nickname)
+            mood_emoji, mood_text = _get_mood_from_loyalty(loyalty or 50)
+            loyalty_bar = _format_loyalty_bar(loyalty or 50)
+            
+            # Colores según rareza
+            rarity_colors = {
+                "Normal": discord.Color.light_grey(),
+                "Rara": discord.Color.blue(),
+                "Épica": discord.Color.purple(),
+                "Legendaria": discord.Color.gold(),
+                "Mítica": discord.Color.red(),
+            }
+            embed_color = rarity_colors.get(p_rarity, discord.Color.blurple())
+            
+            pet_embed = discord.Embed(
+                title=f"{p_emoji} {d_name}",
+                description=f"*{flavor_text or 'Una criatura misteriosa.'}*",
+                color=embed_color
+            )
+            
+            # Info básica
+            info_lines = [f"🌟 Rareza: **{p_rarity}**", f"📌 Estado: {status}", f"🆔 ID: `{up_id}`"]
             if nickname and str(nickname).strip():
-                details = f"Especie: {p_name}\n{details}"
-            embed.add_field(
-                name=title,
-                value=details,
+                info_lines.insert(0, f"🏷️ Especie: **{p_name}**")
+            if family:
+                info_lines.append(f"👪 Familia: **{family}**")
+            if temperament:
+                info_lines.append(f"🎭 Temperamento: **{temperament}**")
+            pet_embed.add_field(name="📋 Info", value="\n".join(info_lines), inline=False)
+            
+            # Habilidad
+            if effect_type:
+                ability_desc = _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favorite_game)
+                pet_embed.add_field(name="✨ Habilidad", value=ability_desc, inline=False)
+            
+            if favorite_game:
+                pet_embed.add_field(name="🎮 Juego Favorito", value=f"**{favorite_game}**", inline=True)
+            
+            # Estadísticas
+            games = games_with or 0
+            wins = wins_with or 0
+            losses = losses_with or 0
+            winrate = f"{(wins / games * 100):.0f}%" if games > 0 else "N/A"
+            pet_embed.add_field(
+                name="📊 Estadísticas",
+                value=f"Partidas: **{games:,}** · Wins: **{wins:,}** · Losses: **{losses:,}** · WR: **{winrate}**",
                 inline=False
             )
             
-        await interaction.followup.send(embed=embed)
+            # Lealtad con barra visual y mood
+            loyalty_val = loyalty or 50
+            pet_embed.add_field(
+                name=f"{mood_emoji} Lealtad — {mood_text}",
+                value=f"`{loyalty_bar}` **{loyalty_val}/100**",
+                inline=False
+            )
+            
+            # Tips de lealtad
+            tips = (
+                "❤️ **Ganar lealtad:** Gana partidas con esta pet equipada (+1 por victoria)\n"
+                "💔 **Perder lealtad:** Pierde partidas con esta pet equipada (-2 por derrota)\n"
+            )
+            if effect_type == "proc_derrota_y_revive":
+                tips += "🔥 **Especial:** Si llega a 0, esta mascota renace con 50 de lealtad"
+            else:
+                tips += "⚠️ **Abandono:** Si llega a 0, tu mascota te abandona para siempre"
+            
+            pet_embed.add_field(name="💡 Cómo Ganar/Perder Lealtad", value=tips, inline=False)
+            
+            embeds.append(pet_embed)
+        
+        # Discord permite hasta 10 embeds por mensaje
+        if len(embeds) <= 10:
+            await interaction.followup.send(embeds=embeds)
+        else:
+            # Si hay más de 9 pets, enviar en lotes
+            await interaction.followup.send(embeds=embeds[:10])
+            for i in range(10, len(embeds), 10):
+                await interaction.channel.send(embeds=embeds[i:i+10])
+
 
     @app_commands.command(name="pet_equipar", description="Equipa una mascota de tu colección usando su ID.")
     async def pet_equipar_cmd(self, interaction: discord.Interaction, pet_id: int):
