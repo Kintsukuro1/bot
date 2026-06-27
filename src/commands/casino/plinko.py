@@ -50,10 +50,11 @@ class PlinkoSettings(discord.ui.Modal, title="Configurar Plinko"):
         try:
             apuesta = int(self.monto.value)
             if apuesta <= 0:
-                raise ValueError
+                await interaction.response.send_message("❌ Monto inválido.", ephemeral=True)
+                return
         except ValueError:
             await interaction.response.send_message("❌ Monto inválido.", ephemeral=True)
-            raise
+            return
             
         try:
             filas_num = int(self.filas.value)
@@ -62,7 +63,7 @@ class PlinkoSettings(discord.ui.Modal, title="Configurar Plinko"):
                 return
         except ValueError:
             await interaction.response.send_message("❌ Filas inválidas.", ephemeral=True)
-            raise
+            return
 
         saldo = await asyncio.to_thread(get_balance, interaction.user.id)
         if saldo < apuesta:
