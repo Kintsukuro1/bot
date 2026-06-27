@@ -4,10 +4,16 @@ from discord import app_commands
 import asyncio
 import random
 import logging
+from typing import Optional
 
-from src.db import db_cursor, add_balance, deduct_balance
+from src.db import db_cursor, add_balance, deduct_balance, rename_user_pet
 
 logger = logging.getLogger(__name__)
+
+def display_pet_name(catalog_name, nickname=None):
+    if nickname and str(nickname).strip():
+        return str(nickname).strip()
+    return catalog_name
 
 async def process_post_game_events(interaction: discord.Interaction, user_id: int, game_type: str, bet_amount: int, profit: int):
     """
@@ -41,7 +47,7 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
         
         # 1. Obtener Mascota Activa
         cursor.execute("""
-            SELECT up.UserPetID, p.PetID, p.Name, p.Emoji, p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame, up.Loyalty
+            SELECT up.UserPetID, p.PetID, p.Name, p.Emoji, p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame, up.Loyalty, up.Nickname
             FROM UserPets up
             JOIN PetsCatalog p ON up.PetID = p.PetID
             WHERE up.UserID = %s AND up.IsActive = 1
@@ -52,7 +58,8 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
         pet_escaped = False
         
         if active_pet:
-            up_id, pet_id, p_name, p_emoji, effect_type, eff_val, eff_chance, eff_cap, fav_game, loyalty = active_pet
+            up_id, pet_id, p_name, p_emoji, effect_type, eff_val, eff_chance, eff_cap, fav_game, loyalty, nickname = active_pet
+            p_display_name = display_pet_name(p_name, nickname)
             
             # 2. Evaluar Proc
             proc_trigger = False
@@ -88,7 +95,7 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
                     add_balance(user_id, proc_amount)
                     # Notificamos el proc
                     asyncio.run_coroutine_threadsafe(
-                        send_proc_message(interaction, p_emoji, p_name, proc_amount, effect_type),
+                        send_proc_message(interaction, p_emoji, p_display_name, proc_amount, effect_type),
                         interaction.client.loop
                     )
             
@@ -105,14 +112,14 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
                     # Fénix revive una vez
                     cursor.execute("UPDATE UserPets SET Loyalty = 50 WHERE UserPetID = %s", (up_id,))
                     asyncio.run_coroutine_threadsafe(
-                        send_revive_message(interaction, p_emoji, p_name),
+                        send_revive_message(interaction, p_emoji, p_display_name),
                         interaction.client.loop
                     )
                 else:
                     cursor.execute("UPDATE UserPets SET IsActive = 0, Status = 'Escapó' WHERE UserPetID = %s", (up_id,))
                     pet_escaped = True
                     asyncio.run_coroutine_threadsafe(
-                        send_escape_message(interaction, p_emoji, p_name),
+                        send_escape_message(interaction, p_emoji, p_display_name),
                         interaction.client.loop
                     )
 
@@ -298,7 +305,7 @@ class CaptureView(discord.ui.View):
             embed = inter.message.embeds[0]
             embed.color = discord.Color.green()
             embed.title = "🎉 ¡Captura Exitosa!"
-            embed.description = f"¡Has atrapado a {self.pet_data['emoji']} **{self.pet_data['name']}**!\nUsa `/pets` para ver tu colección."
+            embed.description = f"¡Has atrapado a {self.pet_data['emoji']} **{self.pet_data['name']}**!\nUsa `/pets` para ver tu colección.\nUsa `/pet_nombre` para darle un nombre."
             embed.clear_fields()
             
             await inter.response.edit_message(embed=embed, view=self)
@@ -332,7 +339,7 @@ class PetsMasterCog(commands.Cog):
         def _get_pets():
             with db_cursor() as c:
                 c.execute("""
-                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.IsActive, up.Loyalty
+                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.IsActive, up.Loyalty, up.Nickname
                     FROM UserPets up JOIN PetsCatalog p ON up.PetID = p.PetID
                     WHERE up.UserID = %s AND up.Status != 'Escapó'
                     ORDER BY up.IsActive DESC, p.Rarity DESC
@@ -347,11 +354,16 @@ class PetsMasterCog(commands.Cog):
             
         embed = discord.Embed(title=f"🐾 Colección de {interaction.user.display_name}", color=discord.Color.blurple())
         
-        for up_id, p_name, p_emoji, p_rarity, is_active, loyalty in pets:
+        for up_id, p_name, p_emoji, p_rarity, is_active, loyalty, nickname in pets:
             status = "🟢 Activa" if is_active == 1 else "⚪ Guardada"
+            display_name = display_pet_name(p_name, nickname)
+            title = f"{p_emoji} {display_name} ({p_rarity})"
+            details = f"Estado: {status}\nLealtad: {loyalty}/100\nID: `{up_id}`"
+            if nickname and str(nickname).strip():
+                details = f"Especie: {p_name}\n{details}"
             embed.add_field(
-                name=f"{p_emoji} {p_name} ({p_rarity})",
-                value=f"Estado: {status}\nLealtad: {loyalty}/100\nID: `{up_id}`",
+                name=title,
+                value=details,
                 inline=False
             )
             
@@ -376,6 +388,30 @@ class PetsMasterCog(commands.Cog):
             await interaction.followup.send(f"✅ Has equipado la mascota ID `{pet_id}` exitosamente.", ephemeral=True)
         else:
             await interaction.followup.send("❌ No se encontró esa mascota en tu colección.", ephemeral=True)
+
+    @app_commands.command(name="pet_nombre", description="Ponle un nombre personalizado a una de tus mascotas.")
+    @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
+    async def pet_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+
+        if quitar:
+            success, result = await asyncio.to_thread(rename_user_pet, user_id, pet_id, None)
+            if success:
+                await interaction.followup.send("✅ Se quitó el nombre personalizado de la mascota.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ {result}", ephemeral=True)
+            return
+
+        if not nombre:
+            await interaction.followup.send("❌ Debes indicar un nombre o marcar la opción **quitar**.", ephemeral=True)
+            return
+
+        success, result = await asyncio.to_thread(rename_user_pet, user_id, pet_id, nombre)
+        if success:
+            await interaction.followup.send(f"✅ Tu mascota ahora se llama **{result}**.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ {result}", ephemeral=True)
 
     @app_commands.command(name="apostador", description="Muestra tu progreso y Nivel de Apostador.")
     async def apostador_cmd(self, interaction: discord.Interaction):
