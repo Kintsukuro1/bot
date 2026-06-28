@@ -518,6 +518,10 @@ class PetsMasterCog(commands.Cog):
         else:
             await interaction.followup.send("❌ No se encontró esa mascota en tu colección.", ephemeral=True)
 
+    @app_commands.command(name="pets_equipar", description="Equipa una mascota de tu colección usando su ID. (Alias de /pet_equipar)")
+    async def pets_equipar_cmd(self, interaction: discord.Interaction, pet_id: int):
+        await self.pet_equipar_cmd(interaction, pet_id)
+
     @app_commands.command(name="pet_nombre", description="Ponle un nombre personalizado a una de tus mascotas.")
     @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
     async def pet_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
@@ -541,6 +545,11 @@ class PetsMasterCog(commands.Cog):
             await interaction.followup.send(f"✅ Tu mascota ahora se llama **{result}**.", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {result}", ephemeral=True)
+
+    @app_commands.command(name="pets_nombre", description="Ponle un nombre personalizado a una de tus mascotas. (Alias de /pet_nombre)")
+    @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
+    async def pets_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
+        await self.pet_nombre_cmd(interaction, pet_id, nombre, quitar)
 
     @app_commands.command(name="apostador", description="Muestra tu progreso y Nivel de Apostador.")
     async def apostador_cmd(self, interaction: discord.Interaction):
