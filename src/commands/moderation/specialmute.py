@@ -78,10 +78,10 @@ class SpecialMute(commands.Cog):
             
         mention = miembro.mention
 
-        # Verificar si el objetivo tiene el item de protección contra specialmute (ID 12)
+        # Verificar si el objetivo tiene escudo anti-mute (consumo atómico)
         ANTI_MUTE_ITEM_ID = 12
-        if usuario_tiene_item(miembro.id, ANTI_MUTE_ITEM_ID):
-            # Consumir el item del atacante si corresponde
+        escudo_activado = usar_item_usuario(miembro.id, ANTI_MUTE_ITEM_ID)
+        if escudo_activado:
             mensaje_item = ""
             if debe_consumir_item:
                 try:
@@ -91,13 +91,7 @@ class SpecialMute(commands.Cog):
                 except Exception as e:
                     print(f"Error al consumir Special Mute item: {e}")
             
-            # Consumir el item de protección del objetivo
-            try:
-                usar_item_usuario(miembro.id, ANTI_MUTE_ITEM_ID)
-            except Exception as e:
-                print(f"Error al consumir item de protección de mute: {e}")
-            
-            msg = f"🛡️ ¡El mute en contra de {mention} ha fallado! La maldición fue protegida por su Escudo Anti-Mute y el item de protección se ha descontado.{mensaje_item}"
+            msg = f"🛡️ ¡El mute en contra de {mention} ha fallado! La maldición fue protegida por su Escudo Anti-Mute y el escudo se ha consumido.{mensaje_item}"
             
             if log_channel and isinstance(log_channel, discord.TextChannel):
                 await log_channel.send(msg)

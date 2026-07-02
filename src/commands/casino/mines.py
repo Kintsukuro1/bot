@@ -8,6 +8,7 @@ from typing import List
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
+from src.utils.cooldowns import CASINO_COOLDOWN
 
 # Cálculo del multiplicador de Mines (combinatoria clásica)
 import math
@@ -54,9 +55,11 @@ class MineButton(discord.ui.Button):
         self.revealed = True
         
         if self.is_bomb:
+            view.game_over = True
             self.style = discord.ButtonStyle.danger
             self.emoji = "💣"
             self.label = ""
+            await interaction.response.defer()
             await view.process_loss(interaction)
         else:
             self.style = discord.ButtonStyle.success
@@ -74,11 +77,17 @@ class CashoutButton(discord.ui.Button):
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("¡Esta no es tu partida!", ephemeral=True)
             return
+
+        if view.game_over:
+            await interaction.response.send_message("Esta partida ya terminó.", ephemeral=True)
+            return
             
         if view.diamonds_found == 0:
             await interaction.response.send_message("Debes revelar al menos una gema antes de retirarte.", ephemeral=True)
             return
 
+        view.game_over = True
+        await interaction.response.defer()
         await view.process_win(interaction)
 
 class MinesView(discord.ui.View):
@@ -179,7 +188,10 @@ class MinesView(discord.ui.View):
         
         # Check if won game (all diamonds found)
         if self.diamonds_found == (self.total_cells - self.bombs):
-            await self.process_win(interaction)
+            if not self.game_over:
+                self.game_over = True
+                await interaction.response.defer()
+                await self.process_win(interaction)
             return
 
         embed = interaction.message.embeds[0]
@@ -386,6 +398,7 @@ class Mines(commands.Cog):
     @app_commands.describe(
         apuesta="Cantidad a apostar"
     )
+    @CASINO_COOLDOWN
     async def mines(self, interaction: discord.Interaction, apuesta: int):
         user_id = interaction.user.id
         user_name = interaction.user.name

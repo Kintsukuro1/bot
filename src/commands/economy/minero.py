@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -88,11 +88,20 @@ class MineroView(discord.ui.View):
             # Verificar Amuleto de Protección (ID 7)
             has_amuleto = await asyncio.to_thread(usuario_tiene_item, self.user.id, 7)
             if has_amuleto:
-                amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
-                if amuleto_usado:
-                    self.estabilidad = 15
-                    await self._actualizar_mensaje(interaction, f"🛡️ **¡El Amuleto de Protección se ha roto!** Te salvó de un derrumbe inminente. Estabilidad restaurada al 15%.")
-                    return
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, self.user.id)
+                if status == 'ok' or status == 'blocked_start':
+                    amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
+                    if amuleto_usado:
+                        self.estabilidad = 15
+                        msg_cooldown = ""
+                        if status == 'blocked_start':
+                            msg_cooldown = "\n⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                        await self._actualizar_mensaje(interaction, f"🛡️ **¡El Amuleto de Protección se ha roto!** Te salvó de un derrumbe inminente. Estabilidad restaurada al 15%.{msg_cooldown}")
+                        return
+                else:
+                    hours = time_remaining // 3600
+                    minutes = (time_remaining % 3600) // 60
+                    await interaction.channel.send(f"⚠️ {self.user.mention} **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).")
             
             # Derrumbe
             await self._completar_trabajo(interaction, exito=False)

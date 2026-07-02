@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -70,14 +70,23 @@ class PescadorView(discord.ui.View):
         if self.tension >= 100 or self.tension <= 0:
             has_amuleto = await asyncio.to_thread(usuario_tiene_item, self.user.id, 7)
             if has_amuleto:
-                amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
-                if amuleto_usado:
-                    self.tension = 50
-                    await self._actualizar_mensaje(
-                        interaction, 
-                        f"🛡️ **¡El Amuleto de Protección se ha roto!** Evitó que tu línea se rompiera o el pez escapara. Tensión reajustada al 50%."
-                    )
-                    return
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, self.user.id)
+                if status == 'ok' or status == 'blocked_start':
+                    amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
+                    if amuleto_usado:
+                        self.tension = 50
+                        msg_cooldown = ""
+                        if status == 'blocked_start':
+                            msg_cooldown = "\n⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                        await self._actualizar_mensaje(
+                            interaction, 
+                            f"🛡️ **¡El Amuleto de Protección se ha roto!** Evitó que tu línea se rompiera o el pez escapara. Tensión reajustada al 50%.{msg_cooldown}"
+                        )
+                        return
+                else:
+                    hours = time_remaining // 3600
+                    minutes = (time_remaining % 3600) // 60
+                    await interaction.channel.send(f"⚠️ {self.user.mention} **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).")
             await self._completar_trabajo(interaction, exito=False, motivo="rotura" if self.tension >= 100 else "escape")
             return
             
@@ -117,14 +126,23 @@ class PescadorView(discord.ui.View):
         if self.tension >= 100 or self.tension <= 0:
             has_amuleto = await asyncio.to_thread(usuario_tiene_item, self.user.id, 7)
             if has_amuleto:
-                amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
-                if amuleto_usado:
-                    self.tension = 50
-                    await self._actualizar_mensaje(
-                        interaction, 
-                        f"🛡️ **¡El Amuleto de Protección se ha roto!** Evitó que tu línea se rompiera o el pez escapara. Tensión reajustada al 50%."
-                    )
-                    return
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, self.user.id)
+                if status == 'ok' or status == 'blocked_start':
+                    amuleto_usado = await asyncio.to_thread(usar_item_usuario, self.user.id, 7)
+                    if amuleto_usado:
+                        self.tension = 50
+                        msg_cooldown = ""
+                        if status == 'blocked_start':
+                            msg_cooldown = "\n⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                        await self._actualizar_mensaje(
+                            interaction, 
+                            f"🛡️ **¡El Amuleto de Protección se ha roto!** Evitó que tu línea se rompiera o el pez escapara. Tensión reajustada al 50%.{msg_cooldown}"
+                        )
+                        return
+                else:
+                    hours = time_remaining // 3600
+                    minutes = (time_remaining % 3600) // 60
+                    await interaction.channel.send(f"⚠️ {self.user.mention} **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).")
             await self._completar_trabajo(interaction, exito=False, motivo="rotura" if self.tension >= 100 else "escape")
             return
             

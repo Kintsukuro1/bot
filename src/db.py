@@ -320,7 +320,7 @@ def usar_item_usuario(user_id, item_id):
                 WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0 
                 AND Expiry = %s
             """, (user_id, item_id, expiry_date))
-            return True
+            return cursor.rowcount > 0
     except Exception as e:
         print(f"Error usando ítem: {e}")
         return False
@@ -384,6 +384,74 @@ def check_and_register_energy_use(user_id, item_id):
         print(f"Error en check_and_register_energy_use: {e}")
         # En caso de error de BD, por seguridad permitimos el uso
         return 'ok', None
+
+def check_and_register_shield_use(user_id):
+    """
+    Verifica si un usuario puede usar un escudo de protección en trabajos/casino (máximo 3 usos al día).
+    Si está bloqueado por cooldown, retorna ('blocked', segundos_restantes).
+    Si alcanza los 3 usos, inicia un bloqueo de 24 horas y retorna ('blocked_start', 86400).
+    De lo contrario, registra el uso y retorna ('ok', None).
+    """
+    from datetime import datetime, timedelta
+    shield_item_group_id = 999
+    try:
+        with db_cursor() as cursor:
+            # 1. Verificar si el usuario está bloqueado actualmente
+            cursor.execute("""
+                SELECT BlockedUntil FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND BlockedUntil > NOW()
+            """, (user_id, shield_item_group_id))
+            row = cursor.fetchone()
+            if row:
+                blocked_until = row[0]
+                time_remaining = (blocked_until - datetime.now()).total_seconds()
+                return 'blocked', max(0, int(time_remaining))
+
+            # 2. Obtener la cantidad de usos de hoy
+            cursor.execute("""
+                SELECT UsageCount FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+            """, (user_id, shield_item_group_id))
+            row = cursor.fetchone()
+
+            if row:
+                count = row[0]
+                if count >= 3:
+                    # Iniciar/actualizar bloqueo de 24 horas
+                    blocked_until = datetime.now() + timedelta(hours=24)
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET BlockedUntil = %s 
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (blocked_until, user_id, shield_item_group_id))
+                    return 'blocked_start', 86400
+                else:
+                    # Incrementar usos
+                    new_count = count + 1
+                    blocked_until = None
+                    if new_count >= 3:
+                        blocked_until = datetime.now() + timedelta(hours=24)
+                    
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET UsageCount = %s, BlockedUntil = %s
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (new_count, blocked_until, user_id, shield_item_group_id))
+                    
+                    if new_count >= 3:
+                        return 'blocked_start', 86400
+                    return 'ok', None
+            else:
+                # Primer uso del día
+                cursor.execute("""
+                    INSERT INTO DailyItemUsage (UserID, ItemID, UsageDate, UsageCount) 
+                    VALUES (%s, %s, CURRENT_DATE, 1)
+                """, (user_id, shield_item_group_id))
+                return 'ok', None
+    except Exception as e:
+        print(f"Error comprobando cooldown de escudos: {e}")
+        return 'ok', None
+
 
 # Funciones para el sistema de dificultad dinámica
 def get_user_game_stats(user_id):
@@ -649,7 +717,15 @@ def claim_daily(user_id):
     from datetime import datetime, timedelta
     
     with db_cursor() as cursor:
-        cursor.execute("SELECT LastLogin, Streak, Balance FROM Users WHERE UserID = %s", (user_id,))
+        cursor.execute("""
+            INSERT INTO Users (UserID, Balance, LastLogin, Streak)
+            VALUES (%s, 500, NULL, 0)
+            ON CONFLICT (UserID) DO NOTHING
+        """, (user_id,))
+        cursor.execute(
+            "SELECT LastLogin, Streak, Balance FROM Users WHERE UserID = %s FOR UPDATE",
+            (user_id,),
+        )
         row = cursor.fetchone()
         
         today = datetime.now().date()
@@ -677,7 +753,7 @@ def claim_daily(user_id):
         else:
             streak = 1
             
-        reward = 100 * (streak // 7 + 1)
+        reward = min(100 * streak, 1000)
         new_balance = (balance or 0) + reward
         
         cursor.execute("""
@@ -757,6 +833,43 @@ def get_energia(user_id: int) -> int:
                 cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
         
         return energia_actual
+
+def consumir_energia(user_id: int, cantidad: int) -> bool:
+    """Consume energía de forma atómica. Retorna True si se descontó correctamente."""
+    import time
+    ensure_user(user_id)
+    with db_cursor() as cursor:
+        cursor.execute(
+            "SELECT Energia, UltimaRecarga FROM Users WHERE UserID = %s FOR UPDATE",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        energia_actual = row[0] if row[0] is not None else 100
+        ultima_recarga = row[1] if row[1] is not None else int(time.time())
+
+        if energia_actual < 100:
+            tiempo_actual = int(time.time())
+            puntos_recarga = (tiempo_actual - ultima_recarga) // 180
+            if puntos_recarga > 0:
+                energia_actual = min(100, energia_actual + puntos_recarga)
+                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+
+        if energia_actual < cantidad:
+            cursor.execute(
+                "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
+                (energia_actual, ultima_recarga, user_id),
+            )
+            return False
+
+        tiempo_actual = int(time.time())
+        cursor.execute(
+            "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
+            (energia_actual - cantidad, tiempo_actual, user_id),
+        )
+        return True
 
 def set_energia(user_id: int, nueva_energia: int):
     """Establecer la energía del usuario."""
@@ -1032,10 +1145,13 @@ def get_user_ticket_count(user_id):
         row = cursor.fetchone()
         return row[0] if row else 0
 
-def comprar_boleto_db(user_id, numbers, cost):
-    """Compra un boleto de loto de forma atómica: descuenta balance, añade al pozo y registra el boleto."""
+def comprar_boleto_db(user_id, numbers, cost, max_tickets=5):
+    """Compra un boleto de loto de forma atómica con límite diario."""
     with db_cursor() as cursor:
-        # Descontar saldo
+        cursor.execute("SELECT COUNT(*) FROM LotteryTickets WHERE UserID = %s", (user_id,))
+        if cursor.fetchone()[0] >= max_tickets:
+            return False, 0
+
         cursor.execute("""
             UPDATE Users 
             SET Balance = Balance - %s 
@@ -1048,13 +1164,11 @@ def comprar_boleto_db(user_id, numbers, cost):
         
         new_balance = row[0]
         
-        # Registrar boleto
         cursor.execute("""
             INSERT INTO LotteryTickets (UserID, Numbers)
             VALUES (%s, %s)
         """, (user_id, numbers))
         
-        # Añadir al pozo
         cursor.execute("""
             UPDATE LotteryState 
             SET JackpotPool = JackpotPool + %s 
@@ -1062,6 +1176,37 @@ def comprar_boleto_db(user_id, numbers, cost):
         """, (cost,))
         
         return True, new_balance
+
+def comprar_item_tienda(user_id, item_id, precio, expiry):
+    """Compra un ítem de la tienda de forma atómica (saldo + inventario)."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE Users
+            SET Balance = Balance - %s
+            WHERE UserID = %s AND Balance >= %s
+            RETURNING Balance
+        """, (precio, user_id, precio))
+        if not cursor.fetchone():
+            return "no_balance"
+
+        cursor.execute(
+            "SELECT Quantity FROM UserItems WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0",
+            (user_id, item_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            cursor.execute("""
+                UPDATE UserItems
+                SET Quantity = Quantity + 1
+                WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
+            """, (user_id, item_id))
+        else:
+            cursor.execute("""
+                INSERT INTO UserItems (UserID, ItemID, Quantity, Expiry, Used)
+                VALUES (%s, %s, 1, %s, 0)
+            """, (user_id, item_id, expiry))
+
+        return "ok"
 
 def get_lottery_pool():
     """Obtiene el pozo acumulado actual de la lotería."""

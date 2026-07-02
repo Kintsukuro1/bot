@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 import logging
 from src.services import UserService, EconomyService
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class Regalar(commands.Cog):
         usuario="El usuario al que quieres regalarle dinero",
         cantidad="Cantidad de monedas a regalar"
     )
+    @ECONOMY_COOLDOWN
     async def regalar(self, interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
         # Verificar que no sea el mismo usuario
         if interaction.user.id == usuario.id:

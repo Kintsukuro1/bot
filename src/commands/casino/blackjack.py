@@ -6,6 +6,7 @@ import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
+from src.utils.cooldowns import CASINO_COOLDOWN
 
 suits = ["♠", "♥", "♦", "♣"]
 ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -37,6 +38,7 @@ class BlackjackView(discord.ui.View):
         self.difficulty_modifier = difficulty_modifier
         self.difficulty_explanation = difficulty_explanation
         self.game_over = False
+        self._payout_done = False
         
         # Ocultar botón Dividir si no aplica
         if len(player_hand) != 2 or player_hand[0][:-1] != player_hand[1][:-1]:
@@ -115,13 +117,14 @@ class BlackjackView(discord.ui.View):
         if interaction.user.id != self.user.id or self.game_over:
             await interaction.response.send_message("No puedes usar este botón.", ephemeral=True)
             return
-            
-        await interaction.response.defer()
+
         if self.current_hand_idx < len(self.player_hands) - 1:
+            await interaction.response.defer()
             self.current_hand_idx += 1
             await self._update_ui(interaction, f"🛑 Te plantaste en la Mano {self.current_hand_idx}.")
         else:
             self.game_over = True
+            await interaction.response.defer()
             await self._finish_game(interaction)
 
     async def _update_ui(self, interaction, custom_msg=None):
@@ -148,6 +151,10 @@ class BlackjackView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
 
     async def _finish_game(self, interaction):
+        if self._payout_done:
+            return
+        self._payout_done = True
+
         user_id = self.user.id
         all_busted = all(hand_value(h) > 21 for h in self.player_hands)
         
@@ -243,6 +250,7 @@ class Blackjack(commands.Cog):
 
     @app_commands.command(name="blackjack", description="Juega una partida de blackjack contra la casa")
     @app_commands.describe(apuesta="Cantidad de monedas a apostar")
+    @CASINO_COOLDOWN
     async def blackjack(self, interaction: discord.Interaction, apuesta: int):
         await interaction.response.defer()
         user_id = interaction.user.id
