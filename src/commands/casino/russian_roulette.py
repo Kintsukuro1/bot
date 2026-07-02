@@ -29,14 +29,15 @@ class RRLobbyView(discord.ui.View):
             return
 
         user_id = interaction.user.id
+        self.players.append(interaction.user)
+
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
         success, balance = await asyncio.to_thread(deduct_balance, user_id, self.bet)
         if not success:
+            self.players.remove(interaction.user)
             await interaction.response.send_message("No tienes suficiente saldo para entrar.", ephemeral=True)
             return
-
-        self.players.append(interaction.user)
         
         embed = self.message.embeds[0]
         players_text = "\n".join([f"• {p.display_name}" for p in self.players])

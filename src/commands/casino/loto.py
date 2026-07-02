@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta
 from typing import Optional
 from src.services.lottery_service import LotteryService
 from src.db import ensure_user, get_balance, get_active_tickets
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class Loto(commands.Cog):
         num3="Tercer número (1-25) - Dejar vacío para autocompletar aleatoriamente",
         num4="Cuarto número (1-25) - Dejar vacío para autocompletar aleatoriamente"
     )
+    @ECONOMY_COOLDOWN
     async def loto_comprar(
         self, 
         interaction: discord.Interaction, 

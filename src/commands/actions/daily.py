@@ -2,12 +2,14 @@ import discord
 from discord.ext import commands
 import asyncio
 from src.db import ensure_user, claim_daily
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 class Daily(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @discord.app_commands.command(name="daily", description="Reclama tu recompensa diaria.")
+    @ECONOMY_COOLDOWN
     async def daily(self, interaction: discord.Interaction):
         """Reclama tu recompensa diaria."""
         await interaction.response.defer()

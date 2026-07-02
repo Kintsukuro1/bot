@@ -320,7 +320,7 @@ def usar_item_usuario(user_id, item_id):
                 WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0 
                 AND Expiry = %s
             """, (user_id, item_id, expiry_date))
-            return True
+            return cursor.rowcount > 0
     except Exception as e:
         print(f"Error usando ítem: {e}")
         return False
@@ -649,7 +649,15 @@ def claim_daily(user_id):
     from datetime import datetime, timedelta
     
     with db_cursor() as cursor:
-        cursor.execute("SELECT LastLogin, Streak, Balance FROM Users WHERE UserID = %s", (user_id,))
+        cursor.execute("""
+            INSERT INTO Users (UserID, Balance, LastLogin, Streak)
+            VALUES (%s, 500, NULL, 0)
+            ON CONFLICT (UserID) DO NOTHING
+        """, (user_id,))
+        cursor.execute(
+            "SELECT LastLogin, Streak, Balance FROM Users WHERE UserID = %s FOR UPDATE",
+            (user_id,),
+        )
         row = cursor.fetchone()
         
         today = datetime.now().date()
@@ -757,6 +765,43 @@ def get_energia(user_id: int) -> int:
                 cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
         
         return energia_actual
+
+def consumir_energia(user_id: int, cantidad: int) -> bool:
+    """Consume energía de forma atómica. Retorna True si se descontó correctamente."""
+    import time
+    ensure_user(user_id)
+    with db_cursor() as cursor:
+        cursor.execute(
+            "SELECT Energia, UltimaRecarga FROM Users WHERE UserID = %s FOR UPDATE",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        energia_actual = row[0] if row[0] is not None else 100
+        ultima_recarga = row[1] if row[1] is not None else int(time.time())
+
+        if energia_actual < 100:
+            tiempo_actual = int(time.time())
+            puntos_recarga = (tiempo_actual - ultima_recarga) // 180
+            if puntos_recarga > 0:
+                energia_actual = min(100, energia_actual + puntos_recarga)
+                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+
+        if energia_actual < cantidad:
+            cursor.execute(
+                "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
+                (energia_actual, ultima_recarga, user_id),
+            )
+            return False
+
+        tiempo_actual = int(time.time())
+        cursor.execute(
+            "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
+            (energia_actual - cantidad, tiempo_actual, user_id),
+        )
+        return True
 
 def set_energia(user_id: int, nueva_energia: int):
     """Establecer la energía del usuario."""
@@ -1032,10 +1077,13 @@ def get_user_ticket_count(user_id):
         row = cursor.fetchone()
         return row[0] if row else 0
 
-def comprar_boleto_db(user_id, numbers, cost):
-    """Compra un boleto de loto de forma atómica: descuenta balance, añade al pozo y registra el boleto."""
+def comprar_boleto_db(user_id, numbers, cost, max_tickets=5):
+    """Compra un boleto de loto de forma atómica con límite diario."""
     with db_cursor() as cursor:
-        # Descontar saldo
+        cursor.execute("SELECT COUNT(*) FROM LotteryTickets WHERE UserID = %s", (user_id,))
+        if cursor.fetchone()[0] >= max_tickets:
+            return False, 0
+
         cursor.execute("""
             UPDATE Users 
             SET Balance = Balance - %s 
@@ -1048,13 +1096,11 @@ def comprar_boleto_db(user_id, numbers, cost):
         
         new_balance = row[0]
         
-        # Registrar boleto
         cursor.execute("""
             INSERT INTO LotteryTickets (UserID, Numbers)
             VALUES (%s, %s)
         """, (user_id, numbers))
         
-        # Añadir al pozo
         cursor.execute("""
             UPDATE LotteryState 
             SET JackpotPool = JackpotPool + %s 
@@ -1062,6 +1108,37 @@ def comprar_boleto_db(user_id, numbers, cost):
         """, (cost,))
         
         return True, new_balance
+
+def comprar_item_tienda(user_id, item_id, precio, expiry):
+    """Compra un ítem de la tienda de forma atómica (saldo + inventario)."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE Users
+            SET Balance = Balance - %s
+            WHERE UserID = %s AND Balance >= %s
+            RETURNING Balance
+        """, (precio, user_id, precio))
+        if not cursor.fetchone():
+            return "no_balance"
+
+        cursor.execute(
+            "SELECT Quantity FROM UserItems WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0",
+            (user_id, item_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            cursor.execute("""
+                UPDATE UserItems
+                SET Quantity = Quantity + 1
+                WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
+            """, (user_id, item_id))
+        else:
+            cursor.execute("""
+                INSERT INTO UserItems (UserID, ItemID, Quantity, Expiry, Used)
+                VALUES (%s, %s, 1, %s, 0)
+            """, (user_id, item_id, expiry))
+
+        return "ok"
 
 def get_lottery_pool():
     """Obtiene el pozo acumulado actual de la lotería."""

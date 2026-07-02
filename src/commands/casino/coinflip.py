@@ -8,6 +8,7 @@ from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure
 from src.commands.economy.pets import process_post_game_events
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.utils.dynamic_difficulty import DynamicDifficulty
+from src.utils.cooldowns import CASINO_COOLDOWN
 
 class CoinflipDuelView(discord.ui.View):
     def __init__(self, challenger, challenged, apuesta):
@@ -23,17 +24,22 @@ class CoinflipDuelView(discord.ui.View):
         if interaction.user.id != self.challenged.id:
             await interaction.response.send_message("Solo el retado puede aceptar el duelo.", ephemeral=True)
             return
-        
-        # Verificar saldos (retador ya fue descontado)
-        challenger_balance = await asyncio.to_thread(get_balance, self.challenger.id)
+
+        if self.game_over or self.game_started:
+            await interaction.response.send_message("Este duelo ya fue resuelto.", ephemeral=True)
+            return
+
+        self.game_started = True
+        self.game_over = True
         
         success, challenged_balance = await asyncio.to_thread(deduct_balance, self.challenged.id, self.apuesta)
         if not success:
+            self.game_started = False
+            self.game_over = False
             await interaction.response.send_message(f"❌ No tienes suficiente saldo para este duelo. Necesitas {self.apuesta} monedas.", ephemeral=True)
             return
-        
-        self.game_started = True
-        self.game_over = True
+
+        challenger_balance = await asyncio.to_thread(get_balance, self.challenger.id)
         
         # Desactivar botones
         for item in self.children:
@@ -115,8 +121,13 @@ class CoinflipDuelView(discord.ui.View):
         if interaction.user.id != self.challenged.id:
             await interaction.response.send_message("Solo el retado puede rechazar el duelo.", ephemeral=True)
             return
+
+        if self.game_over:
+            await interaction.response.send_message("Este duelo ya fue resuelto.", ephemeral=True)
+            return
         
         self.game_over = True
+        self.game_started = True
         await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
         
         embed = discord.Embed(
@@ -310,6 +321,7 @@ class Coinflip(commands.Cog):
         apuesta="Cantidad de monedas a apostar",
         retar="Usuario al que quieres retar a un duelo (opcional)"
     )
+    @CASINO_COOLDOWN
     async def coinflip(self, interaction: discord.Interaction, apuesta: int, retar: Optional[discord.Member] = None):
         await interaction.response.defer()
         user_id = interaction.user.id

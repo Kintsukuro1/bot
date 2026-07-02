@@ -6,6 +6,7 @@ import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
+from src.utils.cooldowns import CASINO_COOLDOWN
 
 class Slots(commands.Cog):
     def __init__(self, bot):
@@ -13,6 +14,7 @@ class Slots(commands.Cog):
 
     @app_commands.command(name="slots", description="Juega a las tragamonedas y prueba tu suerte.")
     @app_commands.describe(apuesta="Cantidad a apostar")
+    @CASINO_COOLDOWN
     async def slots(self, interaction: discord.Interaction, apuesta: int):
         try:
             await interaction.response.defer()

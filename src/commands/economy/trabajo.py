@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 from src.db import get_balance, ensure_user
 from .energia import get_energia
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 class PatchedInteractionResponse:
     def __init__(self, original_response, patched_interaction):
@@ -394,6 +395,7 @@ class Trabajo(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="trabajo", description="Explora los trabajos disponibles y gana dinero")
+    @ECONOMY_COOLDOWN
     async def trabajo(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id

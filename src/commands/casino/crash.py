@@ -6,6 +6,10 @@ import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
+from src.utils.cooldowns import CASINO_COOLDOWN
+
+CRASH_TICKET_MAX_BET = 5000
+CRASH_TICKET_ITEM_ID = 6
 
 class Crash(commands.Cog):
     """Cog para el juego Crash."""
@@ -14,6 +18,7 @@ class Crash(commands.Cog):
 
     @app_commands.command(name="crash", description="Juega Crash: apuesta y retírate antes de que el multiplicador explote!")
     @app_commands.describe(apuesta="Cantidad de monedas a apostar")
+    @CASINO_COOLDOWN
     async def crash_slash(self, interaction: discord.Interaction, apuesta: int):
         await self._crash_game(interaction, apuesta, is_slash=True)
 
@@ -76,7 +81,13 @@ class Crash(commands.Cog):
             
         # Asegurar límites razonables para el bot (mínimo 1.0, máximo 25.0)
         crash_point = min(25.0, crash_point)
-        current_mult = 1.00  # Empezar en 1.00x (estándar de Crash)
+        current_mult = 1.00
+
+        ticket_activo = False
+        if apuesta <= CRASH_TICKET_MAX_BET:
+            from src.db import usuario_tiene_item, usar_item_usuario
+            if await asyncio.to_thread(usuario_tiene_item, user_id, CRASH_TICKET_ITEM_ID):
+                ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
         
         embed = discord.Embed(
             title="💥 Crash Casino",
@@ -89,7 +100,7 @@ class Crash(commands.Cog):
             ),
             color=discord.Color.orange()
         )
-        view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation)
+        view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation, ticket_activo)
         
         if is_slash:
             msg = await ctx_or_interaction.followup.send(embed=embed, view=view)
@@ -99,7 +110,7 @@ class Crash(commands.Cog):
         await view.run_crash(msg, embed)
 
 class CrashView(discord.ui.View):
-    def __init__(self, ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation=""):
+    def __init__(self, ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation="", ticket_activo=False):
         super().__init__(timeout=15)
         self.ctx_or_interaction = ctx_or_interaction
         self.user = user
@@ -108,6 +119,7 @@ class CrashView(discord.ui.View):
         self.crash_point = crash_point
         self.difficulty_modifier = difficulty_modifier
         self.difficulty_explanation = difficulty_explanation
+        self.ticket_activo = ticket_activo
         self.cobrado = False
         self.juego_terminado = False  # Nueva bandera para evitar condiciones de carrera
         self.msg = None
@@ -130,15 +142,11 @@ class CrashView(discord.ui.View):
                 await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
             return
         
-        # Defer immediately to prevent interaction timeout
-        await interaction.response.defer()
-        
-        # CAPTURA INSTANTÁNEA del multiplicador actual para evitar cambios del bucle
         mult_al_retirarse = self.current_mult
-        
-        # Marcar como cobrado inmediatamente para evitar doble ejecución
         self.cobrado = True
         self.juego_terminado = True
+
+        await interaction.response.defer()
         
         try:
             # --- MEJORAS BLACK MARKET ---
@@ -321,11 +329,8 @@ class CrashView(discord.ui.View):
                     
                     # Registrar pérdida o reembolso
                     reembolsado = False
-                    if self.current_mult < 1.50:
-                        from src.db import usuario_tiene_item, usar_item_usuario
-                        if await asyncio.to_thread(usuario_tiene_item, self.user.id, 6):  # Ticket Crash
-                            if await asyncio.to_thread(usar_item_usuario, self.user.id, 6):
-                                reembolsado = True
+                    if self.ticket_activo and self.current_mult < 1.50:
+                        reembolsado = True
                                 
                     if reembolsado:
                         nuevo_saldo = self.saldo + self.apuesta

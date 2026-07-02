@@ -20,12 +20,14 @@ from src.utils.robo_progression import (
     THIEF_MILESTONES,
     ROBO_COOLDOWN_MINUTES,
 )
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
-def _get_thief_stats(cursor, user_id):
-    cursor.execute("""
+def _get_thief_stats(cursor, user_id, for_update=False):
+    lock = " FOR UPDATE" if for_update else ""
+    cursor.execute(f"""
         SELECT COALESCE(ThiefLevel, 1), COALESCE(ThiefXP, 0),
                LastRoboTime, COALESCE(RobosExitosos, 0)
-        FROM RoboStats WHERE UserID = %s
+        FROM RoboStats WHERE UserID = %s{lock}
     """, (user_id,))
     row = cursor.fetchone()
     if not row:
@@ -48,7 +50,7 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (ladron_id,))
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (victima_id,))
 
-        thief_level, thief_xp, last_robo, robos_exitosos = _get_thief_stats(cursor, ladron_id)
+        thief_level, thief_xp, last_robo, robos_exitosos = _get_thief_stats(cursor, ladron_id, for_update=True)
         cooldown_minutes = get_cooldown_minutes(thief_level)
         
         # Verificar cooldown de robo (reducido por nivel)
@@ -315,6 +317,7 @@ class Robar(commands.Cog):
     @app_commands.describe(
         victima="Usuario al que intentarás robar"
     )
+    @ECONOMY_COOLDOWN
     async def robar_slash(self, interaction: discord.Interaction, victima: discord.Member):
         await self._robar_logica(interaction, victima, is_slash=True)
     

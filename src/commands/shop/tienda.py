@@ -6,14 +6,15 @@ from datetime import datetime, timedelta
 from src.db import (
     get_balance, set_balance, ensure_user, registrar_transaccion, 
     agregar_item_usuario, usuario_tiene_item, get_user_items, usar_item_usuario,
-    get_energia, set_energia, check_and_register_energy_use
+    get_energia, set_energia,     check_and_register_energy_use, comprar_item_tienda
 )
+from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 TIENDA = [
     {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`.", "caracteristica": "positiva"},
     {"id": 4, "nombre": "Poción de Enfoque 🧪", "precio": 1000, "descripcion": "Tu siguiente trabajo da +50% de XP. Se consume automáticamente al trabajar.", "caracteristica": "positiva"},
     {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica tu premio si ganas en slots (1 uso). Se consume automáticamente al ganar.", "caracteristica": "positiva"},
-    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Reembolsa el 100% si explota antes de x1.50 (1 uso). Se consume automáticamente al perder.", "caracteristica": "positiva"},
+    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash (apuestas hasta 5.000). Se consume al iniciar la ronda y reembolsa si explota antes de x1.50.", "caracteristica": "positiva"},
     {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita un derrumbe o rotura de línea (1 uso). Se consume automáticamente al fallar.", "caracteristica": "positiva"},
     {"id": 11, "nombre": "Special Mute 🔇", "precio": 800, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral"},
     {"id": 12, "nombre": "Escudo Anti-Mute 🛡️", "precio": 1000, "descripcion": "Te protege automáticamente del próximo `/specialmute` lanzado en tu contra (1 uso). Se consume al activarse.", "caracteristica": "positiva"},
@@ -25,21 +26,11 @@ def _get_inventory_db(user_id, user_name):
 
 def _comprar_articulo_db(user_id, user_name, item):
     ensure_user(user_id, user_name)
-    balance = get_balance(user_id)
-
-    if balance < item["precio"]:
-        return "no_balance"
-
-    set_balance(user_id, balance - item["precio"])
-    registrar_transaccion(user_id, -item["precio"], f"Compra: {item['nombre']}")
-
     expiry_date = datetime.now() + timedelta(days=3650)
-    success = agregar_item_usuario(user_id, item["id"], quantity=1, expiry=expiry_date)
-
-    if not success:
-        set_balance(user_id, balance)
-        return "item_error"
-
+    result = comprar_item_tienda(user_id, item["id"], item["precio"], expiry_date)
+    if result == "no_balance":
+        return "no_balance"
+    registrar_transaccion(user_id, -item["precio"], f"Compra: {item['nombre']}")
     return "ok"
 
 def _usar_articulo_db(user_id, user_name, articulo_id):
@@ -144,6 +135,7 @@ class Tienda(commands.Cog):
 
     @app_commands.command(name="comprar", description="Compra un artículo de la tienda por su ID.")
     @app_commands.describe(articulo_id="ID del artículo a comprar")
+    @ECONOMY_COOLDOWN
     async def comprar(self, interaction: discord.Interaction, articulo_id: int):
         user_id = interaction.user.id
         user_name = interaction.user.name
