@@ -6,7 +6,7 @@ import random
 import logging
 from typing import Optional
 
-from src.db import db_cursor, add_balance, deduct_balance, rename_user_pet
+from src.db import db_cursor, add_balance, deduct_balance, rename_user_pet, get_fusionable_pets, fuse_pets
 
 logger = logging.getLogger(__name__)
 
@@ -152,25 +152,63 @@ def get_user_balance(cursor, user_id):
 
 def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amount, game_type):
     """Devuelve un dict con el tipo de encuentro si se activa."""
-    # Tabla base de chances de V1
+    # --- Cooldown global: 15 jugadas entre encuentros ---
+    cursor.execute("""
+        SELECT FailedEncounters, LastEncounterAt
+        FROM UserPetEncounterState
+        WHERE UserID = %s AND EncounterType = '_global_cooldown'
+    """, (user_id,))
+    cd_row = cursor.fetchone()
+    
+    if cd_row:
+        games_since = cd_row[0]  # Usamos FailedEncounters como contador de jugadas
+        if games_since < 15:
+            # Incrementar contador y salir — aún en cooldown
+            cursor.execute("""
+                UPDATE UserPetEncounterState
+                SET FailedEncounters = FailedEncounters + 1
+                WHERE UserID = %s AND EncounterType = '_global_cooldown'
+            """, (user_id,))
+            return None
+    
+    # --- Chances reducidas (V2) ---
     chances = {
-        "hot_streak": {3: 0.18, 5: 0.28, 8: 0.42, 12: 0.60},
-        "cold_streak": {4: 0.16, 6: 0.26, 8: 0.38}
+        "hot_streak": {5: 0.08, 8: 0.15, 12: 0.25},
+        "cold_streak": {5: 0.08, 8: 0.15, 12: 0.22}
     }
+    
+    encounter = None
     
     if hot_streak in chances["hot_streak"]:
         if random.random() < chances["hot_streak"][hot_streak]:
-            return {"type": "hot_streak"}
+            encounter = {"type": "hot_streak"}
             
-    if cold_streak in chances["cold_streak"]:
+    if not encounter and cold_streak in chances["cold_streak"]:
         if random.random() < chances["cold_streak"][cold_streak]:
-            return {"type": "cold_streak"}
+            encounter = {"type": "cold_streak"}
             
-    # Volume/Especialización simplificado para V1
-    if random.random() < 0.05: # 5% flat chance en cada jugada de sacar pet de volumen o especialización
-        return {"type": random.choice(["volume", "specialized", "wealth"])}
-        
-    return None
+    # Flat chance reducida: 5% → 1.5%
+    if not encounter and random.random() < 0.015:
+        encounter = {"type": random.choice(["volume", "specialized", "wealth"])}
+    
+    if encounter:
+        # Resetear cooldown al encontrar mascota
+        cursor.execute("""
+            INSERT INTO UserPetEncounterState (UserID, EncounterType, FailedEncounters, LastEncounterAt)
+            VALUES (%s, '_global_cooldown', 0, CURRENT_TIMESTAMP)
+            ON CONFLICT (UserID, EncounterType) DO UPDATE
+            SET FailedEncounters = 0, LastEncounterAt = CURRENT_TIMESTAMP
+        """, (user_id,))
+        return encounter
+    else:
+        # Sin encuentro: incrementar contador de jugadas
+        cursor.execute("""
+            INSERT INTO UserPetEncounterState (UserID, EncounterType, FailedEncounters, LastEncounterAt)
+            VALUES (%s, '_global_cooldown', 1, NULL)
+            ON CONFLICT (UserID, EncounterType) DO UPDATE
+            SET FailedEncounters = UserPetEncounterState.FailedEncounters + 1
+        """, (user_id,))
+        return None
 
 def get_random_pet_by_encounter(cursor, encounter_type, level):
     # Determinar Rareza según Nivel (Simplificado)
@@ -361,6 +399,149 @@ def _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favor
     }
     return descriptions.get(effect_type, "Habilidad desconocida")
 
+
+# --- Vistas de Fusión ---
+
+class FusionSelectView(discord.ui.View):
+    """Muestra botones para elegir qué especie fusionar."""
+    def __init__(self, user_id, fusionables):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        # Limitar a 5 botones (límite de Discord por fila)
+        for i, f in enumerate(fusionables[:5]):
+            button = discord.ui.Button(
+                label=f"{f['name']} ({f['count']}x)",
+                emoji=f['emoji'],
+                style=discord.ButtonStyle.primary,
+                custom_id=f"fuse_{f['pet_id']}",
+                row=i // 5
+            )
+            button.callback = self._make_callback(f)
+            self.add_item(button)
+    
+    def _make_callback(self, fuse_data):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("¡Esta fusión no es tuya!", ephemeral=True)
+                return
+            
+            # Confirmar la fusión
+            rarity_upgrade_map = {
+                "Normal": "Rara", "Rara": "Épica", "Épica": "Legendaria",
+                "Legendaria": "Mítica", "Mítica": "Mítica ✦"
+            }
+            target = rarity_upgrade_map.get(fuse_data['rarity'], fuse_data['rarity'])
+            
+            confirm_embed = discord.Embed(
+                title="⚠️ Confirmar Fusión",
+                description=(
+                    f"Vas a sacrificar **5x {fuse_data['emoji']} {fuse_data['name']}** ({fuse_data['rarity']})\n"
+                    f"para obtener **1 mascota aleatoria** de rareza **{target}**.\n\n"
+                    f"⚠️ **Esta acción es irreversible.** Las 5 mascotas se eliminarán permanentemente.\n"
+                    f"Se sacrificarán las de menor lealtad primero."
+                ),
+                color=discord.Color.orange()
+            )
+            
+            confirm_view = FusionConfirmView(self.user_id, fuse_data)
+            
+            # Deshabilitar botones del menú original
+            for child in self.children:
+                child.disabled = True
+            await interaction.response.edit_message(embed=confirm_embed, view=confirm_view)
+        
+        return callback
+
+
+class FusionConfirmView(discord.ui.View):
+    """Confirmación final antes de fusionar."""
+    def __init__(self, user_id, fuse_data):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.fuse_data = fuse_data
+    
+    @discord.ui.button(label="✨ Fusionar", style=discord.ButtonStyle.success, emoji="⚗️")
+    async def btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("¡Esta fusión no es tuya!", ephemeral=True)
+            return
+        
+        # Deshabilitar botones inmediatamente
+        for child in self.children:
+            child.disabled = True
+        
+        # Ejecutar la fusión
+        success, result = await asyncio.to_thread(fuse_pets, self.user_id, self.fuse_data['pet_id'])
+        
+        if not success:
+            error_embed = discord.Embed(
+                title="❌ Fusión Fallida",
+                description=f"No se pudo completar la fusión: {result}",
+                color=discord.Color.red()
+            )
+            await interaction.response.edit_message(embed=error_embed, view=self)
+            return
+        
+        # Colores según rareza resultante
+        rarity_colors = {
+            "Normal": discord.Color.light_grey(),
+            "Rara": discord.Color.blue(),
+            "Épica": discord.Color.purple(),
+            "Legendaria": discord.Color.gold(),
+            "Mítica": discord.Color.red(),
+        }
+        result_color = rarity_colors.get(result['new_rarity'], discord.Color.blurple())
+        
+        # Títulos y descripciones especiales
+        if result['is_mythic_boost']:
+            title = "🌌 ¡FUSIÓN MÍTICA SUPREMA!"
+            desc = (
+                f"Las cinco criaturas míticas se unen en una explosión de energía cósmica...\n\n"
+                f"De las cenizas nace:\n"
+                f"# {result['new_pet_emoji']} {result['new_pet_name']}\n"
+                f"🌟 Rareza: **{result['new_rarity']} ✦** (Potenciada)\n"
+                f"❤️ Lealtad inicial: **75/100**\n\n"
+                f"*{result['flavor_text'] or 'Una criatura de poder inconmensurable.'}*"
+            )
+        else:
+            rarity_reactions = {
+                "Rara": ("✨ ¡Fusión Exitosa!", "Las cinco criaturas se combinan en una luz brillante..."),
+                "Épica": ("💎 ¡Fusión Épica!", "Una energía poderosa envuelve a las criaturas mientras se fusionan..."),
+                "Legendaria": ("🔥 ¡FUSIÓN LEGENDARIA!", "Un estallido de poder sacude el campo de batalla..."),
+                "Mítica": ("🌌 ¡FUSIÓN MÍTICA!", "El cielo se oscurece mientras una fuerza ancestral despierta..."),
+            }
+            title, intro = rarity_reactions.get(result['new_rarity'], ("✨ ¡Fusión Exitosa!", "Las criaturas se fusionan..."))
+            desc = (
+                f"{intro}\n\n"
+                f"**5x {self.fuse_data['emoji']} {self.fuse_data['name']}** ({result['old_rarity']}) → \n"
+                f"# {result['new_pet_emoji']} {result['new_pet_name']}\n"
+                f"🌟 Rareza: **{result['new_rarity']}**\n"
+                f"❤️ Lealtad inicial: **50/100**\n"
+                f"🆔 ID: `{result['new_user_pet_id']}`\n\n"
+                f"*{result['flavor_text'] or 'Una criatura misteriosa.'}*"
+            )
+        
+        result_embed = discord.Embed(title=title, description=desc, color=result_color)
+        result_embed.set_footer(text="Usa /pets para ver tu colección · /pet_equipar para equiparla")
+        
+        await interaction.response.edit_message(embed=result_embed, view=self)
+    
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.danger)
+    async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return
+        
+        for child in self.children:
+            child.disabled = True
+        
+        cancel_embed = discord.Embed(
+            title="❌ Fusión Cancelada",
+            description="Tus mascotas siguen a salvo.",
+            color=discord.Color.dark_grey()
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=self)
+
+
 class PetsMasterCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -550,6 +731,59 @@ class PetsMasterCog(commands.Cog):
     @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
     async def pets_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
         await self.pet_nombre_cmd(interaction, pet_id, nombre, quitar)
+
+    @app_commands.command(name="pet_fusionar", description="Fusiona 5 mascotas repetidas para obtener una de rareza superior.")
+    async def pet_fusionar_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        
+        fusionables = await asyncio.to_thread(get_fusionable_pets, user_id)
+        
+        if not fusionables:
+            embed = discord.Embed(
+                title="⚗️ Fusión de Mascotas",
+                description=(
+                    "No tienes suficientes mascotas repetidas para fusionar.\n\n"
+                    "**¿Cómo funciona?**\n"
+                    "• Necesitas **5 mascotas de la misma especie**\n"
+                    "• Se sacrifican las 5 y obtienes **1 de rareza superior**\n"
+                    "• Normal → Rara → Épica → Legendaria → Mítica\n\n"
+                    "¡Sigue jugando y capturando para conseguir duplicados!"
+                ),
+                color=discord.Color.dark_grey()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        rarity_upgrade_map = {
+            "Normal": "Rara", "Rara": "Épica", "Épica": "Legendaria",
+            "Legendaria": "Mítica", "Mítica": "Mítica ✦"
+        }
+        
+        embed = discord.Embed(
+            title="⚗️ Fusión de Mascotas",
+            description="Tienes las siguientes mascotas listas para fusionar.\nSelecciona una especie con el botón correspondiente.",
+            color=discord.Color.purple()
+        )
+        
+        for f in fusionables:
+            target_rarity = rarity_upgrade_map.get(f['rarity'], f['rarity'])
+            embed.add_field(
+                name=f"{f['emoji']} {f['name']}",
+                value=(
+                    f"📦 Tienes: **{f['count']}** duplicados\n"
+                    f"🌟 Rareza actual: **{f['rarity']}**\n"
+                    f"⬆️ Resultado: **{target_rarity}** (aleatoria)"
+                ),
+                inline=False
+            )
+        
+        view = FusionSelectView(user_id, fusionables)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(name="pets_fusionar", description="Fusiona 5 mascotas repetidas para obtener una de rareza superior. (Alias de /pet_fusionar)")
+    async def pets_fusionar_cmd(self, interaction: discord.Interaction):
+        await self.pet_fusionar_cmd(interaction)
 
     @app_commands.command(name="apostador", description="Muestra tu progreso y Nivel de Apostador.")
     async def apostador_cmd(self, interaction: discord.Interaction):

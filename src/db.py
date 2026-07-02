@@ -1080,6 +1080,113 @@ def update_pet_stats(user_id: int, win: bool):
             """, (user_id,))
 
 
+# --- SISTEMA DE FUSIÓN DE MASCOTAS ---
+
+RARITY_UPGRADE = {
+    "Normal": "Rara",
+    "Rara": "Épica",
+    "Épica": "Legendaria",
+    "Legendaria": "Mítica",
+    "Mítica": "Mítica",  # Mítica se queda en Mítica pero con boost
+}
+
+def get_fusionable_pets(user_id: int):
+    """
+    Busca mascotas que el usuario tiene 5+ duplicados (mismo PetID).
+    Retorna lista de dicts: [{pet_id, name, emoji, rarity, count}, ...]
+    """
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT up.PetID, pc.Name, pc.Emoji, pc.Rarity, COUNT(*) as cnt
+            FROM UserPets up
+            JOIN PetsCatalog pc ON up.PetID = pc.PetID
+            WHERE up.UserID = %s AND up.Status != 'Escapó'
+            GROUP BY up.PetID, pc.Name, pc.Emoji, pc.Rarity
+            HAVING COUNT(*) >= 5
+            ORDER BY pc.Rarity DESC, cnt DESC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        return [
+            {"pet_id": r[0], "name": r[1], "emoji": r[2], "rarity": r[3], "count": r[4]}
+            for r in rows
+        ]
+
+
+def fuse_pets(user_id: int, pet_id: int):
+    """
+    Fusiona 5 mascotas del mismo PetID en 1 mascota aleatoria de rareza superior.
+    Retorna (success: bool, result: dict o str).
+    result dict: {new_pet_name, new_pet_emoji, new_rarity, new_user_pet_id, flavor_text, is_mythic_boost}
+    """
+    with db_cursor() as cursor:
+        # 1. Verificar que tiene al menos 5 del mismo PetID
+        cursor.execute("""
+            SELECT up.UserPetID
+            FROM UserPets up
+            WHERE up.UserID = %s AND up.PetID = %s AND up.Status != 'Escapó'
+            ORDER BY up.IsActive ASC, up.Loyalty ASC
+            LIMIT 5
+        """, (user_id, pet_id))
+        victims = cursor.fetchall()
+        
+        if len(victims) < 5:
+            return False, "No tienes 5 mascotas de esta especie para fusionar."
+        
+        victim_ids = [v[0] for v in victims]
+        
+        # 2. Obtener rareza actual
+        cursor.execute("SELECT Rarity FROM PetsCatalog WHERE PetID = %s", (pet_id,))
+        rarity_row = cursor.fetchone()
+        if not rarity_row:
+            return False, "Especie no encontrada en el catálogo."
+        
+        current_rarity = rarity_row[0]
+        target_rarity = RARITY_UPGRADE.get(current_rarity, current_rarity)
+        is_mythic_boost = (current_rarity == "Mítica")
+        
+        # 3. Elegir mascota aleatoria de la rareza objetivo
+        cursor.execute("""
+            SELECT PetID, Name, Emoji, Rarity, FlavorText, EffectValue
+            FROM PetsCatalog
+            WHERE Rarity = %s AND Enabled = 1
+            ORDER BY RANDOM() LIMIT 1
+        """, (target_rarity,))
+        new_pet_row = cursor.fetchone()
+        
+        if not new_pet_row:
+            return False, f"No hay mascotas de rareza {target_rarity} disponibles en el catálogo."
+        
+        new_pet_id, new_name, new_emoji, new_rarity, flavor, eff_val = new_pet_row
+        
+        # 4. Eliminar las 5 mascotas sacrificadas
+        for vid in victim_ids:
+            cursor.execute("DELETE FROM UserPets WHERE UserPetID = %s AND UserID = %s", (vid, user_id))
+        
+        # 5. Crear la nueva mascota
+        base_loyalty = 75 if is_mythic_boost else 50
+        cursor.execute("""
+            INSERT INTO UserPets (UserID, PetID, IsActive, Loyalty, Mood, GamesWithOwner, WinsWithOwner, LossesWithOwner, Status)
+            VALUES (%s, %s, 0, %s, 'Feliz', 0, 0, 0, 'Normal')
+            RETURNING UserPetID
+        """, (user_id, new_pet_id, base_loyalty))
+        new_up_id = cursor.fetchone()[0]
+        
+        # 6. Registrar evento
+        cursor.execute("""
+            INSERT INTO UserPetEvents (UserID, PetID, EventType, Details)
+            VALUES (%s, %s, 'fusion', %s)
+        """, (user_id, new_pet_id, f"Fusionó 5x PetID={pet_id} ({current_rarity}) → {new_name} ({new_rarity})"))
+        
+        return True, {
+            "new_pet_name": new_name,
+            "new_pet_emoji": new_emoji,
+            "new_rarity": new_rarity,
+            "new_user_pet_id": new_up_id,
+            "flavor_text": flavor,
+            "is_mythic_boost": is_mythic_boost,
+            "sacrificed_count": 5,
+            "old_rarity": current_rarity,
+        }
 
 def get_all_minas():
     """Obtiene todas las minas activas en todos los canales."""
