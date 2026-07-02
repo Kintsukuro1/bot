@@ -84,20 +84,33 @@ class Crash(commands.Cog):
         current_mult = 1.00
 
         ticket_activo = False
+        msg_cooldown_ticket = ""
         if apuesta <= CRASH_TICKET_MAX_BET:
-            from src.db import usuario_tiene_item, usar_item_usuario
+            from src.db import usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
             if await asyncio.to_thread(usuario_tiene_item, user_id, CRASH_TICKET_ITEM_ID):
-                ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
-        
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id)
+                if status == 'ok' or status == 'blocked_start':
+                    ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
+                    if status == 'blocked_start' and ticket_activo:
+                        msg_cooldown_ticket = "⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                else:
+                    hours = time_remaining // 3600
+                    minutes = (time_remaining % 3600) // 60
+                    msg_cooldown_ticket = f"⚠️ **No se pudo usar tu Ticket de Crash.** Bloqueado por cooldown de escudos ({hours}h {minutes:02d}m restantes)."
+
+        desc_msg = (
+            f"💰 **Apuesta:** {apuesta} monedas\n"
+            f"📈 **Multiplicador actual:** x{current_mult:.2f}\n\n"
+            f"🎯 El multiplicador empezará en x1.00 y subirá hasta explotar\n"
+            f"⚡ **¡Puede explotar en cualquier momento!**\n"
+            f"💡 Puedes retirarte desde el inicio - ¡Más riesgo, más recompensa!"
+        )
+        if msg_cooldown_ticket:
+            desc_msg += f"\n\n{msg_cooldown_ticket}"
+
         embed = discord.Embed(
             title="💥 Crash Casino",
-            description=(
-                f"💰 **Apuesta:** {apuesta} monedas\n"
-                f"📈 **Multiplicador actual:** x{current_mult:.2f}\n\n"
-                f"🎯 El multiplicador empezará en x1.00 y subirá hasta explotar\n"
-                f"⚡ **¡Puede explotar en cualquier momento!**\n"
-                f"💡 Puedes retirarte desde el inicio - ¡Más riesgo, más recompensa!"
-            ),
+            description=desc_msg,
             color=discord.Color.orange()
         )
         view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation, ticket_activo)

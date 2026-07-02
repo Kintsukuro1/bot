@@ -385,6 +385,74 @@ def check_and_register_energy_use(user_id, item_id):
         # En caso de error de BD, por seguridad permitimos el uso
         return 'ok', None
 
+def check_and_register_shield_use(user_id):
+    """
+    Verifica si un usuario puede usar un escudo de protección en trabajos/casino (máximo 3 usos al día).
+    Si está bloqueado por cooldown, retorna ('blocked', segundos_restantes).
+    Si alcanza los 3 usos, inicia un bloqueo de 24 horas y retorna ('blocked_start', 86400).
+    De lo contrario, registra el uso y retorna ('ok', None).
+    """
+    from datetime import datetime, timedelta
+    shield_item_group_id = 999
+    try:
+        with db_cursor() as cursor:
+            # 1. Verificar si el usuario está bloqueado actualmente
+            cursor.execute("""
+                SELECT BlockedUntil FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND BlockedUntil > NOW()
+            """, (user_id, shield_item_group_id))
+            row = cursor.fetchone()
+            if row:
+                blocked_until = row[0]
+                time_remaining = (blocked_until - datetime.now()).total_seconds()
+                return 'blocked', max(0, int(time_remaining))
+
+            # 2. Obtener la cantidad de usos de hoy
+            cursor.execute("""
+                SELECT UsageCount FROM DailyItemUsage 
+                WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+            """, (user_id, shield_item_group_id))
+            row = cursor.fetchone()
+
+            if row:
+                count = row[0]
+                if count >= 3:
+                    # Iniciar/actualizar bloqueo de 24 horas
+                    blocked_until = datetime.now() + timedelta(hours=24)
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET BlockedUntil = %s 
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (blocked_until, user_id, shield_item_group_id))
+                    return 'blocked_start', 86400
+                else:
+                    # Incrementar usos
+                    new_count = count + 1
+                    blocked_until = None
+                    if new_count >= 3:
+                        blocked_until = datetime.now() + timedelta(hours=24)
+                    
+                    cursor.execute("""
+                        UPDATE DailyItemUsage 
+                        SET UsageCount = %s, BlockedUntil = %s
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """, (new_count, blocked_until, user_id, shield_item_group_id))
+                    
+                    if new_count >= 3:
+                        return 'blocked_start', 86400
+                    return 'ok', None
+            else:
+                # Primer uso del día
+                cursor.execute("""
+                    INSERT INTO DailyItemUsage (UserID, ItemID, UsageDate, UsageCount) 
+                    VALUES (%s, %s, CURRENT_DATE, 1)
+                """, (user_id, shield_item_group_id))
+                return 'ok', None
+    except Exception as e:
+        print(f"Error comprobando cooldown de escudos: {e}")
+        return 'ok', None
+
+
 # Funciones para el sistema de dificultad dinámica
 def get_user_game_stats(user_id):
     """Obtener estadísticas de juego del usuario."""
@@ -685,7 +753,7 @@ def claim_daily(user_id):
         else:
             streak = 1
             
-        reward = 100 * (streak // 7 + 1)
+        reward = min(100 * streak, 1000)
         new_balance = (balance or 0) + reward
         
         cursor.execute("""
