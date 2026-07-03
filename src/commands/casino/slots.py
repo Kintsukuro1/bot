@@ -118,6 +118,9 @@ class Slots(commands.Cog):
                 mult_adjustment = 1.0 - (difficulty_modifier * 0.20)
                 mult_adjustment = max(0.70, min(1.30, mult_adjustment))
                 winnings = int(apuesta * multiplier * ganancia_bonus * ticket_multiplier * mult_adjustment)
+                if ticket_multiplier > 1.0:
+                    winnings = int(winnings * 0.65)
+                    ticket_desc += "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**"
                 profit = winnings - apuesta
                 
                 # add_balance is atomic, returns None, so we re-fetch balance or just calculate

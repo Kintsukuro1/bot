@@ -170,6 +170,8 @@ class CrashView(discord.ui.View):
             # ----------------------------
             
             ganancia_total = int(self.apuesta * mult_al_retirarse * ganancia_bonus)
+            if self.ticket_activo:
+                ganancia_total = int(ganancia_total * 0.65)
             ganancia_neta = ganancia_total - self.apuesta
             
             # Actualizar balance
@@ -198,6 +200,7 @@ class CrashView(discord.ui.View):
                 color = discord.Color.yellow()
                 resultado = f"🟰 **Empate** (sin ganancias ni pérdidas)"
             
+            debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
             resultado_embed = discord.Embed(
                 title="💥 Crash Casino - Te retiraste",
                 description=(
@@ -205,7 +208,7 @@ class CrashView(discord.ui.View):
                     f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
                     f"💵 **Total recibido:** {ganancia_total} monedas\n"
                     f"{resultado}\n"
-                    f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n"
+                    f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n"
                     f"{self._progress_bar_blocks(min(15, len(self.progress)), 15, explosion=False)}"
                 ),
                 color=color
@@ -392,6 +395,8 @@ class CrashView(discord.ui.View):
                     # ----------------------------
                     
                     ganancia_total = int(self.apuesta * self.current_mult * ganancia_bonus)
+                    if self.ticket_activo:
+                        ganancia_total = int(ganancia_total * 0.65)
                     ganancia_neta = ganancia_total - self.apuesta
                     
                     nuevo_saldo = self.saldo + ganancia_total
@@ -405,6 +410,7 @@ class CrashView(discord.ui.View):
                     
                     # Barra completa para victoria
                     bar = self._progress_bar_blocks(15, 15, explosion=False)
+                    debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
                     resultado_embed = discord.Embed(
                         title="🎉 Crash Casino - ¡Victoria!",
                         description=(
@@ -412,7 +418,7 @@ class CrashView(discord.ui.View):
                             f"🎯 **Multiplicador final:** x{self.current_mult:.2f}\n"
                             f"✅ **¡GANASTE!** +{ganancia_neta:,} monedas\n"
                             f"💰 **Total recibido:** {ganancia_total:,} monedas\n"
-                            f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
+                            f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n{bar}"
                         ),
                         color=discord.Color.gold()
                     )
