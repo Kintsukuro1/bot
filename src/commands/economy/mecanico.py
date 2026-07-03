@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -383,27 +383,28 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
     has_mejora_9 = usuario_tiene_mejora(user_id, 9)
     
+    energia_consumida = False
     if energia_actual >= energia_requerida:
-        set_energia(user_id, energia_actual - energia_requerida)
+        energia_consumida = consumir_energia(user_id, energia_requerida)
         
     bonificacion_recompensa = calcular_recompensa(1, user_id, tipo_trabajo) - 1
     bonificacion_energia = calcular_energia_requerida(100, user_id, tipo_trabajo) / 100
         
-    return nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia
+    return nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida
 
 async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de mecánico."""
     user_id = interaction.user.id
     tipo_trabajo = 'mecanico'
     
-    nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia = await asyncio.to_thread(_iniciar_mecanico_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida = await asyncio.to_thread(_iniciar_mecanico_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
-    if energia_actual < energia_requerida:
+    if energia_actual < energia_requerida or not energia_consumida:
         embed = discord.Embed(
             title="⚡ Sin Energía",
             description=(
-                f"❌ No tienes suficiente energía para trabajar.\n"
+                f"❌ No tienes suficiente energía para trabajar (o alguien más la consumió justo antes).\n"
                 f"🔋 **Energía actual:** {energia_actual}/100\n"
                 f"⚡ **Energía requerida:** {energia_requerida}\n\n"
                 f"💡 *La energía se recarga automáticamente*"
@@ -412,6 +413,11 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
+
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    from .job_fx import tal_vez_cliente_especial
+    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
     
     # Vehículos disponibles con rango de nivel
     vehiculos_todos = [
@@ -521,4 +527,7 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
     
     view = MecanicoView(interaction.user, vehiculo_objetivo, recompensa_base, nivel)
     view.has_mejora_9 = has_mejora_9
-    await interaction.response.send_message(embed=embed, view=view)
+    if interaction.response.is_done():
+        await interaction.followup.send(embed=embed, view=view)
+    else:
+        await interaction.response.send_message(embed=embed, view=view)

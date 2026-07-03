@@ -4,6 +4,7 @@ import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .job_fx import tal_vez_cliente_especial
 
 EVENTOS_PILOTO = [
     {
@@ -110,11 +111,15 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
         )
         return
 
-    # Iniciar minijuego
     await interaction.response.defer()
-    
-    # Consumir energía
-    consumir_energia(user_id, energia_req)
+    if not consumir_energia(user_id, energia_req):
+        await interaction.followup.send(
+            "❌ **Tu energía cambió justo antes de subir al avión.** Puede que otro trabajo la haya consumido primero. Revisa `/energia` e inténtalo de nuevo.",
+            ephemeral=True
+        )
+        return
+
+    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
 
     # Seleccionar 3 eventos aleatorios
     eventos_vuelo = random.sample(EVENTOS_PILOTO, 3)

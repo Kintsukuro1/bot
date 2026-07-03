@@ -18,7 +18,12 @@ from src.db import (
 )
 
 def consumir_energia(user_id: int, cantidad: int) -> bool:
-    """Consume una cantidad específica de energía del usuario de forma atómica."""
+    """Consume una cantidad específica de energía del usuario de forma atómica.
+    Retorna True si fue exitoso, False si no tenía suficiente energía.
+
+    IMPORTANTE: el valor de retorno SIEMPRE debe revisarse en el trabajo que
+    llama a esta función. Si da False, el trabajo no debe continuar, porque
+    significa que otro trabajo en paralelo ya consumió esa energía primero."""
     from src.db import consumir_energia as _consumir_energia_db
     return _consumir_energia_db(user_id, cantidad)
 
