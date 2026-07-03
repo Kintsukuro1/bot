@@ -101,10 +101,18 @@ class Slots(commands.Cog):
                 ticket_multiplier = 1.0
                 ticket_desc = ""
                 if await asyncio.to_thread(usuario_tiene_item, user_id, 5):  # Ticket Slots
-                    from src.db import usar_item_usuario
-                    if await asyncio.to_thread(usar_item_usuario, user_id, 5):
-                        ticket_multiplier = 2.0
-                        ticket_desc = " 🎫 (Ticket x2 aplicado)"
+                    from src.db import usar_item_usuario, check_and_register_shield_use
+                    status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id)
+                    if status == 'ok' or status == 'blocked_start':
+                        if await asyncio.to_thread(usar_item_usuario, user_id, 5):
+                            ticket_multiplier = 2.0
+                            ticket_desc = " 🎫 (Ticket x2 aplicado)"
+                            if status == 'blocked_start':
+                                ticket_desc += "\n⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                    elif status == 'blocked':
+                        hours = time_remaining // 3600
+                        minutes = (time_remaining % 3600) // 60
+                        ticket_desc = f"\n⚠️ **No se pudo usar tu Ticket de Slots.** Bloqueado por cooldown de escudos ({hours}h {minutes:02d}m restantes)."
                         
                 # Ajuste de dificultad a los multiplicadores
                 mult_adjustment = 1.0 - (difficulty_modifier * 0.20)
