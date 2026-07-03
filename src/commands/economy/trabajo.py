@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from src.db import get_balance, ensure_user
+from src.db import get_balance, ensure_user, obtener_ranking_trabajo
 from .energia import get_energia
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
@@ -454,6 +454,67 @@ class Trabajo(commands.Cog):
         # Crear vista con botones
         view = TrabajoView(interaction.user)
         await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="trabajo_ranking", description="Ver el top 10 de un oficio por nivel y experiencia")
+    @app_commands.describe(oficio="El trabajo del que quieres ver el ranking")
+    async def trabajo_ranking(self, interaction: discord.Interaction, oficio: str):
+        from .niveles_trabajo import TIPOS_TRABAJO
+
+        oficio = oficio.lower()
+        if oficio not in TIPOS_TRABAJO:
+            opciones = ", ".join(TIPOS_TRABAJO.keys())
+            await interaction.response.send_message(
+                f"❌ Oficio no reconocido. Opciones válidas: {opciones}",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+        info_trabajo = TIPOS_TRABAJO[oficio]
+        filas = await asyncio.to_thread(obtener_ranking_trabajo, oficio, 10)
+
+        embed = discord.Embed(
+            title=f"{info_trabajo['emoji']} Ranking de {info_trabajo['nombre']}",
+            description="Los 10 trabajadores con más nivel y experiencia en este oficio.",
+            color=info_trabajo.get('color', discord.Color.blue())
+        )
+
+        if not filas:
+            embed.description = "Todavía nadie ha trabajado en este oficio. ¡Sé el primero!"
+        else:
+            medallas = ["🥇", "🥈", "🥉"]
+            lineas = []
+            for i, (user_id, nivel, experiencia, trabajos_completados) in enumerate(filas):
+                posicion = medallas[i] if i < 3 else f"`#{i+1}`"
+                usuario = self.bot.get_user(user_id)
+                nombre = usuario.display_name if usuario else f"Usuario {user_id}"
+                lineas.append(
+                    f"{posicion} **{nombre}** — Nivel {nivel} ({experiencia} XP, {trabajos_completados} trabajos)"
+                )
+            embed.add_field(name="Top 10", value="\n".join(lineas), inline=False)
+
+        # Mostrar la posición del usuario que consulta si no está en el top 10
+        if filas and interaction.user.id not in [f[0] for f in filas]:
+            from .niveles_trabajo import get_nivel_trabajo
+            mi_info = await asyncio.to_thread(get_nivel_trabajo, interaction.user.id, oficio)
+            embed.add_field(
+                name="📍 Tu progreso",
+                value=f"Nivel {mi_info['nivel']} ({mi_info['experiencia']} XP, {mi_info['trabajos_totales']} trabajos)",
+                inline=False
+            )
+
+        embed.set_footer(text="💡 Usa /trabajo para seguir subiendo de nivel")
+        await interaction.followup.send(embed=embed)
+
+    @trabajo_ranking.autocomplete("oficio")
+    async def trabajo_ranking_autocomplete(self, interaction: discord.Interaction, current: str):
+        from .niveles_trabajo import TIPOS_TRABAJO
+        current = current.lower()
+        return [
+            app_commands.Choice(name=info["nombre"], value=tipo)
+            for tipo, info in TIPOS_TRABAJO.items()
+            if current in tipo or current in info["nombre"].lower()
+        ][:25]
 
 async def setup(bot):
     await bot.add_cog(Trabajo(bot))
