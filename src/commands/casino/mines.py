@@ -208,7 +208,10 @@ class MinesView(discord.ui.View):
             if isinstance(child, CashoutButton):
                 child.label = f"Retirarse ({current_win})"
                 
-        await interaction.response.edit_message(embed=embed, view=self)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self)
 
     async def process_loss(self, interaction: discord.Interaction):
         self.game_over = True
@@ -233,7 +236,10 @@ class MinesView(discord.ui.View):
             f"Perdiste **{self.bet}** monedas.\n"
             f"Nuevo saldo: **{nuevo_saldo}**"
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self)
         
         # Castigo para administradores
         if isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator:
@@ -306,7 +312,10 @@ class MinesView(discord.ui.View):
             f"Nuevo saldo: **{nuevo_saldo}**"
         )
         
-        await interaction.response.edit_message(embed=embed, view=self)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self)
 
 class MinesSetupView(discord.ui.View):
     def __init__(self, user_id: int, apuesta: int, user_name: str):
