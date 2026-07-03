@@ -5,6 +5,7 @@ import time
 from src.db import get_balance, set_balance, registrar_transaccion, deduct_balance
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .job_fx import tal_vez_cliente_especial
 
 class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
     codigo_input = discord.ui.TextInput(
@@ -133,7 +134,14 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         await latest_interaction.edit_original_response(content="⏳ Tardaste mucho en decidir. Abortando atraco.", embed=None, view=None)
         return
         
-    consumir_energia(user_id, energia_req)
+    if not consumir_energia(user_id, energia_req):
+        await latest_interaction.edit_original_response(
+            content="❌ Tu energía cambió justo antes de entrar. Puede que otro trabajo la haya consumido primero.",
+            embed=None, view=None
+        )
+        return
+
+    await tal_vez_cliente_especial(latest_interaction, user_id, tipo_trabajo)
     
     len_pin = 4 if tiene_penetracion else 5
     pin_secreto = "".join([str(random.randint(0, 9)) for _ in range(len_pin)])

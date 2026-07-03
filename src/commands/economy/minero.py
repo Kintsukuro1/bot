@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use, consumir_energia
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -317,24 +317,25 @@ def _iniciar_minero_db(user_id, tipo_trabajo):
     energia_base = 25
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
     
+    energia_consumida = False
     if energia_actual >= energia_requerida:
-        set_energia(user_id, energia_actual - energia_requerida)
+        energia_consumida = consumir_energia(user_id, energia_requerida)
         
-    return nivel_info, energia_actual, energia_requerida
+    return nivel_info, energia_actual, energia_requerida, energia_consumida
 
 async def iniciar_trabajo_minero(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de minero."""
     user_id = interaction.user.id
     tipo_trabajo = 'minero'
     
-    nivel_info, energia_actual, energia_requerida = await asyncio.to_thread(_iniciar_minero_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, energia_consumida = await asyncio.to_thread(_iniciar_minero_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
-    if energia_actual < energia_requerida:
+    if energia_actual < energia_requerida or not energia_consumida:
         embed = discord.Embed(
             title="⚡ Sin Energía",
             description=(
-                f"❌ No tienes suficiente energía para trabajar.\n"
+                f"❌ No tienes suficiente energía para trabajar (o alguien más la consumió justo antes).\n"
                 f"🔋 **Energía actual:** {energia_actual}/100\n"
                 f"⚡ **Energía requerida:** {energia_requerida}\n\n"
                 f"💡 *La energía se recarga automáticamente*"
@@ -343,6 +344,11 @@ async def iniciar_trabajo_minero(interaction: discord.Interaction):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
+
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    from .job_fx import tal_vez_cliente_especial
+    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
     
     # Escalabilidad vertical: Recompensas bases por mina
     if nivel <= 2:
@@ -400,4 +406,7 @@ async def iniciar_trabajo_minero(interaction: discord.Interaction):
     )
     
     view = MineroView(interaction.user, recompensa_base, nivel)
-    await interaction.response.send_message(embed=embed, view=view)
+    if interaction.response.is_done():
+        await interaction.followup.send(embed=embed, view=view)
+    else:
+        await interaction.response.send_message(embed=embed, view=view)

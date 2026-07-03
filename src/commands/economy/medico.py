@@ -4,6 +4,7 @@ import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .job_fx import tal_vez_cliente_especial
 
 HERRAMIENTAS = {
     "bisturi": {"nombre": "Bisturí", "emoji": "🔪"},
@@ -75,7 +76,14 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
         return
 
     await interaction.response.defer()
-    consumir_energia(user_id, energia_req)
+    if not consumir_energia(user_id, energia_req):
+        await interaction.followup.send(
+            "❌ **Tu energía cambió justo antes de entrar a quirófano.** Puede que otro trabajo la haya consumido primero. Revisa `/energia` e inténtalo de nuevo.",
+            ephemeral=True
+        )
+        return
+
+    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
 
     tiempo_limite = 15.0 if nivel >= 5 else 10.0
     fallos_permitidos = 1 if nivel >= 8 else 0

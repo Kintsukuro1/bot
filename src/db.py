@@ -1613,6 +1613,8 @@ def init_db():
                     CONSTRAINT uq_userid_jobtype UNIQUE (UserId, JobType)
                 )
             """)
+            cursor.execute("ALTER TABLE joblevels ADD COLUMN IF NOT EXISTS LastJobTime TIMESTAMP")
+            cursor.execute("ALTER TABLE joblevels ADD COLUMN IF NOT EXISTS Streak INT DEFAULT 0")
             
             # Tabla: RoboStats
             cursor.execute("""
@@ -1757,3 +1759,74 @@ def init_db():
     except Exception as e:
         logger.error(f"Error inicializando las tablas de la base de datos: {e}")
         raise e
+
+def actualizar_racha_trabajo(user_id, job_type):
+    """
+    Registra/actualiza la racha de trabajo consecutiva diaria para un oficio específico.
+    Retorna un diccionario con 'racha' y 'es_nueva_hoy'.
+    """
+    from datetime import datetime, timedelta
+    
+    today = datetime.now().date()
+    
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO joblevels (UserId, JobType, CompletedJobs, Level, Experience, Streak)
+            VALUES (%s, %s, 0, 0, 0, 0)
+            ON CONFLICT (UserId, JobType) DO NOTHING
+        """, (user_id, job_type))
+        
+        cursor.execute("""
+            SELECT LastJobTime, Streak FROM joblevels 
+            WHERE UserId = %s AND JobType = %s FOR UPDATE
+        """, (user_id, job_type))
+        row = cursor.fetchone()
+        
+        last_job_time, streak = None, 0
+        if row:
+            last_job_time, streak = row[0], row[1] or 0
+            
+        if last_job_time:
+            last_job_date = last_job_time.date()
+        else:
+            last_job_date = None
+            
+        es_nueva_hoy = False
+        
+        if last_job_date == today:
+            # Ya trabajó hoy, la racha se mantiene igual
+            es_nueva_hoy = False
+        elif last_job_date and (today - last_job_date).days == 1:
+            # Trabajó ayer, incrementa racha
+            streak += 1
+            es_nueva_hoy = True
+        else:
+            # Primera vez o pasaron más días, reinicia racha a 1
+            streak = 1
+            es_nueva_hoy = True
+            
+        cursor.execute("""
+            UPDATE joblevels 
+            SET LastJobTime = %s, Streak = %s 
+            WHERE UserId = %s AND JobType = %s
+        """, (datetime.now(), streak, user_id, job_type))
+        
+        return {
+            "racha": streak,
+            "es_nueva_hoy": es_nueva_hoy
+        }
+
+def obtener_ranking_trabajo(job_type, limit=10):
+    """
+    Obtiene el ranking de los mejores jugadores en un oficio específico,
+    ordenado por nivel, luego experiencia y luego trabajos completados.
+    """
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT UserId, Level, Experience, CompletedJobs
+            FROM joblevels
+            WHERE JobType = %s
+            ORDER BY Level DESC, Experience DESC, CompletedJobs DESC
+            LIMIT %s
+        """, (job_type, limit))
+        return cursor.fetchall()

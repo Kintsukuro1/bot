@@ -4,6 +4,7 @@ import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
+from .job_fx import fase_previa_trabajo
 
 EVENTOS_PILOTO = [
     {
@@ -47,6 +48,74 @@ EVENTOS_PILOTO = [
         ]
     }
 ]
+
+RUTAS_VUELO = {
+    "corta": {
+        "nombre": "Ruta Corta (Directa)",
+        "num_eventos": 2,
+        "multiplicador": 0.8,
+        "descripcion": "Menos emergencias en el aire, pero el pago es menor."
+    },
+    "larga": {
+        "nombre": "Ruta Larga (Rentable)",
+        "num_eventos": 4,
+        "multiplicador": 1.35,
+        "descripcion": "Cruzas zonas de mayor tráfico y clima inestable, pero pagan mucho mejor."
+    }
+}
+
+class RutaVueloView(discord.ui.View):
+    """Selección de plan de vuelo antes de despegar: define cuántas
+    emergencias enfrentarás y cuánto multiplica el pago final."""
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=20.0)
+        self.user_id = user_id
+        self.ruta = None
+        self.resuelto = False
+
+        select = discord.ui.Select(
+            placeholder="Elige tu plan de vuelo...",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=RUTAS_VUELO["corta"]["nombre"],
+                    value="corta",
+                    emoji="🛬",
+                    description="2 emergencias en vuelo. Pago x0.8"
+                ),
+                discord.SelectOption(
+                    label=RUTAS_VUELO["larga"]["nombre"],
+                    value="larga",
+                    emoji="🌍",
+                    description="4 emergencias en vuelo. Pago x1.35"
+                ),
+            ]
+        )
+        select.callback = self._callback
+        self.add_item(select)
+
+    async def _callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ No es tu vuelo.", ephemeral=True)
+            return
+        if self.resuelto:
+            await interaction.response.defer()
+            return
+        self.resuelto = True
+        self.ruta = interaction.data["values"][0]
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.defer()
+        self.stop()
+
+    async def on_timeout(self):
+        if not self.resuelto:
+            self.resuelto = True
+            self.ruta = "corta"  # opción segura por defecto si no decide a tiempo
+            for item in self.children:
+                item.disabled = True
 
 class EventoPilotoView(discord.ui.View):
     def __init__(self, user_id, evento, tiempo_limite=7.0):
@@ -113,11 +182,35 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
     # Iniciar minijuego
     await interaction.response.defer()
     
-    # Consumir energía
-    consumir_energia(user_id, energia_req)
+    # Consumir energía (atómico: si otro trabajo en paralelo ya la gastó, esto falla)
+    if not consumir_energia(user_id, energia_req):
+        await interaction.followup.send(
+            "❌ **Tu energía cambió justo antes de despegar.** Puede que otro trabajo la haya consumido primero. Revisa `/energia` e inténtalo de nuevo.",
+            ephemeral=True
+        )
+        return
 
-    # Seleccionar 3 eventos aleatorios
-    eventos_vuelo = random.sample(EVENTOS_PILOTO, 3)
+    # Evento opcional: un pasajero VIP puede aparecer antes del despegue
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
+
+    # Elegir plan de vuelo: define cuántas emergencias habrá y el multiplicador de pago
+    ruta_view = RutaVueloView(user_id)
+    embed_ruta = discord.Embed(
+        title="🗺️ Plan de Vuelo",
+        description="Antes de despegar, define la ruta:\n\n"
+                     f"🛬 **{RUTAS_VUELO['corta']['nombre']}:** {RUTAS_VUELO['corta']['descripcion']}\n"
+                     f"🌍 **{RUTAS_VUELO['larga']['nombre']}:** {RUTAS_VUELO['larga']['descripcion']}",
+        color=discord.Color.blue()
+    )
+    msg_ruta = await interaction.followup.send(embed=embed_ruta, view=ruta_view, wait=True)
+    await ruta_view.wait()
+
+    ruta_elegida = RUTAS_VUELO[ruta_view.ruta]
+    num_eventos = ruta_elegida["num_eventos"]
+    multiplicador_ruta = ruta_elegida["multiplicador"]
+
+    # Seleccionar los eventos aleatorios según la ruta
+    eventos_vuelo = random.sample(EVENTOS_PILOTO, min(num_eventos, len(EVENTOS_PILOTO)))
     
     # Bonificaciones por nivel
     tiene_radar = nivel >= 5
@@ -126,10 +219,10 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
     header = get_job_header(user_id, tipo_trabajo)
     embed_principal = discord.Embed(
         title="🛫 Vuelo Comercial 909",
-        description=f"{header}El avión ha despegado. ¡Mantente alerta a los paneles de control!",
+        description=f"{header}Elegiste la **{ruta_elegida['nombre']}**. El avión ha despegado. ¡Mantente alerta a los paneles de control!",
         color=discord.Color.blue()
     )
-    msg = await interaction.followup.send(embed=embed_principal, wait=True)
+    msg = await msg_ruta.edit(embed=embed_principal, view=None)
     await asyncio.sleep(2)
 
     for i, evento in enumerate(eventos_vuelo):
@@ -146,7 +239,7 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
             continue
 
         embed = discord.Embed(
-            title=f"⚠️ EMERGENCIA {i+1}/3: {evento['nombre']}",
+            title=f"⚠️ EMERGENCIA {i+1}/{len(eventos_vuelo)}: {evento['nombre']}",
             description=f"{evento['descripcion']}\n\n⏳ Tienes {tiempo_limite} segundos para reaccionar.",
             color=discord.Color.red()
         )
@@ -179,10 +272,10 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
         await msg.edit(embed=embed_success, view=None)
         await asyncio.sleep(2)
 
-    # Si llega aquí, completó los 3 eventos con éxito
+    # Si llega aquí, completó los eventos de la ruta elegida con éxito
     recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
-    # Variación aleatoria de ±15%
-    recompensa = int(recompensa_base * random.uniform(0.85, 1.15))
+    # Variación aleatoria de ±15%, ajustada por el multiplicador de la ruta elegida
+    recompensa = int(recompensa_base * random.uniform(0.85, 1.15) * multiplicador_ruta)
     
     saldo_actual = get_balance(user_id)
     set_balance(user_id, saldo_actual + recompensa)
@@ -196,6 +289,7 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
         description="Has completado el vuelo y entregado la carga a salvo.",
         color=discord.Color.gold()
     )
+    embed_final.add_field(name="🗺️ Ruta", value=ruta_elegida['nombre'])
     embed_final.add_field(name="💰 Pago Recibido", value=f"**{recompensa}** monedas")
     
     xp_msg = f"+{resultado_xp['xp_ganada_final']} XP"

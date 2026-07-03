@@ -304,6 +304,10 @@ def setup_db():
         cursor.execute("ALTER TABLE joblevels ADD COLUMN Level INT DEFAULT 0")
     if 'experience' not in columns:
         cursor.execute("ALTER TABLE joblevels ADD COLUMN Experience INT DEFAULT 0")
+    if 'lastjobtime' not in columns:
+        cursor.execute("ALTER TABLE joblevels ADD COLUMN LastJobTime TIMESTAMP")
+    if 'streak' not in columns:
+        cursor.execute("ALTER TABLE joblevels ADD COLUMN Streak INT DEFAULT 0")
     
     conn.commit()
     conn.close()
