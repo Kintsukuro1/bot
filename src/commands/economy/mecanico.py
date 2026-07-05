@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -9,7 +9,69 @@ from .niveles_trabajo import (
     get_nivel_trabajo,
     TIPOS_TRABAJO
 )
+from .job_fx import fase_previa_trabajo
 import asyncio
+
+class PlanReparacionView(discord.ui.View):
+    """Pide al usuario que elija, paso a paso, en qué orden va a reparar los
+    problemas ya diagnosticados. Acertar el orden de prioridad real (el
+    orden en el que el taller reportó los problemas) da un bono de precisión."""
+
+    def __init__(self, user_id, problemas_a_ordenar):
+        super().__init__(timeout=25)
+        self.user_id = user_id
+        self.problemas_restantes = list(problemas_a_ordenar)
+        self.orden_elegido = []
+        self.resuelto = False
+        self.last_interaction = None
+        self._agregar_select()
+
+    def _agregar_select(self):
+        self.clear_items()
+        options = [
+            discord.SelectOption(label=p.title()[:100], value=p)
+            for p in self.problemas_restantes
+        ]
+        posicion = len(self.orden_elegido) + 1
+        select = discord.ui.Select(
+            placeholder=f"¿Qué reparas en el paso {posicion}?",
+            min_values=1, max_values=1, options=options
+        )
+        select.callback = self._callback
+        self.add_item(select)
+
+    async def _callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ No es tu reparación.", ephemeral=True)
+            return
+
+        elegido = interaction.data["values"][0]
+        self.orden_elegido.append(elegido)
+        self.problemas_restantes.remove(elegido)
+        self.last_interaction = interaction
+
+        if not self.problemas_restantes:
+            self.resuelto = True
+            for item in self.children:
+                item.disabled = True
+            await interaction.response.defer()
+            self.stop()
+            return
+
+        self._agregar_select()
+        pasos_txt = " → ".join(p.title() for p in self.orden_elegido)
+        embed = discord.Embed(
+            title="📋 Planifica el orden de reparación",
+            description=f"**Orden elegido hasta ahora:** {pasos_txt}\n\nElige el siguiente paso.",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        if not self.resuelto:
+            # Completa lo que falte en orden arbitrario para no bloquear el trabajo
+            self.orden_elegido.extend(self.problemas_restantes)
+            self.problemas_restantes = []
 
 class MecanicoView(discord.ui.View):
     def __init__(self, user, vehiculo_objetivo, recompensa_base, nivel):
@@ -24,6 +86,7 @@ class MecanicoView(discord.ui.View):
         self.precision_bonus = 0
         self.tiempo_reparacion = 0
         self.has_mejora_9 = False
+        self.plan_usado = False
         
         # Desbloqueos interactivos
         if self.nivel < 5:
@@ -151,6 +214,62 @@ class MecanicoView(discord.ui.View):
             return
         
         await self._evaluar_reparacion(interaction)
+
+    @discord.ui.button(label="📋 Plan de Reparación", style=discord.ButtonStyle.secondary, row=2)
+    async def plan_reparacion(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ No puedes usar este trabajo.", ephemeral=True)
+            return
+
+        problemas_reales = self.vehiculo_objetivo["problemas"]
+        detectados_reales = [p for p in self.problemas_detectados if p in problemas_reales]
+
+        if len(detectados_reales) < 2:
+            await interaction.response.defer()
+            await self._actualizar_mensaje(interaction, "⚠️ **Necesitas detectar al menos 2 problemas reales antes de planificar el orden.**")
+            return
+
+        if self.plan_usado:
+            await interaction.response.defer()
+            await self._actualizar_mensaje(interaction, "📋 **Ya planificaste el orden de reparación esta vez.**")
+            return
+
+        self.plan_usado = True
+        button.disabled = True
+
+        # El orden real de prioridad es el orden en el que el taller reportó los problemas
+        orden_correcto = [p for p in problemas_reales if p in detectados_reales]
+
+        plan_view = PlanReparacionView(self.user.id, orden_correcto)
+        embed_plan = discord.Embed(
+            title="📋 Planifica el orden de reparación",
+            description=(
+                "El taller te pide un plan antes de que sigas trabajando: elige en qué orden vas a "
+                "reparar cada problema detectado. Acertar el orden de prioridad real (el que el taller "
+                "reportó primero) te da un bono extra de precisión por cada posición correcta."
+            ),
+            color=discord.Color.blurple()
+        )
+        await interaction.response.edit_message(embed=embed_plan, view=plan_view)
+        await plan_view.wait()
+
+        aciertos = sum(
+            1 for i, p in enumerate(plan_view.orden_elegido)
+            if i < len(orden_correcto) and p == orden_correcto[i]
+        )
+        bono = aciertos * 8
+        self.precision_bonus += bono
+
+        orden_txt = " → ".join(p.title() for p in plan_view.orden_elegido)
+        if aciertos == len(orden_correcto):
+            resultado_txt = f"🎯 **¡Orden perfecto!** {orden_txt}\n💎 **+{bono} precisión** (bono máximo)."
+        elif aciertos > 0:
+            resultado_txt = f"📋 **Plan registrado:** {orden_txt}\n✅ **{aciertos}/{len(orden_correcto)} pasos en el orden correcto (+{bono} precisión).**"
+        else:
+            resultado_txt = f"📋 **Plan registrado:** {orden_txt}\n😕 **Ningún paso coincidió con el orden real del taller. Sin bono esta vez.**"
+
+        interaccion_para_editar = plan_view.last_interaction or interaction
+        await self._actualizar_mensaje(interaccion_para_editar, resultado_txt)
     
     async def _usar_herramienta(self, interaction, herramienta, emoji, problemas_compatibles):
         if not self.problemas_detectados:
@@ -229,6 +348,7 @@ class MecanicoView(discord.ui.View):
         
         controles_txt = (
             "🔍 **Diagnosticar** | 🔧 **Llave** | 🪛 **Destornillador** | 🔨 **Martillo** | ⚡ **Multímetro**\n"
+            "📋 **Plan de Reparación:** Ordena los problemas detectados para un bono de precisión (1 uso)\n"
             "⚙️ **Terminar:** Finaliza la reparación (mín. 1 diagnóstico + 1 reparación)"
         )
         if self.nivel >= 5:
@@ -258,6 +378,7 @@ class MecanicoView(discord.ui.View):
         self.usar_martillo.disabled = True
         self.usar_multimetro.disabled = True
         self.terminar_reparacion.disabled = True
+        self.plan_reparacion.disabled = True
         if self.nivel >= 5:
             self.escaner_obd.disabled = True
         if self.nivel >= 8:
@@ -385,7 +506,7 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     
     energia_consumida = False
     if energia_actual >= energia_requerida:
-        energia_consumida = consumir_energia(user_id, energia_requerida)
+        energia_consumida = consumir_energia_atomico(user_id, energia_requerida)
         
     bonificacion_recompensa = calcular_recompensa(1, user_id, tipo_trabajo) - 1
     bonificacion_energia = calcular_energia_requerida(100, user_id, tipo_trabajo) / 100
@@ -393,7 +514,7 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     return nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida
 
 async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
-    """Función principal para iniciar el trabajo de mecánico."""
+    \"\"\"Función principal para iniciar el trabajo de mecánico.\"\"\"
     user_id = interaction.user.id
     tipo_trabajo = 'mecanico'
     
@@ -416,8 +537,7 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
 
     if not interaction.response.is_done():
         await interaction.response.defer()
-    from .job_fx import tal_vez_cliente_especial
-    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
     
     # Vehículos disponibles con rango de nivel
     vehiculos_todos = [
@@ -514,7 +634,8 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
         "1️⃣ **Diagnostica** para encontrar problemas\n"
         "2️⃣ **Usa herramientas** apropiadas para cada problema\n"
         "3️⃣ **Evita falsos diagnósticos** (penalizan)\n"
-        "4️⃣ **Termina** cuando hayas reparado todo"
+        "4️⃣ **Planifica el orden** de reparación para un bono extra (opcional, 1 uso)\n"
+        "5️⃣ **Termina** cuando hayas reparado todo"
     )
     if nivel >= 5:
         controles_txt += "\n💡 *Tip:* Si tienes muchos fallos de diagnóstico, usa el Escáner OBD."

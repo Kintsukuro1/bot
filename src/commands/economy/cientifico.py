@@ -4,7 +4,7 @@ import random
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header, TIPOS_TRABAJO
-from .job_fx import tal_vez_cliente_especial
+from .job_fx import fase_previa_trabajo
 
 # Reactivos posibles y sus pesos (impacto en la inestabilidad)
 REACTIVOS = {
@@ -136,6 +136,19 @@ class CientificoView(discord.ui.View):
             self.game.status = "Timeout"
             self.stop()
 
+def _calcular_bono_pureza(inestabilidad_final: int):
+    """Define los niveles de pureza objetivo. Se muestran desde la ronda 1
+    para que el jugador pueda planificar qué tan arriesgado quiere jugar,
+    en vez de descubrir el bono recién al terminar."""
+    if inestabilidad_final == 0:
+        return 1.5, "🌟 Síntesis Perfecta"
+    elif inestabilidad_final <= 20:
+        return 1.25, "💎 Pureza Excelente"
+    elif inestabilidad_final <= 50:
+        return 1.0, "✅ Pureza Aceptable"
+    else:
+        return 0.85, "🧪 Pureza Baja"
+
 def generar_embed(game: CientificoGame):
     header = get_job_header(game.user_id, "cientifico")
     color = discord.Color.blue()
@@ -156,6 +169,16 @@ def generar_embed(game: CientificoGame):
     embed.add_field(name="Ronda", value=f"{game.ronda_actual} / {game.rondas_totales}", inline=True)
     embed.add_field(name="Último Reactivo", value=game.reactivo_anterior or "Ninguno", inline=True)
     embed.add_field(name="Inestabilidad", value=f"{game.inestabilidad}%\n{barra}", inline=False)
+    embed.add_field(
+        name="🎯 Niveles de pureza objetivo (bono a la paga final)",
+        value=(
+            "🌟 **0%** — Síntesis Perfecta (x1.5)\n"
+            "💎 **1-20%** — Pureza Excelente (x1.25)\n"
+            "✅ **21-50%** — Pureza Aceptable (x1.0)\n"
+            "🧪 **51-99%** — Pureza Baja (x0.85)"
+        ),
+        inline=False
+    )
     
     return embed
 
@@ -184,7 +207,7 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         )
         return
 
-    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
     
     game = CientificoGame(user_id, nivel)
     
@@ -210,18 +233,20 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         recompensa = get_recompensa_trabajo(tipo_trabajo, user_id)
         xp_ganada = TIPOS_TRABAJO[tipo_trabajo].get('xp_por_trabajo', 10)
         
+        multiplicador_pureza, etiqueta_pureza = _calcular_bono_pureza(game.inestabilidad)
+        recompensa = int(recompensa * multiplicador_pureza)
+
         if game.inestabilidad == 0:
-            recompensa = int(recompensa * 1.5) # Bono por perfección
             embed.description = "🌟 **¡SÍNTESIS PERFECTA!** Lograste una mezcla con 0% de inestabilidad."
         else:
-            embed.description = "✅ **Experimento Exitoso.** Has logrado sintetizar la fórmula."
+            embed.description = f"✅ **Experimento Exitoso.** Has logrado sintetizar la fórmula con **{etiqueta_pureza}**."
             
         set_balance(user_id, get_balance(user_id) + recompensa)
         registrar_transaccion(user_id, recompensa, "Sueldo Científico")
         add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
         
         embed.color = discord.Color.green()
-        embed.add_field(name="Ganancia", value=f"💰 {recompensa} monedas\n📈 {xp_ganada} XP", inline=False)
+        embed.add_field(name="Ganancia", value=f"💰 {recompensa} monedas ({etiqueta_pureza})\n📈 {xp_ganada} XP", inline=False)
         
     elif game.status == "Explotado":
         embed.description = "💥 **¡BOOOM!** El nivel de inestabilidad superó el límite."

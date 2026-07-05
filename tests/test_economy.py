@@ -100,5 +100,50 @@ class TestEconomyService(unittest.TestCase):
         self.assertEqual(from_bal, 0)
         self.assertEqual(to_bal, 0)
 
+class TestHackerFeedback(unittest.TestCase):
+    def test_calcular_feedback_mastermind(self):
+        from src.commands.economy.hacker import _calcular_feedback_mastermind
+        
+        # Exact match
+        self.assertEqual(_calcular_feedback_mastermind("1234", "1234"), "🟩🟩🟩🟩")
+        
+        # Complete mismatch
+        self.assertEqual(_calcular_feedback_mastermind("5678", "1234"), "⬛⬛⬛⬛")
+        
+        # Permutation (all wrong positions)
+        self.assertEqual(_calcular_feedback_mastermind("4321", "1234"), "🟨🟨🟨🟨")
+        
+        # Partial match with repetitions
+        self.assertEqual(_calcular_feedback_mastermind("1122", "1234"), "🟩⬛🟨⬛")
+        
+        # Another test with duplicates
+        self.assertEqual(_calcular_feedback_mastermind("1111", "1213"), "🟩⬛🟩⬛")
+
+class TestCientificoPurity(unittest.TestCase):
+    def test_calcular_bono_pureza(self):
+        from src.commands.economy.cientifico import _calcular_bono_pureza
+        
+        # 0%
+        mult, tag = _calcular_bono_pureza(0)
+        self.assertEqual(mult, 1.5)
+        self.assertEqual(tag, "🌟 Síntesis Perfecta")
+        
+        # 10%
+        mult, tag = _calcular_bono_pureza(10)
+        self.assertEqual(mult, 1.25)
+        self.assertEqual(tag, "💎 Pureza Excelente")
+        
+        # 40%
+        mult, tag = _calcular_bono_pureza(40)
+        self.assertEqual(mult, 1.0)
+        self.assertEqual(tag, "✅ Pureza Aceptable")
+        
+        # 75%
+        mult, tag = _calcular_bono_pureza(75)
+        self.assertEqual(mult, 0.85)
+        self.assertEqual(tag, "🧪 Pureza Baja")
+
 if __name__ == '__main__':
     unittest.main()
+
+
