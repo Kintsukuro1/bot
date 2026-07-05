@@ -209,7 +209,8 @@ def transfer_balance(from_user_id, to_user_id, amount, reason):
         return True, from_new_balance, to_new_balance
 
 def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
-    """Agrega un item al inventario del usuario."""
+    """Agrega un item al inventario del usuario.
+    Usa el ID primario para evitar actualizar múltiples filas duplicadas."""
     from datetime import datetime, timedelta
     try:
         # Si no se proporciona fecha de expiración, decidimos qué hacer según el tipo de ítem
@@ -223,18 +224,21 @@ def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
                 expiry = datetime.now() + timedelta(days=7)
         
         with db_cursor() as cursor:
-            # Verificar si el usuario ya tiene este ítem
-            cursor.execute("SELECT Quantity FROM UserItems WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0", 
-                           (user_id, item_id))
+            # Buscar UNA fila activa por ID primario para evitar duplicados
+            cursor.execute("""
+                SELECT ID FROM UserItems 
+                WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
+                ORDER BY ID ASC LIMIT 1
+            """, (user_id, item_id))
             row = cursor.fetchone()
             
             if row:
-                # El usuario ya tiene este ítem, aumentamos la cantidad
+                # El usuario ya tiene este ítem, aumentamos la cantidad SOLO en esa fila
                 cursor.execute("""
                     UPDATE UserItems 
                     SET Quantity = Quantity + %s
-                    WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
-                """, (quantity, user_id, item_id))
+                    WHERE ID = %s
+                """, (quantity, row[0]))
             else:
                 # El usuario no tiene el ítem, lo insertamos
                 cursor.execute("""
@@ -269,14 +273,16 @@ def usuario_tiene_mejora(user_id, item_id):
     return usuario_tiene_item(user_id, item_id)
 
 def get_user_items(user_id):
-    """Obtiene todos los ítems activos de un usuario."""
+    """Obtiene todos los ítems activos de un usuario.
+    Consolida filas duplicadas del mismo ItemID sumando sus cantidades."""
     try:
         with db_cursor() as cursor:
             cursor.execute("""
-                SELECT ItemID, Quantity, Expiry, Used 
+                SELECT ItemID, SUM(Quantity) as TotalQty, MAX(Expiry) as Expiry, 0 as Used
                 FROM UserItems 
                 WHERE UserID = %s AND Quantity > 0 AND Used = 0
                 AND Expiry > NOW()
+                GROUP BY ItemID
             """, (user_id,))
             
             items = []
@@ -293,16 +299,17 @@ def get_user_items(user_id):
         return []
 
 def usar_item_usuario(user_id, item_id):
-    """Marca un ítem como usado en el inventario del usuario."""
+    """Consume 1 unidad del ítem del inventario del usuario.
+    Usa el ID primario para garantizar que solo se toque una fila."""
     try:
         with db_cursor() as cursor:
-            # Obtenemos la fecha de expiración del item más antiguo para usar en la cláusula WHERE
+            # Seleccionamos la fila específica por ID primario (la más antigua primero)
             cursor.execute("""
-                SELECT Expiry 
+                SELECT ID, Quantity
                 FROM UserItems 
                 WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0
                 AND Expiry > NOW()
-                ORDER BY Expiry
+                ORDER BY Expiry ASC
                 LIMIT 1
             """, (user_id, item_id))
             
@@ -310,16 +317,15 @@ def usar_item_usuario(user_id, item_id):
             if not row:
                 return False
                 
-            expiry_date = row[0]
+            row_id = row[0]
             
-            # Actualizamos el registro usando todos los criterios de búsqueda para garantizar unicidad
+            # Actualizamos SOLO esa fila usando su ID primario
             cursor.execute("""
                 UPDATE UserItems 
                 SET Quantity = Quantity - 1,
                     Used = CASE WHEN Quantity - 1 <= 0 THEN 1 ELSE Used END
-                WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0 
-                AND Expiry = %s
-            """, (user_id, item_id, expiry_date))
+                WHERE ID = %s AND Quantity > 0
+            """, (row_id,))
             return cursor.rowcount > 0
     except Exception as e:
         print(f"Error usando ítem: {e}")
@@ -1285,7 +1291,8 @@ def comprar_boleto_db(user_id, numbers, cost, max_tickets=5):
         return True, new_balance
 
 def comprar_item_tienda(user_id, item_id, precio, expiry):
-    """Compra un ítem de la tienda de forma atómica (saldo + inventario)."""
+    """Compra un ítem de la tienda de forma atómica (saldo + inventario).
+    Usa el ID primario para evitar actualizar múltiples filas duplicadas."""
     with db_cursor() as cursor:
         cursor.execute("""
             UPDATE Users
@@ -1296,17 +1303,20 @@ def comprar_item_tienda(user_id, item_id, precio, expiry):
         if not cursor.fetchone():
             return "no_balance"
 
-        cursor.execute(
-            "SELECT Quantity FROM UserItems WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0",
-            (user_id, item_id),
-        )
+        # Buscar UNA fila activa por ID primario
+        cursor.execute("""
+            SELECT ID FROM UserItems 
+            WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
+            ORDER BY ID ASC LIMIT 1
+        """, (user_id, item_id))
         row = cursor.fetchone()
         if row:
+            # Incrementar SOLO esa fila específica
             cursor.execute("""
                 UPDATE UserItems
                 SET Quantity = Quantity + 1
-                WHERE UserID = %s AND ItemID = %s AND Expiry > NOW() AND Used = 0
-            """, (user_id, item_id))
+                WHERE ID = %s
+            """, (row[0],))
         else:
             cursor.execute("""
                 INSERT INTO UserItems (UserID, ItemID, Quantity, Expiry, Used)
