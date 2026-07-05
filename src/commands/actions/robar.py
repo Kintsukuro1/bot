@@ -17,22 +17,27 @@ from src.utils.robo_progression import (
     calc_xp_needed,
     get_protection_hours,
     calcular_robo_dinamico,
+    get_bad_luck_bonus,
     THIEF_MILESTONES,
     ROBO_COOLDOWN_MINUTES,
 )
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
+# Factor de reducción de cooldown cuando el robo falla (60% del cooldown normal)
+FAIL_COOLDOWN_FACTOR = 0.6
+
 def _get_thief_stats(cursor, user_id, for_update=False):
     lock = " FOR UPDATE" if for_update else ""
     cursor.execute(f"""
         SELECT COALESCE(ThiefLevel, 1), COALESCE(ThiefXP, 0),
-               LastRoboTime, COALESCE(RobosExitosos, 0)
+               LastRoboTime, COALESCE(RobosExitosos, 0),
+               COALESCE(RobosFallidosConsecutivos, 0)
         FROM RoboStats WHERE UserID = %s{lock}
     """, (user_id,))
     row = cursor.fetchone()
     if not row:
-        return 1, 0, None, 0
-    return row[0], row[1], row[2], row[3]
+        return 1, 0, None, 0, 0
+    return row[0], row[1], row[2], row[3], row[4]
 
 def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
     """
@@ -50,7 +55,7 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (ladron_id,))
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (victima_id,))
 
-        thief_level, thief_xp, last_robo, robos_exitosos = _get_thief_stats(cursor, ladron_id, for_update=True)
+        thief_level, thief_xp, last_robo, robos_exitosos, fallos_consecutivos = _get_thief_stats(cursor, ladron_id, for_update=True)
         cooldown_minutes = get_cooldown_minutes(thief_level)
         
         # Verificar cooldown de robo (reducido por nivel)
@@ -106,11 +111,15 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         elif robos_exitosos > 5:
             prob_exito += 1
         
-        # Aplicar dificultad dinámica
+        # Aplicar bonus por racha de mala suerte
+        bad_luck = get_bad_luck_bonus(fallos_consecutivos)
+        prob_exito += bad_luck["prob_bonus"]
+        
+        # Aplicar dificultad dinámica (reducida para robos: ×15 en vez de ×30)
         difficulty_modifier, _ = DynamicDifficulty.calculate_dynamic_difficulty(
             ladron_id, cantidad_a_robar, 'robo'
         )
-        prob_exito -= int(difficulty_modifier * 30)
+        prob_exito -= int(difficulty_modifier * 15)
         prob_exito = max(10, min(90, prob_exito))
         
         # Registrar intento de robo (actualizar cooldown)
@@ -146,6 +155,7 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
             cursor.execute("""
                 UPDATE RoboStats SET 
                 RobosExitosos = COALESCE(RobosExitosos, 0) + 1,
+                RobosFallidosConsecutivos = 0,
                 TotalRobado = COALESCE(TotalRobado, 0) + %s,
                 ThiefLevel = %s,
                 ThiefXP = %s
@@ -186,6 +196,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         else:
             # Penalización dinámica basada en el tier
             penalizacion = int(cantidad_a_robar * (penalizacion_pct / 100))
+            # Aplicar reducción por racha de mala suerte
+            penalizacion = int(penalizacion * bad_luck["penalty_mult"])
             penalizacion = min(penalizacion, saldo_ladron)
             
             nuevo_saldo_ladron = saldo_ladron - penalizacion
@@ -200,14 +212,19 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
             xp_perdida = calc_xp_from_robbery(cantidad_a_robar)
             xp_result = remove_thief_xp(thief_level, thief_xp, xp_perdida)
 
+            # Cooldown reducido al fallar: retroceder el LastRoboTime para acortar la espera
+            cooldown_actual = get_cooldown_minutes(xp_result["level"])
+            reduccion_secs = int(cooldown_actual * 60 * (1 - FAIL_COOLDOWN_FACTOR))
             cursor.execute("""
                 UPDATE RoboStats SET 
                 RobosFallidos = COALESCE(RobosFallidos, 0) + 1,
+                RobosFallidosConsecutivos = COALESCE(RobosFallidosConsecutivos, 0) + 1,
                 TotalPerdido = COALESCE(TotalPerdido, 0) + %s,
                 ThiefLevel = %s,
-                ThiefXP = %s
+                ThiefXP = %s,
+                LastRoboTime = CURRENT_TIMESTAMP - INTERVAL '%s seconds'
                 WHERE UserID = %s
-            """, (penalizacion, xp_result["level"], xp_result["xp"], ladron_id))
+            """, (penalizacion, xp_result["level"], xp_result["xp"], reduccion_secs, ladron_id))
             
             # Registrar en log
             cursor.execute("""
@@ -215,19 +232,23 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
                 VALUES (%s, %s, %s, FALSE)
             """, (ladron_id, victima_id, 0))
             
+            cooldown_efectivo = cooldown_actual * FAIL_COOLDOWN_FACTOR
+            
             return 'fail', {
                 'penalizacion': penalizacion,
                 'nuevo_saldo_ladron': nuevo_saldo_ladron,
-                'xp_perdida': xp_perdida,
+                'xp_perdida': xp_result["xp_lost"],
                 'thief_level': xp_result["level"],
                 'thief_xp': xp_result["xp"],
                 'xp_for_next': xp_result["xp_for_next"],
                 'leveled_down': xp_result["leveled_down"],
                 'previous_level': xp_result["previous_level"],
                 'rank': xp_result["rank"],
-                'cooldown_minutes': get_cooldown_minutes(xp_result["level"]),
+                'cooldown_minutes': cooldown_efectivo,
                 'robo_params': robo_params,
                 'prob_exito_final': int(prob_exito),
+                'bad_luck_desc': bad_luck["descripcion"],
+                'fallos_consecutivos': fallos_consecutivos + 1,
             }
 
 class Robar(commands.Cog):
@@ -466,23 +487,32 @@ class Robar(commands.Cog):
                     value=f"{data['penalizacion']:,} monedas ({robo_params['penalizacion_pct']}% del botín)",
                     inline=False
                 )
-                embed_fracaso.add_field(name="XP Perdida", value=f"-{data['xp_perdida']:,} XP", inline=True)
+                embed_fracaso.add_field(name="XP Perdida", value=f"-{data['xp_perdida']:,} XP (tu nivel está protegido)", inline=True)
                 embed_fracaso.add_field(
                     name="Tu Rango",
                     value=f"**{data['rank']}** (Nv. {data['thief_level']})",
                     inline=True
                 )
-                if data.get('leveled_down'):
-                    embed_fracaso.add_field(
-                        name="📉 Bajaste de Nivel",
-                        value=f"Caíste del nivel **{data['previous_level']}** al **{data['thief_level']}**.\nNuevo rango: **{data['rank']}**",
-                        inline=False
-                    )
-                elif data.get('xp_for_next', 0) > 0:
+                if data.get('xp_for_next', 0) > 0:
                     bar = format_progress_bar(data['thief_xp'], data['xp_for_next'])
                     embed_fracaso.add_field(
                         name="Progreso",
                         value=f"`{bar}` {data['thief_xp']:,}/{data['xp_for_next']:,} XP",
+                        inline=False
+                    )
+                # Mostrar bonus de racha de mala suerte si aplica
+                bad_luck_desc = data.get('bad_luck_desc')
+                next_bad_luck = get_bad_luck_bonus(data.get('fallos_consecutivos', 0))
+                if bad_luck_desc:
+                    embed_fracaso.add_field(
+                        name="🍀 Bonus Activo",
+                        value=bad_luck_desc,
+                        inline=False
+                    )
+                elif next_bad_luck["descripcion"]:
+                    embed_fracaso.add_field(
+                        name="🍀 Próximo Intento",
+                        value=next_bad_luck["descripcion"],
                         inline=False
                     )
                 embed_fracaso.add_field(name="Nuevo Saldo", value=f"{data['nuevo_saldo_ladron']:,} monedas", inline=True)
