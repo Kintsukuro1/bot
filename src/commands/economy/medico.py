@@ -1,10 +1,23 @@
 import discord
 import asyncio
 import random
+import unicodedata
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 from .job_fx import fase_previa_trabajo
+
+def _normalizar(texto: str) -> str:
+    texto = texto.strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in texto if not unicodedata.combining(c))
+
+VARIANTES_ACEPTADAS = {
+    "bisturi": ["bisturí", "bisturi", "cuchillo", "cortador", "escalpelo"],
+    "anestesia": ["anestesia", "sedante", "jeringa", "inyección", "inyeccion"],
+    "vendaje": ["vendaje", "venda", "gasa", "curita", "parche"],
+    "desfibrilador": ["desfibrilador", "electrochoque", "desfi", "choque", "paletas"]
+}
 
 HERRAMIENTAS = {
     "bisturi": {"nombre": "Bisturí", "emoji": "🔪"},
@@ -69,6 +82,7 @@ class DiagnosticoView(discord.ui.View):
         self.herramienta_correcta = herramienta_correcta
         self.resultado = None
         self.answered = False
+        self.herramientas_aceptadas = VARIANTES_ACEPTADAS.get(herramienta_correcta, [herramienta_correcta])
 
     @discord.ui.button(label="🗣️ Dar Diagnóstico", style=discord.ButtonStyle.primary)
     async def diagnosticar(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -101,9 +115,25 @@ class DiagnosticoModal(discord.ui.Modal, title="Diagnóstico de Emergencia"):
         self.view_padre = view_padre
 
     async def on_submit(self, interaction: discord.Interaction):
-        texto = self.respuesta.value.strip().lower()
+        texto_normalizado = _normalizar(self.respuesta.value)
+        herramienta_correcta_normalizada = _normalizar(self.view_padre.herramienta_correcta)
+
         self.view_padre.answered = True
-        self.view_padre.resultado = self.view_padre.herramienta_correcta in texto
+
+        # Permite variantes aceptadas definidas en la vista padre (si existen),
+        # además de la herramienta principal.
+        herramientas_aceptadas = getattr(self.view_padre, "herramientas_aceptadas", None)
+        if herramientas_aceptadas:
+            herramientas_normalizadas = {
+                _normalizar(herramienta) for herramienta in herramientas_aceptadas
+            }
+            herramientas_normalizadas.add(herramienta_correcta_normalizada)
+            self.view_padre.resultado = any(
+                herramienta in texto_normalizado for herramienta in herramientas_normalizadas
+            )
+        else:
+            self.view_padre.resultado = herramienta_correcta_normalizada in texto_normalizado
+
         for item in self.view_padre.children:
             item.disabled = True
         await interaction.response.edit_message(view=self.view_padre)

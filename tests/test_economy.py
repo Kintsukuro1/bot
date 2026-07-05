@@ -103,45 +103,91 @@ class TestEconomyService(unittest.TestCase):
 class TestHackerFeedback(unittest.TestCase):
     def test_calcular_feedback_mastermind(self):
         from src.commands.economy.hacker import _calcular_feedback_mastermind
-        
+
         # Exact match
         self.assertEqual(_calcular_feedback_mastermind("1234", "1234"), "🟩🟩🟩🟩")
-        
+
         # Complete mismatch
         self.assertEqual(_calcular_feedback_mastermind("5678", "1234"), "⬛⬛⬛⬛")
-        
+
         # Permutation (all wrong positions)
         self.assertEqual(_calcular_feedback_mastermind("4321", "1234"), "🟨🟨🟨🟨")
-        
+
         # Partial match with repetitions
         self.assertEqual(_calcular_feedback_mastermind("1122", "1234"), "🟩⬛🟨⬛")
-        
+
         # Another test with duplicates
         self.assertEqual(_calcular_feedback_mastermind("1111", "1213"), "🟩⬛🟩⬛")
+
+        # Secret with repeated digits, guess is a permutation with different distribution
+        self.assertEqual(_calcular_feedback_mastermind("2211", "1122"), "🟨🟨🟨🟨")
+
+        # Mixed case: some duplicates are 🟩 and others 🟨 in the same guess
+        self.assertEqual(_calcular_feedback_mastermind("1212", "1122"), "🟩🟨🟨🟩")
+
+        # Complex duplicate interaction: limited occurrences cause extra guesses to be ⬛
+        self.assertEqual(_calcular_feedback_mastermind("2211", "1123"), "🟨⬛🟨🟨")
 
 class TestCientificoPurity(unittest.TestCase):
     def test_calcular_bono_pureza(self):
         from src.commands.economy.cientifico import _calcular_bono_pureza
-        
-        # 0%
+
+        # 0% - perfect synthesis
         mult, tag = _calcular_bono_pureza(0)
         self.assertEqual(mult, 1.5)
         self.assertEqual(tag, "🌟 Síntesis Perfecta")
-        
-        # 10%
+
+        # Typical values inside each tier
+        # 10% - excellent purity
         mult, tag = _calcular_bono_pureza(10)
         self.assertEqual(mult, 1.25)
         self.assertEqual(tag, "💎 Pureza Excelente")
-        
-        # 40%
+
+        # 40% - acceptable purity
         mult, tag = _calcular_bono_pureza(40)
         self.assertEqual(mult, 1.0)
         self.assertEqual(tag, "✅ Pureza Aceptable")
-        
-        # 75%
+
+        # 75% - low purity
         mult, tag = _calcular_bono_pureza(75)
         self.assertEqual(mult, 0.85)
         self.assertEqual(tag, "🧪 Pureza Baja")
+
+        # Boundary-value tests around purity thresholds
+
+        # Exactly at 20% → still Excellent
+        mult, tag = _calcular_bono_pureza(20)
+        self.assertEqual(mult, 1.25)
+        self.assertEqual(tag, "💎 Pureza Excelente")
+
+        # Just over 20% → moves to Acceptable
+        mult, tag = _calcular_bono_pureza(21)
+        self.assertEqual(mult, 1.0)
+        self.assertEqual(tag, "✅ Pureza Aceptable")
+
+        # Exactly at 50% → still Acceptable
+        mult, tag = _calcular_bono_pureza(50)
+        self.assertEqual(mult, 1.0)
+        self.assertEqual(tag, "✅ Pureza Aceptable")
+
+        # Just over 50% → Low purity
+        mult, tag = _calcular_bono_pureza(51)
+        self.assertEqual(mult, 0.85)
+        self.assertEqual(tag, "🧪 Pureza Baja")
+
+        # High instability (99%) → Low purity
+        mult, tag = _calcular_bono_pureza(99)
+        self.assertEqual(mult, 0.85)
+        self.assertEqual(tag, "🧪 Pureza Baja")
+
+class TestMedicoDiagnosis(unittest.TestCase):
+    def test_normalizar_texto(self):
+        from src.commands.economy.medico import _normalizar
+        
+        self.assertEqual(_normalizar("bisturí"), "bisturi")
+        self.assertEqual(_normalizar("  Bisturí  "), "bisturi")
+        self.assertEqual(_normalizar("anestesia"), "anestesia")
+        self.assertEqual(_normalizar("INYECCIÓN"), "inyeccion")
 
 if __name__ == '__main__':
     unittest.main()

@@ -37,15 +37,17 @@ class PlanReparacionView(discord.ui.View):
             placeholder=f"¿Qué reparas en el paso {posicion}?",
             min_values=1, max_values=1, options=options
         )
-        select.callback = self._callback
+        async def select_callback(interaction: discord.Interaction):
+            await self._callback(interaction, select)
+        select.callback = select_callback
         self.add_item(select)
 
-    async def _callback(self, interaction: discord.Interaction):
+    async def _callback(self, interaction: discord.Interaction, select: discord.ui.Select):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ No es tu reparación.", ephemeral=True)
             return
 
-        elegido = interaction.data["values"][0]
+        elegido = select.values[0]
         self.orden_elegido.append(elegido)
         self.problemas_restantes.remove(elegido)
         self.last_interaction = interaction
@@ -514,7 +516,7 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     return nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida
 
 async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
-    \"\"\"Función principal para iniciar el trabajo de mecánico.\"\"\"
+    """Función principal para iniciar el trabajo de mecánico."""
     user_id = interaction.user.id
     tipo_trabajo = 'mecanico'
     
