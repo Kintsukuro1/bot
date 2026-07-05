@@ -1830,3 +1830,7 @@ def obtener_ranking_trabajo(job_type, limit=10):
             LIMIT %s
         """, (job_type, limit))
         return cursor.fetchall()
+
+# Alias for compatibility with Mejoras files
+consumir_energia_atomico = consumir_energia
+

@@ -5,7 +5,39 @@ import time
 from src.db import get_balance, set_balance, registrar_transaccion, deduct_balance
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
-from .job_fx import tal_vez_cliente_especial
+from .job_fx import fase_previa_trabajo
+
+def _barra_alarma(fraccion: float) -> str:
+    """Genera una barra visual de 10 segmentos que se llena de rojo a
+    medida que sube el nivel de alarma (fraccion entre 0.0 y 1.0)."""
+    fraccion = max(0.0, min(1.0, fraccion))
+    llenos = int(fraccion * 10)
+    return "🟥" * llenos + "⬛" * (10 - llenos)
+
+async def _correr_alarma_en_vivo(editar_callback, embed_base: discord.Embed, hack_view: "LadronHackView", segundos_totales: float):
+    """Tarea de fondo: mientras el usuario intenta introducir el PIN, edita
+    el mensaje cada ~1.5s para mostrar cómo sube el nivel de alarma. Se
+    cancela sola en cuanto el usuario responde o se acaba el tiempo.
+
+    `editar_callback` es una función async que recibe un embed y lo aplica
+    (normalmente `interaction.edit_original_response`)."""
+    transcurrido = 0.0
+    intervalo = 1.5
+    try:
+        while not hack_view.is_finished() and transcurrido < segundos_totales:
+            await asyncio.sleep(intervalo)
+            transcurrido += intervalo
+            if hack_view.is_finished():
+                break
+            fraccion = min(1.0, transcurrido / segundos_totales)
+            embed_vivo = embed_base.copy()
+            embed_vivo.add_field(name="🚨 Nivel de Alarma", value=_barra_alarma(fraccion), inline=False)
+            try:
+                await editar_callback(embed=embed_vivo, view=hack_view)
+            except (discord.NotFound, discord.HTTPException):
+                return
+    except asyncio.CancelledError:
+        pass
 
 class LadronModal(discord.ui.Modal, title="Hackeo de Bóveda"):
     codigo_input = discord.ui.TextInput(
@@ -141,7 +173,7 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         )
         return
 
-    await tal_vez_cliente_especial(latest_interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(latest_interaction, user_id, tipo_trabajo)
     
     len_pin = 4 if tiene_penetracion else 5
     pin_secreto = "".join([str(random.randint(0, 9)) for _ in range(len_pin)])
@@ -166,7 +198,15 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         hack_view = LadronHackView(user_id, 20)
         await latest_interaction.edit_original_response(embed=embed_oculto, view=hack_view)
         
+        tarea_alarma = asyncio.create_task(
+            _correr_alarma_en_vivo(latest_interaction.edit_original_response, embed_oculto, hack_view, 20)
+        )
         await hack_view.wait()
+        tarea_alarma.cancel()
+        try:
+            await tarea_alarma
+        except asyncio.CancelledError:
+            pass
         if hack_view.last_interaction:
             latest_interaction = hack_view.last_interaction
         respuesta_correcta = pin_secreto
@@ -185,7 +225,15 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
         start_time = time.time()
         await latest_interaction.edit_original_response(embed=embed_juego, view=hack_view)
         
+        tarea_alarma = asyncio.create_task(
+            _correr_alarma_en_vivo(latest_interaction.edit_original_response, embed_juego, hack_view, 10)
+        )
         await hack_view.wait()
+        tarea_alarma.cancel()
+        try:
+            await tarea_alarma
+        except asyncio.CancelledError:
+            pass
         if hack_view.last_interaction:
             latest_interaction = hack_view.last_interaction
             

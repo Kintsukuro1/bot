@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -9,7 +9,80 @@ from .niveles_trabajo import (
     get_nivel_trabajo,
     TIPOS_TRABAJO
 )
+from .job_fx import fase_previa_trabajo
 import asyncio
+
+TOTAL_TICKS_EMPLATADO = 10
+INTERVALO_EMPLATADO = 0.6
+
+def _barra_emplatado(tick_actual: int, zona_centro: int, total_ticks: int = TOTAL_TICKS_EMPLATADO) -> str:
+    """Dibuja una barra de 10 casillas: la zona verde (el punto justo para
+    emplatar) y un marcador que avanza solo con el tiempo."""
+    segmentos = []
+    for i in range(total_ticks):
+        en_zona = abs(i - zona_centro) <= 1
+        if i == tick_actual:
+            segmentos.append("🔥")
+        elif en_zona:
+            segmentos.append("🟩")
+        else:
+            segmentos.append("⬜")
+    return "".join(segmentos)
+
+
+class EmplatadoView(discord.ui.View):
+    """QTE de emplatado: una marca recorre una barra sola (edición automática
+    del mensaje) y hay que presionar el botón justo cuando pasa por la zona
+    verde. Afecta la recompensa final con un multiplicador propio, aparte
+    del ingrediente secreto y la temperatura."""
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=TOTAL_TICKS_EMPLATADO * INTERVALO_EMPLATADO + 5)
+        self.user_id = user_id
+        self.zona_centro = random.randint(2, TOTAL_TICKS_EMPLATADO - 3)
+        self.tick_actual = 0
+        self.resuelto = False
+        self.multiplicador = 1.0
+        self.feedback = ""
+        self.last_interaction = None
+
+    @discord.ui.button(label="🔥 ¡Sacar del fuego!", style=discord.ButtonStyle.danger)
+    async def sacar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ No es tu plato.", ephemeral=True)
+            return
+        if self.resuelto:
+            await interaction.response.defer()
+            return
+
+        self.resuelto = True
+        distancia = abs(self.tick_actual - self.zona_centro)
+        if distancia == 0:
+            self.multiplicador = 1.3
+            self.feedback = "🎯 **¡Punto perfecto de emplatado!** (x1.3 a la recompensa)"
+        elif distancia == 1:
+            self.multiplicador = 1.05
+            self.feedback = "✅ **Buen momento para emplatar.** (x1.05 a la recompensa)"
+        elif distancia == 2:
+            self.multiplicador = 0.85
+            self.feedback = "😕 **Un poco tarde/temprano.** (x0.85 a la recompensa)"
+        else:
+            self.multiplicador = 0.6
+            self.feedback = "🔥 **¡Se pasó de cocción!** (x0.6 a la recompensa)"
+
+        button.disabled = True
+        self.last_interaction = interaction
+        await interaction.response.defer()
+        self.stop()
+
+    async def on_timeout(self):
+        if not self.resuelto:
+            self.resuelto = True
+            self.multiplicador = 0.5
+            self.feedback = "💀 **¡Se te quemó el plato por completo!** (x0.5 a la recompensa)"
+            for item in self.children:
+                item.disabled = True
+
 
 class SecretIngredientSelect(discord.ui.Select):
     def __init__(self):
@@ -48,6 +121,8 @@ class ChefView(discord.ui.View):
         
         self.ingrediente_secreto_seleccionado = "ninguno"
         self.temperatura = "Media"
+        self.emplatado_multiplicador = 1.0
+        self.emplatado_feedback = ""
         
         # Desbloqueos interactivos por nivel
         if self.nivel >= 5:
@@ -126,7 +201,53 @@ class ChefView(discord.ui.View):
             await self._actualizar_mensaje(interaction, "⚠️ **Necesitas al menos 2 ingredientes para cocinar!**")
             return
         
+        await self._correr_emplatado(interaction)
         await self._evaluar_plato(interaction)
+
+    async def _correr_emplatado(self, interaction):
+        """Muestra el QTE de emplatado: una marca recorre la barra sola y hay
+        que presionar en el momento justo. Guarda el resultado en
+        self.emplatado_multiplicador para que _evaluar_plato lo use."""
+        qte_view = EmplatadoView(self.user.id)
+        embed_qte = discord.Embed(
+            title="🔥 ¡Momento de emplatar!",
+            description=(
+                f"{_barra_emplatado(qte_view.tick_actual, qte_view.zona_centro)}\n\n"
+                "Presiona el botón justo cuando la llama 🔥 esté sobre la zona verde 🟩."
+            ),
+            color=discord.Color.orange()
+        )
+        await interaction.edit_original_response(embed=embed_qte, view=qte_view)
+
+        async def _avanzar():
+            while not qte_view.is_finished() and qte_view.tick_actual < TOTAL_TICKS_EMPLATADO - 1:
+                await asyncio.sleep(INTERVALO_EMPLATADO)
+                if qte_view.is_finished():
+                    break
+                qte_view.tick_actual += 1
+                embed_tick = discord.Embed(
+                    title="🔥 ¡Momento de emplatar!",
+                    description=(
+                        f"{_barra_emplatado(qte_view.tick_actual, qte_view.zona_centro)}\n\n"
+                        "Presiona el botón justo cuando la llama 🔥 esté sobre la zona verde 🟩."
+                    ),
+                    color=discord.Color.orange()
+                )
+                try:
+                    await interaction.edit_original_response(embed=embed_tick, view=qte_view)
+                except (discord.NotFound, discord.HTTPException):
+                    return
+
+        tarea = asyncio.create_task(_avanzar())
+        await qte_view.wait()
+        tarea.cancel()
+        try:
+            await tarea
+        except asyncio.CancelledError:
+            pass
+
+        self.emplatado_multiplicador = qte_view.multiplicador
+        self.emplatado_feedback = qte_view.feedback
     
     async def _agregar_ingrediente(self, interaction, tipo_ingrediente, emoji):
         if tipo_ingrediente in self.ingredientes_seleccionados:
@@ -236,7 +357,7 @@ class ChefView(discord.ui.View):
         
         controles_txt = (
             "🥕 **Vegetales** | 🥩 **Proteína** | 🌾 **Carbohidratos** | 🧂 **Especias**\n"
-            "👨‍🍳 **Cocinar:** Prepara el plato (mín. 2 ingredientes)"
+            "👨‍🍳 **Cocinar:** Prepara el plato (mín. 2 ingredientes) y activa el QTE de emplatado"
         )
         if self.nivel >= 5:
             controles_txt += "\n✨ **Ingrediente Secreto:** Selecciónalo del menú inferior."
@@ -272,7 +393,7 @@ class ChefView(discord.ui.View):
         tipo_trabajo = 'chef'
         
         recompensa_final, resultado_nivel, has_knife, xp_ganada = await asyncio.to_thread(
-            _completar_chef_db, user_id, tipo_trabajo, self.recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, secreto_xp_bonus, self.preparacion_perfecta
+            _completar_chef_db, user_id, tipo_trabajo, self.recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, self.emplatado_multiplicador, secreto_xp_bonus, self.preparacion_perfecta
         )
         
         # Determinar resultado visual
@@ -319,9 +440,10 @@ class ChefView(discord.ui.View):
                 f"📊 **Puntuación:** {puntuacion}/100\n"
                 f"✅ **Ingredientes correctos:** {correctos}\n"
                 f"❌ **Ingredientes faltantes:** {faltantes}\n"
-                f"➕ **Ingredientes extra:** {extras}\n"
+                f"🛒 **Ingredientes extra:** {extras}\n"
                 f"{secreto_feedback}"
                 f"{temp_feedback}\n"
+                f"{self.emplatado_feedback}\n"
                 f"🌟 **Bonus por nivel:** +{bonificacion_nivel_porcentaje}%\n"
                 f"💰 **Recompensa:** {recompensa_final} monedas{knife_msg}\n\n"
                 f"📊 {info_nivel}\n"
@@ -355,18 +477,20 @@ class ChefView(discord.ui.View):
         except discord.InteractionResponded:
             await interaction.edit_original_response(embed=embed, view=self)
 
-def _completar_chef_db(user_id, tipo_trabajo, recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, secreto_xp_bonus, preparacion_perfecta):
+def _completar_chef_db(user_id, tipo_trabajo, recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, emplatado_multiplier, secreto_xp_bonus, preparacion_perfecta):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
     has_knife = usuario_tiene_mejora(user_id, 7)
     
     multiplicador = puntuacion / 100
-    recompensa_final = int(recompensa_base_con_nivel * multiplicador * secreto_multiplier * temp_multiplier)
+    recompensa_final = int(recompensa_base_con_nivel * multiplicador * secreto_multiplier * temp_multiplier * emplatado_multiplier)
     if has_knife:
         recompensa_final = int(recompensa_final * 1.15)
         
     xp_ganada = int(puntuacion / 5) + secreto_xp_bonus
     if preparacion_perfecta and temp_multiplier >= 1.0:
         xp_ganada += 10
+    if emplatado_multiplier >= 1.3:
+        xp_ganada += 8
     if has_knife:
         xp_ganada = int(xp_ganada * 1.15)
         
@@ -386,7 +510,7 @@ def _iniciar_chef_db(user_id, tipo_trabajo):
     
     energia_consumida = False
     if energia_actual >= energia_requerida:
-        energia_consumida = consumir_energia(user_id, energia_requerida)
+        energia_consumida = consumir_energia_atomico(user_id, energia_requerida)
         
     return nivel_info, energia_actual, energia_requerida, energia_consumida
 
@@ -414,8 +538,7 @@ async def iniciar_trabajo_chef(interaction: discord.Interaction):
 
     if not interaction.response.is_done():
         await interaction.response.defer()
-    from .job_fx import tal_vez_cliente_especial
-    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
     
     # Lista global de platos filtrados por nivel
     platos_todos = [
@@ -615,7 +738,7 @@ async def iniciar_trabajo_chef(interaction: discord.Interaction):
     
     controles_txt = (
         "🥕 **Vegetales** | 🥩 **Proteína** | 🌾 **Carbohidratos** | 🧂 **Especias**\n"
-        "👨‍🍳 **Cocinar:** Prepara el plato (mín. 2 ingredientes)"
+        "👨‍🍳 **Cocinar:** Prepara el plato (mín. 2 ingredientes) y activa el QTE de emplatado"
     )
     if nivel >= 5:
         controles_txt += "\n✨ **Ingrediente Secreto:** Elige una opción en el menú inferior."

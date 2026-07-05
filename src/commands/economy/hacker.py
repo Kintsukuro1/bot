@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia_atomico
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -11,7 +11,36 @@ from .niveles_trabajo import (
     get_resumen_nivel,
     TIPOS_TRABAJO
 )
+from .job_fx import fase_previa_trabajo
 import asyncio
+
+def _calcular_feedback_mastermind(guess: str, secreto: str) -> str:
+    """Compara un intento completo contra el código secreto y devuelve
+    feedback estilo Mastermind, dígito por dígito:
+    🟩 = dígito correcto en la posición correcta
+    🟨 = dígito correcto pero en otra posición
+    ⬛ = dígito que no aparece en el código
+    Maneja dígitos repetidos correctamente (no sobre-cuenta pistas)."""
+    resultado = [None] * len(secreto)
+    secreto_restante = list(secreto)
+    guess_restante = list(guess)
+
+    for i in range(len(secreto)):
+        if guess_restante[i] == secreto_restante[i]:
+            resultado[i] = '🟩'
+            secreto_restante[i] = None
+            guess_restante[i] = None
+
+    for i in range(len(secreto)):
+        if guess_restante[i] is not None:
+            if guess_restante[i] in secreto_restante:
+                resultado[i] = '🟨'
+                secreto_restante[secreto_restante.index(guess_restante[i])] = None
+            else:
+                resultado[i] = '⬛'
+
+    return ''.join(resultado)
+
 
 class HackerView(discord.ui.View):
     def __init__(self, user, codigo_secreto, recompensa_base, nivel):
@@ -186,7 +215,7 @@ class HackerView(discord.ui.View):
         controles_txt = (
             "🔍 **Escanear:** Revela 1-2 dígitos aleatorios (1 uso)\n"
             f"💻 **Hackear:** Intenta descifrar el siguiente dígito ({hack_pct} éxito){quant_bonus}\n"
-            "🎯 **Adivinar:** Introduce el código completo"
+            "🎯 **Adivinar:** Introduce el código completo y recibe pistas tipo Mastermind (🟩🟨⬛)"
         )
         if self.nivel >= 5:
             controles_txt += "\n⚡ **Bypass Cortafuegos:** Siguiente hackeo tiene 95% éxito (1 uso)"
@@ -306,14 +335,30 @@ class CodigoModal(discord.ui.Modal, title="🎯 Adivinar Código"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
-        if self.codigo.value == self.codigo_correcto:
+        intento = self.codigo.value.strip()
+
+        if len(intento) != len(self.codigo_correcto) or not intento.isdigit():
+            await interaction.response.send_message(
+                f"❌ El código debe tener exactamente {len(self.codigo_correcto)} dígitos numéricos. No gastaste ningún intento.",
+                ephemeral=True
+            )
+            return
+
+        if intento == self.codigo_correcto:
             await self.view._completar_trabajo(interaction, True)
+            return
+
+        feedback = _calcular_feedback_mastermind(intento, self.codigo_correcto)
+        self.view.intentos -= 1
+        if self.view.intentos <= 0:
+            await self.view._completar_trabajo(interaction, False)
         else:
-            self.view.intentos -= 1
-            if self.view.intentos <= 0:
-                await self.view._completar_trabajo(interaction, False)
-            else:
-                await self.view._actualizar_mensaje(interaction, f"❌ **Código incorrecto! Intentos restantes: {self.view.intentos}**")
+            await self.view._actualizar_mensaje(
+                interaction,
+                f"🎯 **Intento:** `{intento}`\n**Pistas:** {feedback}\n"
+                f"🟩 posición correcta · 🟨 dígito correcto, posición equivocada · ⬛ no está en el código\n"
+                f"❌ **Intentos restantes: {self.view.intentos}**"
+            )
 
 def _completar_hacker_db(user_id, tipo_trabajo, recompensa_base, bonus_eficiencia, xp_ganada):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
@@ -333,7 +378,7 @@ def _iniciar_hacker_db(user_id, tipo_trabajo):
     
     energia_consumida = False
     if energia_actual >= energia_requerida:
-        energia_consumida = consumir_energia(user_id, energia_requerida)
+        energia_consumida = consumir_energia_atomico(user_id, energia_requerida)
         
     bonificacion_recompensa = calcular_recompensa(1, user_id, tipo_trabajo) - 1
     bonificacion_energia = calcular_energia_requerida(100, user_id, tipo_trabajo) / 100
@@ -364,8 +409,7 @@ async def iniciar_trabajo_hacker(interaction: discord.Interaction):
 
     if not interaction.response.is_done():
         await interaction.response.defer()
-    from .job_fx import tal_vez_cliente_especial
-    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
     
     # Escalabilidad vertical: Longitud de código y recompensa base por nivel
     if nivel <= 2:

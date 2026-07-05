@@ -1,10 +1,23 @@
 import discord
 import asyncio
 import random
+import unicodedata
 from src.db import get_balance, set_balance, registrar_transaccion
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
-from .job_fx import tal_vez_cliente_especial
+from .job_fx import fase_previa_trabajo
+
+def _normalizar(texto: str) -> str:
+    texto = texto.strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in texto if not unicodedata.combining(c))
+
+VARIANTES_ACEPTADAS = {
+    "bisturi": ["bisturí", "bisturi", "cuchillo", "cortador", "escalpelo"],
+    "anestesia": ["anestesia", "sedante", "jeringa", "inyección", "inyeccion"],
+    "vendaje": ["vendaje", "venda", "gasa", "curita", "parche"],
+    "desfibrilador": ["desfibrilador", "electrochoque", "desfi", "choque", "paletas"]
+}
 
 HERRAMIENTAS = {
     "bisturi": {"nombre": "Bisturí", "emoji": "🔪"},
@@ -58,6 +71,74 @@ class HerramientaMedicaView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
+class DiagnosticoView(discord.ui.View):
+    """Variante sin pistas visuales: en vez de botones con el nombre de cada
+    herramienta, el médico debe escribir en un Modal qué herramienta se
+    necesita. Disponible desde nivel 6, reemplaza una de las 3 fases al azar."""
+
+    def __init__(self, user_id, herramienta_correcta, tiempo_limite):
+        super().__init__(timeout=tiempo_limite)
+        self.user_id = user_id
+        self.herramienta_correcta = herramienta_correcta
+        self.resultado = None
+        self.answered = False
+        self.herramientas_aceptadas = VARIANTES_ACEPTADAS.get(herramienta_correcta, [herramienta_correcta])
+
+    @discord.ui.button(label="🗣️ Dar Diagnóstico", style=discord.ButtonStyle.primary)
+    async def diagnosticar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ No eres parte del equipo médico.", ephemeral=True)
+            return
+        if self.answered:
+            await interaction.response.defer()
+            return
+        await interaction.response.send_modal(DiagnosticoModal(self))
+
+    async def on_timeout(self):
+        if not self.answered:
+            self.answered = True
+            self.resultado = False
+            for item in self.children:
+                item.disabled = True
+
+
+class DiagnosticoModal(discord.ui.Modal, title="Diagnóstico de Emergencia"):
+    respuesta = discord.ui.TextInput(
+        label="¿Qué herramienta se necesita?",
+        placeholder="bisturí / anestesia / vendaje / desfibrilador",
+        required=True,
+        max_length=30
+    )
+
+    def __init__(self, view_padre: "DiagnosticoView"):
+        super().__init__()
+        self.view_padre = view_padre
+
+    async def on_submit(self, interaction: discord.Interaction):
+        texto_normalizado = _normalizar(self.respuesta.value)
+        herramienta_correcta_normalizada = _normalizar(self.view_padre.herramienta_correcta)
+
+        self.view_padre.answered = True
+
+        # Permite variantes aceptadas definidas en la vista padre (si existen),
+        # además de la herramienta principal.
+        herramientas_aceptadas = getattr(self.view_padre, "herramientas_aceptadas", None)
+        if herramientas_aceptadas:
+            herramientas_normalizadas = {
+                _normalizar(herramienta) for herramienta in herramientas_aceptadas
+            }
+            herramientas_normalizadas.add(herramienta_correcta_normalizada)
+            self.view_padre.resultado = any(
+                herramienta in texto_normalizado for herramienta in herramientas_normalizadas
+            )
+        else:
+            self.view_padre.resultado = herramienta_correcta_normalizada in texto_normalizado
+
+        for item in self.view_padre.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self.view_padre)
+        self.view_padre.stop()
+
 async def iniciar_trabajo_medico(interaction: discord.Interaction):
     user_id = interaction.user.id
     tipo_trabajo = "medico"
@@ -83,12 +164,15 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
         )
         return
 
-    await tal_vez_cliente_especial(interaction, user_id, tipo_trabajo)
+    await fase_previa_trabajo(interaction, user_id, tipo_trabajo)
 
     tiempo_limite = 15.0 if nivel >= 5 else 10.0
     fallos_permitidos = 1 if nivel >= 8 else 0
 
     situaciones = random.sample(SITUACIONES_MEDICAS, 3)
+
+    usa_diagnostico_verbal = nivel >= 6
+    indice_diagnostico_verbal = random.randint(0, 2) if usa_diagnostico_verbal else -1
     
     header = get_job_header(user_id, tipo_trabajo)
     embed_principal = discord.Embed(
@@ -100,13 +184,26 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
     await asyncio.sleep(2)
 
     for i, sit in enumerate(situaciones):
+        es_diagnostico_verbal = (i == indice_diagnostico_verbal)
+
+        descripcion_fase = f"**Situación:** {sit['desc']}\n\nRápido, selecciona la herramienta correcta (Tienes {tiempo_limite}s)."
+        if es_diagnostico_verbal:
+            descripcion_fase = (
+                f"**Situación:** {sit['desc']}\n\n"
+                f"🗣️ **Diagnóstico verbal:** No hay botones con nombres esta vez. "
+                f"Escribe qué herramienta se necesita (Tienes {tiempo_limite}s)."
+            )
+
         embed = discord.Embed(
             title=f"⚕️ Fase {i+1}/3 de la Cirugía",
-            description=f"**Situación:** {sit['desc']}\n\nRápido, selecciona la herramienta correcta (Tienes {tiempo_limite}s).",
+            description=descripcion_fase,
             color=discord.Color.blue()
         )
-        
-        view = HerramientaMedicaView(user_id, sit["herramienta"], tiempo_limite)
+
+        if es_diagnostico_verbal:
+            view = DiagnosticoView(user_id, sit["herramienta"], tiempo_limite)
+        else:
+            view = HerramientaMedicaView(user_id, sit["herramienta"], tiempo_limite)
         await msg.edit(embed=embed, view=view)
         await view.wait()
         
