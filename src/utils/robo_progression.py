@@ -92,26 +92,24 @@ def apply_thief_xp(current_level, current_xp, xp_gained):
 
 
 def remove_thief_xp(current_level, current_xp, xp_lost):
+    """Reduce XP al fallar un robo.
+    - Solo se pierde el 50% de la XP que se habría ganado.
+    - NUNCA se baja de nivel: la XP se reduce hasta 0 en el nivel actual.
+    """
     level = max(1, min(current_level, MAX_THIEF_LEVEL))
-    xp = current_xp - xp_lost
     previous_level = level
-    leveled_down = False
-
-    while xp < 0 and level > 1:
-        level -= 1
-        leveled_down = True
-        xp += calc_xp_needed(level)
-
-    xp = max(0, xp)
+    # Solo perder la mitad de la XP
+    effective_loss = max(1, xp_lost // 2)
+    xp = max(0, current_xp - effective_loss)
 
     return {
         "level": level,
         "xp": xp,
         "leveled_up": False,
-        "leveled_down": leveled_down,
+        "leveled_down": False,  # Nunca se baja de nivel
         "previous_level": previous_level,
         "xp_gained": 0,
-        "xp_lost": xp_lost,
+        "xp_lost": effective_loss,
         "xp_for_next": calc_xp_needed(level),
         "rank": get_rank_name(level),
     }
@@ -152,32 +150,32 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
     if ratio > 3.0:
         # Víctima MUCHO más rica — "Golpe al Magnate"
         pct_min, pct_max = 10, 15
-        prob_min, prob_max = 30, 45
-        penal_min, penal_max = 5, 10
+        prob_min, prob_max = 35, 50
+        penal_min, penal_max = 3, 6
         tier_nombre = "Golpe al Magnate"
         tier_emoji = "💎"
         tier_desc = "Objetivo blindado. Alto botín si lo logras."
     elif ratio > 1.5:
         # Víctima más rica — "Asalto Táctico"
         pct_min, pct_max = 7, 10
-        prob_min, prob_max = 40, 55
-        penal_min, penal_max = 10, 15
+        prob_min, prob_max = 45, 58
+        penal_min, penal_max = 6, 10
         tier_nombre = "Asalto Táctico"
         tier_emoji = "🎯"
         tier_desc = "Objetivo con buena seguridad. Riesgo calculado."
     elif ratio > 0.5:
         # Riqueza similar — "Robo Callejero"
         pct_min, pct_max = 5, 8
-        prob_min, prob_max = 45, 55
-        penal_min, penal_max = 15, 20
+        prob_min, prob_max = 48, 58
+        penal_min, penal_max = 8, 12
         tier_nombre = "Robo Callejero"
         tier_emoji = "🔪"
         tier_desc = "Están parejos. El que se descuide pierde."
     else:
         # Víctima más pobre — "Hurto Menor"
         pct_min, pct_max = 2, 5
-        prob_min, prob_max = 55, 70
-        penal_min, penal_max = 25, 35
+        prob_min, prob_max = 60, 72
+        penal_min, penal_max = 12, 18
         tier_nombre = "Hurto Menor"
         tier_emoji = "🐀"
         tier_desc = "Objetivo fácil pero poco botín. ¿Vale la pena el riesgo?"
@@ -195,7 +193,7 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
     # Clampear valores
     porcentaje_robo = max(1.0, min(20.0, porcentaje_robo))
     prob_exito = max(15.0, min(85.0, prob_exito))
-    penalizacion_pct = max(3.0, min(40.0, penalizacion_pct))
+    penalizacion_pct = max(2.0, min(25.0, penalizacion_pct))
 
     return {
         "porcentaje_robo": round(porcentaje_robo, 1),
@@ -212,3 +210,32 @@ def format_progress_bar(current_xp, needed_xp, size=10):
         return "█" * size + " MAX"
     filled = min(size, int((current_xp / needed_xp) * size))
     return "█" * filled + "░" * (size - filled)
+
+
+def get_bad_luck_bonus(fallos_consecutivos):
+    """Calcula bonificaciones por racha de mala suerte.
+    Incentiva a seguir intentando después de varios fallos seguidos.
+
+    Returns:
+        dict con: prob_bonus (int), penalty_mult (float), descripcion (str|None)
+    """
+    if fallos_consecutivos >= 4:
+        return {
+            "prob_bonus": 15,
+            "penalty_mult": 0.50,  # multa reducida al 50%
+            "descripcion": f"💫 Racha de mala suerte ({fallos_consecutivos} fallos): +15% prob, multas -50%",
+        }
+    elif fallos_consecutivos >= 3:
+        return {
+            "prob_bonus": 10,
+            "penalty_mult": 0.75,  # multa reducida al 75%
+            "descripcion": f"💫 Racha de mala suerte ({fallos_consecutivos} fallos): +10% prob, multas -25%",
+        }
+    elif fallos_consecutivos >= 2:
+        return {
+            "prob_bonus": 5,
+            "penalty_mult": 1.0,
+            "descripcion": f"💫 Mala racha ({fallos_consecutivos} fallos): +5% prob",
+        }
+    return {"prob_bonus": 0, "penalty_mult": 1.0, "descripcion": None}
+

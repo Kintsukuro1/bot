@@ -1634,6 +1634,7 @@ def init_db():
                     LastRobadoTime TIMESTAMP,
                     RobosExitosos INT DEFAULT 0,
                     RobosFallidos INT DEFAULT 0,
+                    RobosFallidosConsecutivos INT DEFAULT 0,
                     TotalRobado BIGINT DEFAULT 0,
                     TotalPerdido BIGINT DEFAULT 0,
                     ThiefLevel INT DEFAULT 1,
@@ -1643,6 +1644,7 @@ def init_db():
             """)
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefLevel INT DEFAULT 1")
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefXP BIGINT DEFAULT 0")
+            cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS RobosFallidosConsecutivos INT DEFAULT 0")
             
             # Tabla: RoboLog
             cursor.execute("""

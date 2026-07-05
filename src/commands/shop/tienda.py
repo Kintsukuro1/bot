@@ -13,9 +13,9 @@ from src.utils.cooldowns import ECONOMY_COOLDOWN
 TIENDA = [
     {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`.", "caracteristica": "positiva"},
     {"id": 4, "nombre": "Poción de Enfoque 🧪", "precio": 1000, "descripcion": "Tu siguiente trabajo da +50% de XP. Se consume automáticamente al trabajar.", "caracteristica": "positiva"},
-    {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica tu premio si ganas en slots (1 uso). Se consume automáticamente al ganar.", "caracteristica": "positiva"},
-    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash (apuestas hasta 5.000). Se consume al iniciar la ronda y reembolsa si explota antes de x1.50.", "caracteristica": "positiva"},
-    {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita un derrumbe o rotura de línea (1 uso). Se consume automáticamente al fallar.", "caracteristica": "positiva"},
+    {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica premio al ganar (con debuff 35% de protección). Se consume al ganar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
+    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash. Reembolsa si explota <x1.50 (apuestas hasta 5k). Consumo al inicio. Límite diario de 3 escudos.", "caracteristica": "positiva"},
+    {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita derrumbe/rotura en minería/pesca (1 uso). Se consume al fallar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
     {"id": 11, "nombre": "Special Mute 🔇", "precio": 800, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral"},
     {"id": 12, "nombre": "Escudo Anti-Mute 🛡️", "precio": 1000, "descripcion": "Te protege automáticamente del próximo `/specialmute` lanzado en tu contra (1 uso). Se consume al activarse.", "caracteristica": "positiva"},
 ]
@@ -160,11 +160,31 @@ class Tienda(commands.Cog):
         elif item["id"] == 4:
             msg = "🧪 ¡Has comprado una Poción de Enfoque! Tu siguiente trabajo te dará +50% de XP de manera automática."
         elif item["id"] == 5:
-            msg = "🎟️ ¡Has comprado un Ticket de Suerte Slots! Tu próximo premio ganador en `/slots` se duplicará automáticamente."
+            msg = (
+                "🎟️ ¡Has comprado un Ticket de Suerte Slots!\n\n"
+                "**Condiciones de uso:**\n"
+                "• **Efecto:** Duplica tu premio en `/slots` al ganar.\n"
+                "• **Debuff:** Aplica un debuff de -35% en las ganancias debido a la protección activa.\n"
+                "• **Límite Diario:** Sujeto al límite diario de **3 usos de escudos/tickets** en total (compartido con minería/pesca/crash).\n"
+                "• **Consumo:** Se consume automáticamente al ganar una ronda."
+            )
         elif item["id"] == 6:
-            msg = "🎫 ¡Has comprado un Ticket de Suerte Crash! Si explotas antes de x1.50 en `/crash`, recibirás un reembolso automático."
+            msg = (
+                "🎫 ¡Has comprado un Ticket de Suerte Crash!\n\n"
+                "**Condiciones de uso:**\n"
+                "• **Reembolso:** Si explotas antes de **x1.50** en `/crash`, recibirás el reembolso de tu apuesta.\n"
+                "• **Límite de Apuesta:** Solo protege apuestas de **hasta 5,000 monedas** (inclusive).\n"
+                "• **Límite Diario:** Sujeto al límite diario de **3 usos de escudos** en total (compartido con slots/minería/pesca).\n"
+                "• **Consumo:** Se consume automáticamente al iniciar la ronda de crash."
+            )
         elif item["id"] == 7:
-            msg = "🪬 ¡Has comprado un Amuleto de Protección! Te salvará automáticamente del próximo derrumbe o rotura de línea."
+            msg = (
+                "🪬 ¡Has comprado un Amuleto de Protección!\n\n"
+                "**Condiciones de uso:**\n"
+                "• **Efecto:** Evita pérdidas o penalizaciones por derrumbes o roturas de línea en minería y pesca.\n"
+                "• **Límite Diario:** Sujeto al límite diario de **3 usos de escudos** en total (compartido con slots/crash).\n"
+                "• **Consumo:** Se consume automáticamente al fallar."
+            )
         elif item["id"] == 11:
             msg = "🔇 ¡Has comprado un Special Mute! Puedes usar `/specialmute` una vez para silenciar a un miembro."
         elif item["id"] == 12:
