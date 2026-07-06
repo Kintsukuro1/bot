@@ -57,8 +57,8 @@ class RRLobbyView(discord.ui.View):
 
     @discord.ui.button(label="Agregar Bala", style=discord.ButtonStyle.secondary, emoji="➕", custom_id="btn_add_bullet")
     async def btn_add_bullet(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.bullets >= 5:
-            await interaction.response.send_message("El cargador no puede tener más de 5 balas.", ephemeral=True)
+        if self.bullets >= 6:
+            await interaction.response.send_message("El cargador no puede tener más de 6 balas.", ephemeral=True)
             return
 
         new_bullets = self.bullets + 1
