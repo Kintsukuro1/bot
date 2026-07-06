@@ -44,6 +44,7 @@ class RouletteView(discord.ui.View):
         self.bet_amount = bet_amount
         self.difficulty_modifier = difficulty_modifier
         self.balance = balance
+        self.spinning = False
         self.add_item(RouletteBetSelect())
         self.message = None
 
@@ -81,75 +82,125 @@ class RouletteView(discord.ui.View):
         return 0.0
 
     async def process_spin(self, interaction: discord.Interaction, bet_type: str):
+        # Evitar condiciones de carrera y dobles clics
+        if self.spinning:
+            try:
+                await interaction.response.send_message("⚠️ Ya hay un giro en proceso. Por favor, espera a que termine.", ephemeral=True)
+            except Exception:
+                pass
+            return
+        
+        self.spinning = True
+        self.stop()  # Cancelar el timeout de la vista para evitar doble reembolso
+
         # Deshabilitar vista
         for item in self.children:
             item.disabled = True
             
         embed = interaction.message.embeds[0]
         embed.description = f"Has apostado **{self.bet_amount}** a **{bet_type}**.\n\n🎡 La ruleta está girando..."
-        await interaction.response.edit_message(embed=embed, view=self)
         
-        # Simular giro
-        await asyncio.sleep(2)
-        
-        # Tirar número
-        winning_number = random.randint(0, 36)
-
-        # Evaluar color del número ganador
-        if winning_number == 0:
-            win_color = "🟢"
-        elif winning_number in RED_NUMBERS:
-            win_color = "🔴"
-        else:
-            win_color = "⚫"
-        
-        # Determinar resultado del giro (100% justo y reproducible)
-        multiplier = self.check_win(bet_type, winning_number)
-
-        # Ajuste de dificultad a las ganancias de ruleta
-        mult_adjustment = 1.0 - (self.difficulty_modifier * 0.15)
-        mult_adjustment = max(0.80, min(1.20, mult_adjustment))
-        winnings = int(self.bet_amount * multiplier * mult_adjustment)
-        profit = winnings - self.bet_amount
-
-        if multiplier > 0:
-            # Gana
-            nuevo_saldo = self.balance + winnings
-            await asyncio.to_thread(add_balance, self.user_id, winnings)
-            await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Ruleta: Ganó apostando a {bet_type}")
-            await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'win', profit, self.difficulty_modifier, nuevo_saldo)
+        try:
+            await interaction.response.edit_message(embed=embed, view=self)
+        except Exception:
             try:
-                await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, profit)
+                await interaction.message.edit(embed=embed, view=self)
             except Exception:
                 pass
+        
+        try:
+            # Simular giro
+            await asyncio.sleep(2)
             
-            embed.color = discord.Color.green()
-            embed.title = "🎰 Ruleta - ¡Ganaste!"
-            embed.description = (
-                f"La bola cayó en: **{win_color} {winning_number}**\n\n"
-                f"Multiplicador: **x{multiplier}**\n"
-                f"Premio: **{winnings}** monedas (Beneficio: **+{profit}**)\n"
-                f"Nuevo saldo: **{nuevo_saldo}**"
-            )
-        else:
-            # Pierde
-            nuevo_saldo = self.balance
-            await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet_amount, f"Ruleta: Perdió apostando a {bet_type}")
-            await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
-            try:
-                await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, 0)
-            except Exception:
-                pass
-            
-            embed.color = discord.Color.red()
-            embed.title = "🎰 Ruleta - Perdiste"
-            embed.description = (
-                f"La bola cayó en: **{win_color} {winning_number}**\n\n"
-                f"Perdiste **{self.bet_amount}** monedas.\n"
-                f"Nuevo saldo: **{nuevo_saldo}**"
-            )
+            # Tirar número
+            winning_number = random.randint(0, 36)
 
-        await interaction.message.edit(embed=embed, view=self)
+            # Evaluar color del número ganador
+            if winning_number == 0:
+                win_color = "🟢"
+            elif winning_number in RED_NUMBERS:
+                win_color = "🔴"
+            else:
+                win_color = "⚫"
+            
+            # Determinar resultado del giro (100% justo y reproducible)
+            multiplier = self.check_win(bet_type, winning_number)
+
+            # Ajuste de dificultad a las ganancias de ruleta
+            mult_adjustment = 1.0 - (self.difficulty_modifier * 0.15)
+            mult_adjustment = max(0.80, min(1.20, mult_adjustment))
+            winnings = int(self.bet_amount * multiplier * mult_adjustment)
+            profit = winnings - self.bet_amount
+
+            if multiplier > 0:
+                # Gana
+                nuevo_saldo = self.balance + winnings
+                await asyncio.to_thread(add_balance, self.user_id, winnings)
+                await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Ruleta: Ganó apostando a {bet_type}")
+                await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'win', profit, self.difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, profit)
+                except Exception:
+                    pass
+                
+                embed.color = discord.Color.green()
+                embed.title = "🎰 Ruleta - ¡Ganaste!"
+                embed.description = (
+                    f"La bola cayó en: **{win_color} {winning_number}**\n\n"
+                    f"Multiplicador: **x{multiplier}**\n"
+                    f"Premio: **{winnings}** monedas (Beneficio: **+{profit}**)\n"
+                    f"Nuevo saldo: **{nuevo_saldo}**"
+                )
+            else:
+                # Pierde
+                nuevo_saldo = self.balance
+                await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet_amount, f"Ruleta: Perdió apostando a {bet_type}")
+                await asyncio.to_thread(record_game_result, self.user_id, 'roulette', self.bet_amount, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, 0)
+                except Exception:
+                    pass
+                
+                embed.color = discord.Color.red()
+                embed.title = "🎰 Ruleta - Perdiste"
+                embed.description = (
+                    f"La bola cayó en: **{win_color} {winning_number}**\n\n"
+                    f"Perdiste **{self.bet_amount}** monedas.\n"
+                    f"Nuevo saldo: **{nuevo_saldo}**"
+                )
+
+            # Intentar editar el mensaje final
+            try:
+                await interaction.edit_original_response(embed=embed, view=self)
+            except Exception:
+                try:
+                    await interaction.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"Error crítico en Ruleta (process_spin): {e}")
+            try:
+                # Reembolsar apuesta en caso de error inesperado
+                await asyncio.to_thread(add_balance, self.user_id, self.bet_amount)
+                await asyncio.to_thread(registrar_transaccion, self.user_id, 0, "Ruleta: Reembolso por error de sistema")
+            except Exception as db_err:
+                print(f"Error al intentar reembolsar tras fallo en Ruleta: {db_err}")
+
+            embed.color = discord.Color.orange()
+            embed.title = "⚠️ Ruleta - Mesa Cerrada"
+            embed.description = (
+                f"Ocurrió un error inesperado al procesar el giro de la ruleta.\n"
+                f"**Tu apuesta de {self.bet_amount} monedas ha sido devuelta.**"
+            )
+            
+            try:
+                await interaction.edit_original_response(embed=embed, view=self)
+            except Exception:
+                try:
+                    await interaction.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
 
 
 class Roulette(commands.Cog):
@@ -188,7 +239,10 @@ class Roulette(commands.Cog):
         embed.set_footer(text="Haz tus apuestas.")
         
         await interaction.response.send_message(embed=embed, view=view)
-        view.message = await interaction.original_response()
+        try:
+            view.message = await interaction.original_response()
+        except Exception as e:
+            print(f"Error al obtener original_response en roulette: {e}")
 
 async def setup(bot):
     await bot.add_cog(Roulette(bot))
