@@ -259,18 +259,22 @@ class Robar(commands.Cog):
     
     @app_commands.command(name="perfil_ladron", description="Muestra tu nivel, rango y bonificaciones como ladrón.")
     async def perfil_ladron_cmd(self, interaction: discord.Interaction):
-        await self._perfil_ladron_logica(interaction, is_slash=True)
+        await self._perfil_ladron_logica(interaction)
 
     @commands.command(name="perfil_ladron", help="Muestra tu nivel, rango y bonificaciones como ladrón. Uso: !perfil_ladron")
     async def perfil_ladron(self, ctx):
-        await self._perfil_ladron_logica(ctx, is_slash=False)
+        await self._perfil_ladron_logica(ctx)
 
-    async def _perfil_ladron_logica(self, ctx_or_interaction, is_slash: bool = False):
-        if is_slash:
+    async def _perfil_ladron_logica(self, ctx_or_interaction):
+        if isinstance(ctx_or_interaction, discord.Interaction):
             await ctx_or_interaction.response.defer(ephemeral=True)
             user = ctx_or_interaction.user
+            send_func = ctx_or_interaction.followup.send
+            send_kwargs = {"ephemeral": True}
         else:
             user = ctx_or_interaction.author
+            send_func = ctx_or_interaction.send
+            send_kwargs = {}
         
         user_id = user.id
 
@@ -344,10 +348,7 @@ class Robar(commands.Cog):
             inline=False
         )
 
-        if is_slash:
-            await ctx_or_interaction.followup.send(embed=embed, ephemeral=True)
-        else:
-            await ctx_or_interaction.send(embed=embed)
+        await send_func(embed=embed, **send_kwargs)
 
     @app_commands.command(name="robar", description="Intenta robar dinero a otro usuario")
     @app_commands.describe(

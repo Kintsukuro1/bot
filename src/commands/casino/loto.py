@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 import random
 import logging
+import os
 from datetime import datetime, time, timedelta
 from typing import Optional
 from src.services.lottery_service import LotteryService
@@ -12,21 +13,29 @@ from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 logger = logging.getLogger(__name__)
 
-LOTTO_NOTIFICATION_CHANNEL_ID = 1519533661806923866
+LOTTO_NOTIFICATION_CHANNEL_ID = int(os.getenv('LOTTO_NOTIFICATION_CHANNEL_ID', '1519533661806923866'))
 
-async def send_loto_notification(bot, embed, content=None):
+async def send_loto_notification(
+    bot: commands.Bot,
+    embed: discord.Embed,
+    content: Optional[str] = None,
+) -> None:
     target_channel_id = LOTTO_NOTIFICATION_CHANNEL_ID
     target_channel = bot.get_channel(target_channel_id)
     if not target_channel:
         try:
             target_channel = await bot.fetch_channel(target_channel_id)
-        except Exception as e:
-            logger.error(f"Error al obtener canal de destino loto {target_channel_id}: {e}")
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+            logger.error(
+                f"Error al obtener canal de destino loto {target_channel_id}: {e}"
+            )
             return
     try:
         await target_channel.send(content=content, embed=embed)
-    except Exception as e:
-        logger.error(f"Error enviando mensaje a canal de destino loto {target_channel_id}: {e}")
+    except (discord.Forbidden, discord.HTTPException) as e:
+        logger.error(
+            f"Error enviando mensaje a canal de destino loto {target_channel_id}: {e}"
+        )
 
 
 class Loto(commands.Cog):
