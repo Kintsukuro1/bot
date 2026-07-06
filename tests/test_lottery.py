@@ -140,7 +140,7 @@ class TestLotteryService(unittest.TestCase):
         self.assertTrue(mock_process_db.called)
 
 from unittest.mock import MagicMock, patch, AsyncMock
-from src.commands.casino.loto import Loto
+from src.commands.casino.loto import Loto, LOTTO_NOTIFICATION_CHANNEL_ID
 import discord
 
 class TestLotoCog(unittest.IsolatedAsyncioTestCase):
@@ -156,7 +156,7 @@ class TestLotoCog(unittest.IsolatedAsyncioTestCase):
         def get_channel_side_effect(channel_id):
             if channel_id == 1519413696206737559:
                 return logs_channel
-            elif channel_id == 1519533661806923866:
+            elif channel_id == LOTTO_NOTIFICATION_CHANNEL_ID:
                 return target_channel
             return None
             
@@ -197,7 +197,7 @@ class TestLotoCog(unittest.IsolatedAsyncioTestCase):
         def get_channel_side_effect(channel_id):
             if channel_id == 1519413696206737559:
                 return logs_channel
-            elif channel_id == 1519533661806923866:
+            elif channel_id == LOTTO_NOTIFICATION_CHANNEL_ID:
                 return target_channel
             return None
             
