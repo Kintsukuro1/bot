@@ -16,7 +16,7 @@ TIENDA = [
     {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica premio al ganar (con debuff 35% de protección). Se consume al ganar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
     {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash. Reembolsa si explota <x1.50 (apuestas hasta 5k). Consumo al inicio. Límite diario de 3 escudos.", "caracteristica": "positiva"},
     {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita derrumbe/rotura en minería/pesca (1 uso). Se consume al fallar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
-    {"id": 11, "nombre": "Special Mute 🔇", "precio": 800, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral"},
+    {"id": 11, "nombre": "Special Mute 🔇", "precio": 3000, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral"},
     {"id": 12, "nombre": "Escudo Anti-Mute 🛡️", "precio": 1000, "descripcion": "Te protege automáticamente del próximo `/specialmute` lanzado en tu contra (1 uso). Se consume al activarse.", "caracteristica": "positiva"},
 ]
 

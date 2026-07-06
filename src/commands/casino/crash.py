@@ -124,7 +124,7 @@ class Crash(commands.Cog):
 
 class CrashView(discord.ui.View):
     def __init__(self, ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation="", ticket_activo=False):
-        super().__init__(timeout=15)
+        super().__init__(timeout=120)
         self.ctx_or_interaction = ctx_or_interaction
         self.user = user
         self.apuesta = apuesta
@@ -434,8 +434,28 @@ class CrashView(discord.ui.View):
                         pass
                         
         except Exception as e:
-            # En caso de error, marcar como terminado
+            # En caso de error, marcar como terminado y reembolsar
             self.juego_terminado = True
+            print(f"Error crítico en Crash (run_crash): {e}")
+            try:
+                await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
+                await asyncio.to_thread(registrar_transaccion, self.user.id, 0, "Crash: Reembolso por error de sistema")
+            except Exception as db_err:
+                print(f"Error al intentar reembolsar tras fallo en Crash: {db_err}")
+                
+            try:
+                error_embed = discord.Embed(
+                    title="⚠️ Crash - Juego Cancelado",
+                    description=(
+                        f"Ocurrió un error inesperado al procesar el juego de Crash.\n"
+                        f"**Tu apuesta de {self.apuesta} monedas ha sido devuelta.**"
+                    ),
+                    color=discord.Color.orange()
+                )
+                if self.msg:
+                    await self.msg.edit(embed=error_embed, view=self)
+            except Exception:
+                pass
             raise
         finally:
             self.stop()
