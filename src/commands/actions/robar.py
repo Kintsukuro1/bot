@@ -259,8 +259,20 @@ class Robar(commands.Cog):
     
     @app_commands.command(name="perfil_ladron", description="Muestra tu nivel, rango y bonificaciones como ladrón.")
     async def perfil_ladron_cmd(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        user_id = interaction.user.id
+        await self._perfil_ladron_logica(interaction, is_slash=True)
+
+    @commands.command(name="perfil_ladron", help="Muestra tu nivel, rango y bonificaciones como ladrón. Uso: !perfil_ladron")
+    async def perfil_ladron(self, ctx):
+        await self._perfil_ladron_logica(ctx, is_slash=False)
+
+    async def _perfil_ladron_logica(self, ctx_or_interaction, is_slash: bool = False):
+        if is_slash:
+            await ctx_or_interaction.response.defer(ephemeral=True)
+            user = ctx_or_interaction.user
+        else:
+            user = ctx_or_interaction.author
+        
+        user_id = user.id
 
         def _get_profile():
             with db_cursor() as c:
@@ -282,7 +294,7 @@ class Robar(commands.Cog):
         rank = get_rank_name(level)
 
         embed = discord.Embed(
-            title=f"🥷 Perfil de Ladrón — {interaction.user.display_name}",
+            title=f"🥷 Perfil de Ladrón — {user.display_name}",
             description=f"**{rank}** · Nivel **{level}**",
             color=discord.Color.dark_grey()
         )
@@ -332,7 +344,10 @@ class Robar(commands.Cog):
             inline=False
         )
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        if is_slash:
+            await ctx_or_interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await ctx_or_interaction.send(embed=embed)
 
     @app_commands.command(name="robar", description="Intenta robar dinero a otro usuario")
     @app_commands.describe(
