@@ -11,7 +11,7 @@ from src.db import (
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 TIENDA = [
-    {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`.", "caracteristica": "positiva"},
+    {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`. Límite diario de 4 usos.", "caracteristica": "positiva"},
     {"id": 4, "nombre": "Poción de Enfoque 🧪", "precio": 1000, "descripcion": "Tu siguiente trabajo da +50% de XP. Se consume automáticamente al trabajar.", "caracteristica": "positiva"},
     {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica premio al ganar (con debuff 35% de protección). Se consume al ganar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
     {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash. Reembolsa si explota <x1.50 (apuestas hasta 5k). Consumo al inicio. Límite diario de 3 escudos.", "caracteristica": "positiva"},
@@ -44,7 +44,7 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
         if energia_actual >= 100:
             return "energy_full", energia_actual
 
-        # Verificar límites de uso diario de energía (máximo 5 al día)
+        # Verificar límites de uso diario de energía (máximo 4 al día)
         status, time_remaining = check_and_register_energy_use(user_id, 3)
         if status == 'blocked':
             return "blocked", time_remaining

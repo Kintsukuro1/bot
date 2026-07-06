@@ -70,7 +70,7 @@ class CasinoInfo(commands.Cog):
 
         embed.add_field(
             name="🔫 /russian_roulette [entrada]",
-            value="Crea una sala de Ruleta Rusa de hasta 6 jugadores. Sobrevive al arma para llevarte el pozo completo.",
+            value="Crea una sala de Ruleta Rusa de hasta 6 jugadores. Puedes apuntar a otros (si fallas mueres tú), girar el cargador o agregar balas para subir la apuesta. Sobrevive para ganar el pozo.",
             inline=False
         )
         

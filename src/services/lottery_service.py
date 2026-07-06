@@ -107,7 +107,8 @@ class LotteryService:
                 'winners_2': [],
                 'winners_1': [],
                 'total_tickets': 0,
-                'no_tickets': True
+                'no_tickets': True,
+                'participants': []
             }
 
         # 2. Generar números ganadores (4 números únicos del 1 al 25)
@@ -190,6 +191,7 @@ class LotteryService:
             process_lottery_draw_db, winners_data, new_pool, last_draw, next_draw
         )
 
+        participants = list(set(user_id for user_id, _ in tickets))
         return {
             'winning_numbers': winning_numbers,
             'pool': current_pool,
@@ -200,5 +202,6 @@ class LotteryService:
             'winners_1': winners_1,
             'total_tickets': len(tickets),
             'no_tickets': False,
-            'payouts': payouts
+            'payouts': payouts,
+            'participants': participants
         }

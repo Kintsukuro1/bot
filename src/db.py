@@ -333,9 +333,9 @@ def usar_item_usuario(user_id, item_id):
 
 def check_and_register_energy_use(user_id, item_id):
     """
-    Verifica si un usuario puede usar un objeto de energía (máximo 5 usos al día).
+    Verifica si un usuario puede usar un objeto de energía (máximo 4 usos al día).
     Si está bloqueado por cooldown, retorna ('blocked', segundos_restantes).
-    Si supera los 5 usos, inicia un bloqueo de 24 horas y retorna ('blocked_start', 86400).
+    Si supera los 4 usos, inicia un bloqueo de 24 horas y retorna ('blocked_start', 86400).
     De lo contrario, registra el uso y retorna ('ok', None).
     """
     from datetime import datetime, timedelta
@@ -362,8 +362,8 @@ def check_and_register_energy_use(user_id, item_id):
 
             if row:
                 count = row[0]
-                if count >= 5:
-                    # Intento 6 o superior: iniciar bloqueo de 24 horas
+                if count >= 4:
+                    # Intento 5 o superior: iniciar bloqueo de 24 horas
                     blocked_until = datetime.now() + timedelta(hours=24)
                     cursor.execute("""
                         UPDATE DailyItemUsage 

@@ -189,6 +189,68 @@ class TestMedicoDiagnosis(unittest.TestCase):
         self.assertEqual(_normalizar("anestesia"), "anestesia")
         self.assertEqual(_normalizar("INYECCIÓN"), "inyeccion")
 
+class TestEnergyItemUsage(unittest.TestCase):
+    @patch('src.db.db_cursor')
+    def test_check_and_register_energy_use_first_time(self, mock_db_cursor):
+        from src.db import check_and_register_energy_use
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 1. No BlockedUntil row
+        # 2. No UsageCount row (first time)
+        mock_cursor.fetchone.side_effect = [None, None]
+        
+        status, time_remaining = check_and_register_energy_use(123, 3)
+        self.assertEqual(status, 'ok')
+        self.assertIsNone(time_remaining)
+        
+        # Verify insert query was executed
+        mock_cursor.execute.assert_any_call(
+            """
+                    INSERT INTO DailyItemUsage (UserID, ItemID, UsageDate, UsageCount) 
+                    VALUES (%s, %s, CURRENT_DATE, 1)
+                """,
+            (123, 3)
+        )
+
+    @patch('src.db.db_cursor')
+    def test_check_and_register_energy_use_increment(self, mock_db_cursor):
+        from src.db import check_and_register_energy_use
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 1. No BlockedUntil row
+        # 2. UsageCount row with count 2
+        mock_cursor.fetchone.side_effect = [None, (2,)]
+        
+        status, time_remaining = check_and_register_energy_use(123, 3)
+        self.assertEqual(status, 'ok')
+        self.assertIsNone(time_remaining)
+        
+        # Verify update query was executed
+        mock_cursor.execute.assert_any_call(
+            """
+                        UPDATE DailyItemUsage 
+                        SET UsageCount = UsageCount + 1 
+                        WHERE UserID = %s AND ItemID = %s AND UsageDate = CURRENT_DATE
+                    """,
+            (123, 3)
+        )
+
+    @patch('src.db.db_cursor')
+    def test_check_and_register_energy_use_blocked(self, mock_db_cursor):
+        from src.db import check_and_register_energy_use
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 1. No BlockedUntil row
+        # 2. UsageCount row with count 4 (already used 4 times today)
+        mock_cursor.fetchone.side_effect = [None, (4,)]
+        
+        status, time_remaining = check_and_register_energy_use(123, 3)
+        self.assertEqual(status, 'blocked_start')
+        self.assertEqual(time_remaining, 86400)
+
 if __name__ == '__main__':
     unittest.main()
 

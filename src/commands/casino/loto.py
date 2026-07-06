@@ -182,6 +182,20 @@ class Loto(commands.Cog):
             if logs_channel:
                 await logs_channel.send(embed=embed)
             
+            # Enviar a canal específico de notificaciones
+            target_channel_id = 1519533661806923866
+            target_channel = self.bot.get_channel(target_channel_id)
+            if not target_channel:
+                try:
+                    target_channel = await self.bot.fetch_channel(target_channel_id)
+                except Exception as e:
+                    logger.error(f"Error al obtener canal de destino loto {target_channel_id}: {e}")
+            if target_channel:
+                try:
+                    await target_channel.send(embed=embed)
+                except Exception as e:
+                    logger.error(f"Error enviando sorteo sin participantes a canal de destino loto {target_channel_id}: {e}")
+            
             if manual_ctx:
                 if isinstance(manual_ctx, discord.Interaction):
                     await manual_ctx.followup.send(embed=embed)
@@ -244,9 +258,27 @@ class Loto(commands.Cog):
             try:
                 await logs_channel.send(embed=embed)
             except Exception as e:
-                logger.error(f"Error enviando sorteo a canal de logs {LOGS_CHANNEL_ID}: {e}")
+                logger.error(f"Error enviando sorteo a canal de logs: {e}")
             
                 raise
+
+        # 1b. Enviar a canal específico de notificaciones con tags
+        target_channel_id = 1519533661806923866
+        target_channel = self.bot.get_channel(target_channel_id)
+        if not target_channel:
+            try:
+                target_channel = await self.bot.fetch_channel(target_channel_id)
+            except Exception as e:
+                logger.error(f"Error al obtener canal de destino loto {target_channel_id}: {e}")
+        if target_channel:
+            try:
+                participants = results.get('participants', [])
+                content = None
+                if participants:
+                    content = " ".join(f"<@{uid}>" for uid in participants)
+                await target_channel.send(content=content, embed=embed)
+            except Exception as e:
+                logger.error(f"Error enviando sorteo a canal de destino loto {target_channel_id}: {e}")
         # 2. Enviar a canales públicos en los servidores
         for guild in self.bot.guilds:
             target_channel = None

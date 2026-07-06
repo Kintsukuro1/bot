@@ -66,6 +66,7 @@ class TestLotteryService(unittest.TestCase):
         self.assertTrue(results['no_tickets'])
         self.assertEqual(results['pool'], 25000)
         self.assertEqual(results['new_pool'], 25000)
+        self.assertEqual(results['participants'], [])
         # Verificar que se llamó a la base de datos para guardar el estado sin cambios
         self.assertTrue(mock_process_db.called)
 
@@ -109,6 +110,7 @@ class TestLotteryService(unittest.TestCase):
         
         # Dado que se ganó el jackpot, el pozo se reinicia a 10,000
         self.assertEqual(results['new_pool'], 10000)
+        self.assertEqual(set(results['participants']), {111, 222, 333, 444, 555})
         self.assertTrue(mock_process_db.called)
 
     @patch('src.services.lottery_service.get_lottery_state')
@@ -134,7 +136,96 @@ class TestLotteryService(unittest.TestCase):
         # Pozo anterior = 100,000
         # Nuevo pozo = 100,000 - 17,200 = 82,800
         self.assertEqual(results['new_pool'], 82800)
+        self.assertEqual(set(results['participants']), {222, 333, 444})
         self.assertTrue(mock_process_db.called)
+
+from unittest.mock import MagicMock, patch, AsyncMock
+from src.commands.casino.loto import Loto
+import discord
+
+class TestLotoCog(unittest.IsolatedAsyncioTestCase):
+
+    @patch('discord.ext.tasks.loop')
+    async def test_announce_draw_results_with_participants(self, mock_loop):
+        bot = MagicMock()
+        bot.guilds = []
+        
+        logs_channel = AsyncMock()
+        target_channel = AsyncMock()
+        
+        def get_channel_side_effect(channel_id):
+            if channel_id == 1519413696206737559:
+                return logs_channel
+            elif channel_id == 1519533661806923866:
+                return target_channel
+            return None
+            
+        bot.get_channel.side_effect = get_channel_side_effect
+        
+        cog = Loto(bot)
+        
+        results = {
+            'winning_numbers': [5, 10, 15, 20],
+            'pool': 100000,
+            'new_pool': 10000,
+            'winners_4': [111],
+            'winners_3': [],
+            'winners_2': [],
+            'winners_1': [],
+            'total_tickets': 1,
+            'no_tickets': False,
+            'payouts': {111: 100000},
+            'participants': [111, 222]
+        }
+        
+        await cog.announce_draw_results(results)
+        
+        # Verify calls
+        logs_channel.send.assert_called_once()
+        target_channel.send.assert_called_once()
+        call_kwargs = target_channel.send.call_args[1]
+        self.assertEqual(call_kwargs['content'], "<@111> <@222>")
+
+    @patch('discord.ext.tasks.loop')
+    async def test_announce_draw_results_no_participants(self, mock_loop):
+        bot = MagicMock()
+        bot.guilds = []
+        
+        logs_channel = AsyncMock()
+        target_channel = AsyncMock()
+        
+        def get_channel_side_effect(channel_id):
+            if channel_id == 1519413696206737559:
+                return logs_channel
+            elif channel_id == 1519533661806923866:
+                return target_channel
+            return None
+            
+        bot.get_channel.side_effect = get_channel_side_effect
+        
+        cog = Loto(bot)
+        
+        results = {
+            'winning_numbers': [],
+            'pool': 100000,
+            'new_pool': 100000,
+            'winners_4': [],
+            'winners_3': [],
+            'winners_2': [],
+            'winners_1': [],
+            'total_tickets': 0,
+            'no_tickets': True,
+            'participants': []
+        }
+        
+        await cog.announce_draw_results(results)
+        
+        # Verify calls
+        logs_channel.send.assert_called_once()
+        target_channel.send.assert_called_once()
+        _, call_kwargs = target_channel.send.call_args
+        self.assertIsNone(call_kwargs.get('content'))
 
 if __name__ == '__main__':
     unittest.main()
+
