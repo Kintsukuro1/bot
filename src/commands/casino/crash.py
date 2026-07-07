@@ -545,9 +545,10 @@ class CrashView(discord.ui.View):
 
     def _progress_bar_blocks(self, filled, total, explosion=False):
         filled = max(0, min(filled, total))  # Asegurar que esté en rango válido
-        bar = '🟩' * filled + '⬜' * (total - filled)
+        blocks = ['🟩'] * filled + ['⬜'] * (total - filled)
         if explosion and filled > 0:
-            bar = bar[:filled-1] + '💥' + bar[filled:]
+            blocks[filled - 1] = '💥'
+        bar = "".join(blocks)
         return f"[{bar}]"
 
 async def setup(bot):
