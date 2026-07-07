@@ -1797,13 +1797,22 @@ def init_db():
                 )
             """)
 
-            # Drop old table to migrate to new schema if it lacks PrimaryStat
+            # Targeted migration to add missing columns in UserEquipment if it already exists
             cursor.execute("""
-                SELECT 1 FROM information_schema.columns 
-                WHERE table_name = 'userequipment' AND column_name = 'primarystat'
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'userequipment'
+                )
             """)
-            if not cursor.fetchone():
-                cursor.execute("DROP TABLE IF EXISTS UserEquipment CASCADE")
+            table_exists = cursor.fetchone()[0]
+            if table_exists:
+                cursor.execute("""
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'userequipment' AND column_name = 'primarystat'
+                """)
+                if not cursor.fetchone():
+                    cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS PrimaryStat VARCHAR(10) DEFAULT 'ATK'")
+                    cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS PrimaryValue INT DEFAULT 0")
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS UserEquipment (
@@ -2028,19 +2037,23 @@ def get_duel_leaderboard(order_by='wins', limit=10):
     Returns:
         lista de tuplas (UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak)
     """
-    valid_orders = {
-        'wins': 'Wins DESC, CombatLevel DESC',
-        'level': 'CombatLevel DESC, CombatXP DESC',
-    }
-    order_clause = valid_orders.get(order_by, valid_orders['wins'])
     with db_cursor() as cursor:
-        cursor.execute(f"""
-            SELECT UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak
-            FROM CombatStats
-            WHERE Wins + Losses > 0
-            ORDER BY {order_clause}
-            LIMIT %s
-        """, (limit,))
+        if order_by == 'level':
+            cursor.execute("""
+                SELECT UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak
+                FROM CombatStats
+                WHERE Wins + Losses > 0
+                ORDER BY CombatLevel DESC, CombatXP DESC
+                LIMIT %s
+            """, (limit,))
+        else:
+            cursor.execute("""
+                SELECT UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak
+                FROM CombatStats
+                WHERE Wins + Losses > 0
+                ORDER BY Wins DESC, CombatLevel DESC
+                LIMIT %s
+            """, (limit,))
         return cursor.fetchall()
 
 
