@@ -97,8 +97,20 @@ class Crash(commands.Cog):
                 status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id, CRASH_TICKET_ITEM_ID)
                 if status == 'ok' or status == 'blocked_start':
                     ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
-                    if status == 'blocked_start' and ticket_activo:
-                        msg_cooldown_ticket = "⏱️ **Has alcanzado el límite de 3 usos diarios de Ticket.** Cooldown de 24h iniciado."
+                    if not ticket_activo:
+                        msg_cooldown_ticket = (
+                            "⚠️ **Ocurrió un problema al usar tu Ticket de Crash.** "
+                            "No se aplicarán sus efectos en esta ronda. Intenta nuevamente más tarde."
+                        )
+                        logger.warning(
+                            "Fallo al consumir crash ticket para user_id=%s. status=%s",
+                            user_id, status
+                        )
+                    elif status == 'blocked_start':
+                        msg_cooldown_ticket = (
+                            "⏱️ **Has alcanzado el límite de 3 usos diarios de Ticket.** "
+                            "Cooldown de 24h iniciado."
+                        )
                 else:
                     hours = time_remaining // 3600
                     minutes = (time_remaining % 3600) // 60
@@ -144,7 +156,7 @@ class CrashView(discord.ui.View):
         self.msg = None
         self.embed = None
         self.current_mult = 1.00  # Empezar en 1.00x
-        self.progress = []  # Para animación visual
+        self.progress_steps = 0  # Para animación visual
         self._state_lock = asyncio.Lock()
 
     async def _get_ganancia_bonus(self) -> float:
@@ -220,7 +232,7 @@ class CrashView(discord.ui.View):
                         f"💵 **Total recibido:** {ganancia_total} monedas\n"
                         f"{resultado}\n"
                         f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n"
-                        f"{self._progress_bar_blocks(min(15, len(self.progress)), 15, explosion=False)}"
+                        f"{self._progress_bar_blocks(min(15, self.progress_steps), 15, explosion=False)}"
                     ),
                     color=color
                 )
@@ -398,7 +410,7 @@ class CrashView(discord.ui.View):
         self.msg = msg
         self.embed = embed
         self.current_mult = 1.00  # Empezar en 1.00x (estándar de Crash)
-        self.progress = []
+        self.progress_steps = 0
         
         explosion = False
         
@@ -441,7 +453,7 @@ class CrashView(discord.ui.View):
                         
                     # Incrementar multiplicador
                     self.current_mult = next_mult
-                    self.progress.append(self.current_mult)
+                    self.progress_steps += 1
                     
                     # Crear barra de progreso visual
                     progress_ratio = min(1.0, self.current_mult / max(self.crash_point, 5.0))
