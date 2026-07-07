@@ -86,7 +86,7 @@ class TrabajoView(discord.ui.View):
         self.user = user
 
     async def _iniciar_trabajo_safe(self, interaction: discord.Interaction, iniciar_func):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await iniciar_func(PatchedInteraction(interaction))
 
     @discord.ui.button(label="💻 Hacker", style=discord.ButtonStyle.primary, emoji="💻", row=0)
@@ -397,7 +397,7 @@ class Trabajo(commands.Cog):
     @app_commands.command(name="trabajo", description="Explora los trabajos disponibles y gana dinero")
     @ECONOMY_COOLDOWN
     async def trabajo(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         user_name = interaction.user.name
         saldo_actual, energia_actual, trabajos = await asyncio.to_thread(
@@ -469,7 +469,7 @@ class Trabajo(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         info_trabajo = TIPOS_TRABAJO[oficio]
         filas = await asyncio.to_thread(obtener_ranking_trabajo, oficio, 10)
 

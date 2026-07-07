@@ -36,7 +36,7 @@ class Energia(commands.Cog):
     @app_commands.command(name="energia", description="Ver tu estado de energía actual")
     async def energia_command(self, interaction: discord.Interaction):
         """Comando para mostrar la energía del usuario."""
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         user_id = interaction.user.id
         
