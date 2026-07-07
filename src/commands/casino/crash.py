@@ -20,9 +20,15 @@ CRASH_TICKET_MAX_BET = 5000
 CRASH_TICKET_ITEM_ID = 6
 
 async def _send_crash_error(ctx_or_interaction, is_slash: bool, message: str):
-    """Envía un mensaje de error de forma efímera para interacciones Slash o normal para comandos de prefijo."""
+    """Envía un mensaje de error para interacciones Slash o normal para comandos de prefijo."""
     if is_slash:
-        await ctx_or_interaction.followup.send(message, ephemeral=True)
+        try:
+            await ctx_or_interaction.edit_original_response(content=message)
+        except Exception:
+            try:
+                await ctx_or_interaction.followup.send(message, ephemeral=True)
+            except Exception:
+                pass
     else:
         await ctx_or_interaction.send(message)
 
@@ -175,35 +181,20 @@ class CrashView(discord.ui.View):
         """
         if interaction is not None:
             try:
-                # Si tenemos un mensaje de juego, lo usamos como fuente de verdad.
-                if self.msg and hasattr(self.msg, "edit"):
-                    await self.msg.edit(embed=embed, view=self)
+                if interaction.response.is_done():
+                    await interaction.edit_original_response(embed=embed, view=self)
                 else:
-                    # Sin self.msg, intentamos editar la respuesta original de la interacción.
-                    try:
-                        if interaction.response.is_done():
-                            await interaction.edit_original_response(embed=embed, view=self)
-                        else:
-                            await interaction.response.edit_message(embed=embed, view=self)
-                    except discord.InteractionResponded:
-                        # Si la interacción ya fue respondida de otra forma, usamos un followup no efímero.
-                        await interaction.followup.send(embed=embed, view=self)
-            except discord.NotFound:
-                # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso no efímero.
-                try:
-                    await interaction.followup.send(embed=embed, view=self)
-                except discord.HTTPException as e:
-                    logger.warning(
-                        "HTTPException al enviar followup final de Crash: %s (status=%s)",
-                        getattr(e, "text", str(e)),
-                        getattr(e, "status", "desconocido"),
-                    )
-            except discord.HTTPException as e:
+                    await interaction.response.edit_message(embed=embed, view=self)
+            except (discord.NotFound, discord.HTTPException, discord.InteractionResponded) as e:
                 logger.warning(
-                    "HTTPException al editar respuesta final de Crash: %s (status=%s)",
-                    getattr(e, "text", str(e)),
-                    getattr(e, "status", "desconocido"),
+                    "Fallo al usar interaction para editar: %s. Reintentando con self.msg.edit",
+                    str(e)
                 )
+                if self.msg and hasattr(self.msg, "edit"):
+                    try:
+                        await self.msg.edit(embed=embed, view=self)
+                    except Exception:
+                        pass
         else:
             try:
                 if self.msg and hasattr(self.msg, 'edit'):
