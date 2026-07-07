@@ -19,7 +19,7 @@ class PatchedInteractionResponse:
             kwargs.pop('delete_after', None)
             msg = await self._patched_interaction.followup.send(*args, **kwargs)
             # Track this message so edit_original_response can target it
-            self._patched_interaction.__dict__['_followup_message'] = msg
+            self._patched_interaction._followup_message = msg
             return msg
         return await self._original.send_message(*args, **kwargs)
 
@@ -30,15 +30,18 @@ class PatchedInteractionResponse:
 
 class PatchedInteraction:
     def __init__(self, original_interaction):
-        self.__dict__['_original'] = original_interaction
-        self.__dict__['_response'] = PatchedInteractionResponse(original_interaction.response, self)
-        self.__dict__['_followup_message'] = None
+        self._original = original_interaction
+        self._response = PatchedInteractionResponse(original_interaction.response, self)
+        self._followup_message = None
 
     def __getattr__(self, name):
         return getattr(self._original, name)
 
     def __setattr__(self, name, value):
-        setattr(self._original, name, value)
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+        else:
+            setattr(self._original, name, value)
 
     @property
     def response(self):
@@ -46,8 +49,8 @@ class PatchedInteraction:
 
     async def edit_original_response(self, **kwargs):
         """If a followup message was created, edit that instead of the original."""
-        if self.__dict__['_followup_message'] is not None:
-            return await self.__dict__['_followup_message'].edit(**kwargs)
+        if self._followup_message is not None:
+            return await self._followup_message.edit(**kwargs)
         return await self._original.edit_original_response(**kwargs)
 
 
