@@ -73,12 +73,16 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         # Obtener una marca de tiempo consistente desde la base de datos para todo el flujo
         cursor.execute("SELECT NOW()")
         ahora_db = cursor.fetchone()[0]
+        if ahora_db and ahora_db.tzinfo is not None:
+            ahora_db = ahora_db.replace(tzinfo=None)
 
         # Inicializar registros de robo si no existen usando ON CONFLICT
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (ladron_id,))
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (victima_id,))
 
         thief_level, thief_xp, last_robo, robos_exitosos, fallos_consecutivos = _get_thief_stats(cursor, ladron_id, for_update=True)
+        if last_robo and last_robo.tzinfo is not None:
+            last_robo = last_robo.replace(tzinfo=None)
         cooldown_minutes = get_cooldown_minutes(thief_level)
         
         # Verificar cooldown de robo (reducido por nivel)
@@ -111,6 +115,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         cursor.execute("SELECT LastRobadoTime FROM RoboStats WHERE UserID = %s", (victima_id,))
         result = cursor.fetchone()
         last_robado = result[0] if result else None
+        if last_robado and last_robado.tzinfo is not None:
+            last_robado = last_robado.replace(tzinfo=None)
         
         if last_robado and ahora_db - last_robado < timedelta(hours=protection_hours):
             tiempo_restante = last_robado + timedelta(hours=protection_hours) - ahora_db

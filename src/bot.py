@@ -115,7 +115,8 @@ async def load_cogs():
         "music": False,  # Música desactivada por defecto
         "shop": True,
         "casino": True,
-        "actions": True
+        "actions": True,
+        "duels": True
     }
     
     # Intentar cargar la configuración

@@ -10,6 +10,9 @@ from discord import app_commands
 import random
 import asyncio
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 from src.db import (
     ensure_user, get_balance, deduct_balance, add_balance,
@@ -51,6 +54,7 @@ class Combatant:
 
         self.max_hp = base["hp"] + effective.get("hp", 0)
         self.hp = self.max_hp
+        self.pre_hit_hp = self.hp
         self.atk = base["atk"] + effective.get("atk", 0)
         self.mag = base["mag"] + effective.get("mag", 0)
         self.def_stat = base["def"] + effective.get("def", 0)
@@ -204,6 +208,7 @@ class DuelView(discord.ui.View):
         # Aplicar Regeneración (regen) al inicio del turno del nuevo jugador activo
         new_cp = self.current_player
         if any(p['id'] == 'regen' for p in new_cp.passives) and new_cp.hp > 0 and new_cp.hp < new_cp.max_hp:
+            new_cp.pre_hit_hp = new_cp.hp
             heal = max(1, int(new_cp.max_hp * 0.03))
             new_cp.hp = min(new_cp.max_hp, new_cp.hp + heal)
             self.action_log.append(f"💚 Regeneración: {new_cp.user.display_name} se cura **{heal}** HP.")
@@ -300,6 +305,7 @@ class DuelView(discord.ui.View):
                 defender.arcane_shield_active = False
                 shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
+            defender.pre_hit_hp = defender.hp
             defender.hp = max(0, defender.hp - damage)
             crit_text = " **¡CRÍTICO!**" if crit else ""
             defend_text = " *(bloqueado parcialmente)*" if defender.is_defending else ""
@@ -307,6 +313,7 @@ class DuelView(discord.ui.View):
             
             # Pasivo: Vampirismo
             if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
+                attacker.pre_hit_hp = attacker.hp
                 heal = max(1, int(damage * 0.08))
                 attacker.hp = min(attacker.max_hp, attacker.hp + heal)
                 log += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
@@ -314,6 +321,7 @@ class DuelView(discord.ui.View):
             # Pasivo: Segundo aliento
             if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
                 defender.hp = 1
+                defender.pre_hit_hp = defender.hp
                 defender.used_second_wind = True
                 log += f"\n💫 Segundo aliento: {defender.user.display_name} sobrevive con 1 HP."
 
@@ -344,6 +352,7 @@ class DuelView(discord.ui.View):
         player = self.current_player
         player.is_defending = True
         heal = calc_defend_heal(player.max_hp)
+        player.pre_hit_hp = player.hp
         player.hp = min(player.max_hp, player.hp + heal)
 
         log = f"🛡️ {player.user.display_name} se defiende y recupera **{heal}** HP"
@@ -402,6 +411,7 @@ class DuelView(discord.ui.View):
                 defender.arcane_shield_active = False
                 shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
+            defender.pre_hit_hp = defender.hp
             defender.hp = max(0, defender.hp - damage)
             cp.special_cooldown = cooldown
             crit_text = " **¡CRÍTICO!**" if crit else ""
@@ -410,6 +420,7 @@ class DuelView(discord.ui.View):
             
             # Pasivo: Vampirismo
             if any(p['id'] == 'vampirism' for p in cp.passives) and damage > 0:
+                cp.pre_hit_hp = cp.hp
                 heal = max(1, int(damage * 0.08))
                 cp.hp = min(cp.max_hp, cp.hp + heal)
                 log += f"\n🧛 Vampirismo: {cp.user.display_name} se cura **{heal}** HP."
@@ -417,6 +428,7 @@ class DuelView(discord.ui.View):
             # Pasivo: Segundo aliento
             if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
                 defender.hp = 1
+                defender.pre_hit_hp = defender.hp
                 defender.used_second_wind = True
                 log += f"\n💫 Segundo aliento: {defender.user.display_name} sobrevive con 1 HP."
 
@@ -448,6 +460,7 @@ class DuelView(discord.ui.View):
 
         if cp.consecutive_timeouts >= 2:
             # 2 timeouts seguidos = derrota automática
+            cp.pre_hit_hp = cp.hp
             cp.hp = 0
             self.game_over = True
             self.action_log.append(f"⏰ {cp.user.display_name} no respondió 2 veces → **Derrota automática**")
@@ -516,8 +529,17 @@ class DuelView(discord.ui.View):
         # Determinar ganador
         if self.p1.hp <= 0 and self.p2.hp <= 0:
             # Ambos murieron (edge case) → gana el que tenía más % HP antes
-            winner = self.p1 if self.p1.hp >= self.p2.hp else self.p2
-            loser = self.p2 if winner == self.p1 else self.p1
+            p1_pct = self.p1.pre_hit_hp / self.p1.max_hp
+            p2_pct = self.p2.pre_hit_hp / self.p2.max_hp
+            if p1_pct > p2_pct:
+                winner, loser = self.p1, self.p2
+            elif p2_pct > p1_pct:
+                winner, loser = self.p2, self.p1
+            else:
+                if random.random() < 0.5:
+                    winner, loser = self.p1, self.p2
+                else:
+                    winner, loser = self.p2, self.p1
         elif self.p1.hp <= 0:
             winner, loser = self.p2, self.p1
         elif self.p2.hp <= 0:
@@ -550,10 +572,13 @@ class DuelView(discord.ui.View):
         )
 
         # ── Log ──
-        await asyncio.to_thread(
-            log_duel, self.p1.user.id, self.p2.user.id, winner.user.id,
-            self.bet, self.turn_count, self.p1.level, self.p2.level
-        )
+        try:
+            await asyncio.to_thread(
+                log_duel, self.p1.user.id, self.p2.user.id, winner.user.id,
+                self.bet, self.turn_count, self.p1.level, self.p2.level
+            )
+        except Exception as e:
+            logger.error(f"Error al registrar log de duelo en DB: {e}", exc_info=True)
 
         # ── Construir embed de resultado ──
         reason = ""
@@ -642,15 +667,42 @@ class DuelView(discord.ui.View):
                 equipment = await asyncio.to_thread(get_user_equipment, player.user.id)
                 current_piece = equipment.get(loot["slot"])
 
-                if channel:
-                    view = LootView(player.user, loot, current_piece)
-                    embed = view.build_embed()
-                    msg = await channel.send(
-                        content=f"🎁 {player.user.mention} — ¡Te ha caído un drop!",
-                        embed=embed,
-                        view=view
+                # Fallback: si no hay canal, intentamos DM al jugador
+                effective_channel = channel
+                if effective_channel is None:
+                    try:
+                        # Aseguramos que exista el DM channel
+                        if player.user.dm_channel is None:
+                            await player.user.create_dm()
+                        effective_channel = player.user.dm_channel
+                    except Exception as exc:
+                        # Como último recurso, registramos un warning y no perdemos la excepción
+                        logger.warning(
+                            "No se pudo resolver canal para enviar drop a %s (id=%s): %r",
+                            getattr(player.user, "name", "desconocido"),
+                            getattr(player.user, "id", "desconocido"),
+                            exc,
+                        )
+                        effective_channel = None
+
+                if effective_channel is None:
+                    # No tenemos forma de entregar el drop visualmente; lo registramos en logs
+                    logger.warning(
+                        "Drop generado para %s (id=%s) pero no se encontró canal para enviarlo. Loot: %s",
+                        getattr(player.user, "name", "desconocido"),
+                        getattr(player.user, "id", "desconocido"),
+                        loot,
                     )
-                    view.message = msg
+                    continue
+
+                view = LootView(player.user, loot, current_piece)
+                embed = view.build_embed()
+                msg = await effective_channel.send(
+                    content=f"🎁 {player.user.mention} — ¡Te ha caído un drop! ({label})",
+                    embed=embed,
+                    view=view,
+                )
+                view.message = msg
 
 
 # ══════════════════════════════════════════════
