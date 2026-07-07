@@ -75,8 +75,9 @@ class Crash(commands.Cog):
         edge = max(0.01, min(0.15, edge))
         
         U = random.random()
-        # Evitar división por cero y evitar valores extremos en la cola
-        U_adj = min(max(U, 1e-6), 0.99)
+        # Evitar división por cero y evitar valores extremos en la cola,
+        # pero sin comprimir en exceso la cola de multiplicadores altos.
+        U_adj = min(max(U, 1e-6), 0.9999)
         
         # Algoritmo clásico y justo de Crash: M = (1 - edge) / (1 - U)
         val = (1.0 - edge) / (1.0 - U_adj)
@@ -246,11 +247,13 @@ class CrashView(discord.ui.View):
                 # Crear barra visual para la explosión
                 progress_ratio = min(1.0, mult_final / max(self.crash_point, 5.0))
                 progress_visual = int(progress_ratio * 15)
+                # Asegurar al menos 1 bloque lleno si explotó, para que se muestre el icono de explosión 💥
+                progress_visual = max(1, progress_visual)
                 bar = self._progress_bar_blocks(progress_visual, 15, explosion=True)
                 
                 # Registrar pérdida o reembolso
                 reembolsado = False
-                if self.ticket_activo and mult_final < 1.50:
+                if self.ticket_activo and mult_final <= 1.50:
                     reembolsado = True
                             
                 if reembolsado:
@@ -264,7 +267,7 @@ class CrashView(discord.ui.View):
                         'refund',
                         self.difficulty_modifier,
                         nuevo_saldo,
-                        f"Crash: Reembolso por Ticket (<1.5x) en x{mult_final:.2f}"
+                        f"Crash: Reembolso por Ticket (<=1.5x) en x{mult_final:.2f}"
                     )
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
@@ -275,7 +278,7 @@ class CrashView(discord.ui.View):
                         title="🛡️ Crash Casino - ¡Salvado por Ticket!",
                         description=(
                             f"💥 ¡El multiplicador explotó en **x{mult_final:.2f}**!\n"
-                            f"🎫 **¡Ticket de Suerte aplicado!** Se reembolsó tu apuesta de {self.apuesta} monedas por explotar antes de x1.50.\n"
+                            f"🎫 **¡Ticket de Suerte aplicado!** Se reembolsó tu apuesta de {self.apuesta} monedas por explotar en x1.50 o menos.\n"
                             f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
                         ),
                         color=discord.Color.blue()
@@ -389,12 +392,12 @@ class CrashView(discord.ui.View):
                             else:
                                 await interaction.response.edit_message(embed=resultado_embed, view=self)
                         except discord.InteractionResponded:
-                            # Si la interacción ya fue respondida de otra forma, usamos un followup.
-                            await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
+                            # Si la interacción ya fue respondida de otra forma, usamos un followup no efímero.
+                            await interaction.followup.send(embed=resultado_embed, view=self)
                 except discord.NotFound:
-                    # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso.
+                    # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso no efímero.
                     try:
-                        await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
+                        await interaction.followup.send(embed=resultado_embed, view=self)
                     except discord.HTTPException as e:
                         logger.warning(
                             "HTTPException al enviar followup en retirar: %s (status=%s)",
@@ -458,6 +461,8 @@ class CrashView(discord.ui.View):
             # Si el crash_point es exactamente 1.0, explota instantáneamente
             if self.crash_point <= 1.0:
                 explosion = True
+                if self.progress_steps < 1:
+                    self.progress_steps = 1
             else:
                 while True:
                     # VERIFICACIÓN ATÓMICA: si el juego terminó, salir inmediatamente
