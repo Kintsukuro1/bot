@@ -54,7 +54,7 @@ class Crash(commands.Cog):
                 await ctx_or_interaction.send(error_msg)
             return
 
-        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        success, saldo_post_apuesta = await asyncio.to_thread(deduct_balance, user_id, apuesta)
         if not success:
             error_msg = f"❌ No tienes suficiente saldo para esa apuesta."
             if is_slash:
@@ -71,7 +71,8 @@ class Crash(commands.Cog):
         # House edge base del 4% (ventaja de la casa)
         base_edge = 0.04
         # Ajustar la ventaja de la casa según la dificultad del jugador (-0.5 a 0.5)
-        edge = base_edge + (difficulty_modifier * 0.16)
+        # Con factor 0.06, edge varía de 0.01 a 0.07, utilizando todo el rango de dificultad sin saturar el clamp.
+        edge = base_edge + (difficulty_modifier * 0.06)
         edge = max(0.01, min(0.15, edge))
         
         U = random.random()
@@ -133,7 +134,7 @@ class Crash(commands.Cog):
             description=desc_msg,
             color=discord.Color.orange()
         )
-        view = CrashView(ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier, difficulty_explanation, ticket_activo)
+        view = CrashView(ctx_or_interaction, user, apuesta, saldo_post_apuesta, crash_point, difficulty_modifier, difficulty_explanation, ticket_activo)
         
         if is_slash:
             msg = await ctx_or_interaction.followup.send(embed=embed, view=view)
@@ -143,12 +144,12 @@ class Crash(commands.Cog):
         await view.run_crash(msg, embed)
 
 class CrashView(discord.ui.View):
-    def __init__(self, ctx_or_interaction, user, apuesta, saldo, crash_point, difficulty_modifier=0.0, difficulty_explanation="", ticket_activo=False):
+    def __init__(self, ctx_or_interaction, user, apuesta, saldo_post_apuesta, crash_point, difficulty_modifier=0.0, difficulty_explanation="", ticket_activo=False):
         super().__init__(timeout=120)
         self.ctx_or_interaction = ctx_or_interaction
         self.user = user
         self.apuesta = apuesta
-        self.saldo = saldo
+        self.saldo_post_apuesta = saldo_post_apuesta
         self.crash_point = crash_point
         self.difficulty_modifier = difficulty_modifier
         self.difficulty_explanation = difficulty_explanation
@@ -159,6 +160,7 @@ class CrashView(discord.ui.View):
         self.embed = None
         self.current_mult = 1.00  # Empezar en 1.00x
         self.progress_steps = 0  # Para animación visual
+        self.crash_mult = None  # Multiplicador definitivo cuando el juego hace crash
         self._state_lock = asyncio.Lock()
 
     async def _get_ganancia_bonus(self) -> float:
@@ -174,6 +176,10 @@ class CrashView(discord.ui.View):
             if self.cobrado or self.juego_terminado:
                 return
 
+            # Congelar el multiplicador definitivo de crash si aún no se ha fijado
+            if self.crash_mult is None:
+                self.crash_mult = self.current_mult
+
             if motivo == "retiro":
                 self.cobrado = True
             self.juego_terminado = True
@@ -185,7 +191,7 @@ class CrashView(discord.ui.View):
                 except AttributeError:
                     pass  # Algunos items pueden no tener disabled
 
-            mult_final = self.current_mult
+            mult_final = self.crash_mult
 
         try:
             if motivo == "retiro":
@@ -199,7 +205,7 @@ class CrashView(discord.ui.View):
                 ganancia_neta = ganancia_total - self.apuesta
                 
                 # Actualizar balance y estadísticas atómicamente
-                nuevo_saldo = self.saldo + ganancia_total
+                nuevo_saldo = self.saldo_post_apuesta + ganancia_total
                 await asyncio.to_thread(
                     process_crash_payout_atomic,
                     self.user.id,
@@ -256,7 +262,7 @@ class CrashView(discord.ui.View):
                     reembolsado = True
                             
                 if reembolsado:
-                    nuevo_saldo = self.saldo + self.apuesta
+                    nuevo_saldo = self.saldo_post_apuesta + self.apuesta
                     await asyncio.to_thread(
                         process_crash_payout_atomic,
                         self.user.id,
@@ -283,7 +289,7 @@ class CrashView(discord.ui.View):
                         color=discord.Color.blue()
                     )
                 else:
-                    nuevo_saldo = self.saldo
+                    nuevo_saldo = self.saldo_post_apuesta
                     await asyncio.to_thread(
                         process_crash_payout_atomic,
                         self.user.id,
@@ -319,7 +325,7 @@ class CrashView(discord.ui.View):
                     ganancia_total = int(ganancia_total * 0.65)
                 ganancia_neta = ganancia_total - self.apuesta
                 
-                nuevo_saldo = self.saldo + ganancia_total
+                nuevo_saldo = self.saldo_post_apuesta + ganancia_total
                 await asyncio.to_thread(
                     process_crash_payout_atomic,
                     self.user.id,
@@ -360,7 +366,7 @@ class CrashView(discord.ui.View):
                         0,
                         'refund',
                         0.0,
-                        self.saldo + self.apuesta,
+                        self.saldo_post_apuesta + self.apuesta,
                         "Crash: Reembolso por error de sistema"
                     )
                 except Exception as db_err:
@@ -369,7 +375,7 @@ class CrashView(discord.ui.View):
                         extra={
                             "user_id": self.user.id,
                             "apuesta": self.apuesta,
-                            "saldo": self.saldo,
+                            "saldo": self.saldo_post_apuesta,
                             "motivo": "error",
                         },
                     )
@@ -474,19 +480,20 @@ class CrashView(discord.ui.View):
                 while True:
                     # VERIFICACIÓN ATÓMICA: si el juego terminó, salir inmediatamente
                     async with self._state_lock:
-                        if self.cobrado or self.juego_terminado:
+                        if self.cobrado or self.juego_terminado or self.crash_mult is not None:
                             return
+                        curr_mult = self.current_mult
                     
                     # Determinar incremento y tiempo de espera según el multiplicador actual
-                    if self.current_mult < 1.5:
+                    if curr_mult < 1.5:
                         increment = 0.10
                         sleep_time = 1.2
                         danger_msg = "🟢 **Zona segura** - ¡Buen momento para empezar!"
-                    elif self.current_mult < 3.0:
+                    elif curr_mult < 3.0:
                         increment = 0.20
                         sleep_time = 1.0
                         danger_msg = "🟡 **Zona de riesgo medio** - ¡Cuidado!"
-                    elif self.current_mult < 6.0:
+                    elif curr_mult < 6.0:
                         increment = 0.50
                         sleep_time = 1.0
                         danger_msg = "🟠 **Zona peligrosa** - ¡Considera retirarte!"
@@ -496,25 +503,34 @@ class CrashView(discord.ui.View):
                         danger_msg = "🔴 **ZONA EXTREMA** - ¡MUY ARRIESGADO!"
                     
                     # Calcular el siguiente multiplicador
-                    next_mult = round(self.current_mult + increment, 2)
+                    next_mult = round(curr_mult + increment, 2)
                     
                     if next_mult >= self.crash_point:
                         # Llegamos al límite. Romper el bucle y actualizar al multiplicador exacto del crash.
-                        self.current_mult = self.crash_point
+                        async with self._state_lock:
+                            if self.cobrado or self.juego_terminado or self.crash_mult is not None:
+                                return
+                            self.current_mult = self.crash_point
+                            self.crash_mult = self.crash_point
+                            curr_mult = self.current_mult
                         break
                         
                     # Incrementar multiplicador
-                    self.current_mult = next_mult
-                    self.progress_steps += 1
+                    async with self._state_lock:
+                        if self.cobrado or self.juego_terminado or self.crash_mult is not None:
+                            return
+                        self.current_mult = next_mult
+                        self.progress_steps += 1
+                        curr_mult = self.current_mult
                     
                     # Crear barra de progreso visual
-                    progress_ratio = min(1.0, self.current_mult / max(self.crash_point, 5.0))
+                    progress_ratio = min(1.0, curr_mult / max(self.crash_point, 5.0))
                     progress_visual = int(progress_ratio * 15)
                     bar = self._progress_bar_blocks(progress_visual, 15, explosion=False)
                     
                     embed.description = (
                         f"💰 **Apuesta:** {self.apuesta} monedas\n"
-                        f"📈 **Multiplicador:** x{self.current_mult:.2f}\n"
+                        f"📈 **Multiplicador:** x{curr_mult:.2f}\n"
                         f"{bar}\n"
                         f"{danger_msg}\n"
                         f"⚡ **¡RETÍRATE AHORA!** ¡Presiona el botón para cobrar!"
@@ -522,7 +538,7 @@ class CrashView(discord.ui.View):
                     
                     # Verificar nuevamente el estado bajo el lock y decidir si editar
                     async with self._state_lock:
-                        should_edit = not self.juego_terminado and self.msg is not None
+                        should_edit = not self.juego_terminado and self.msg is not None and self.crash_mult is None
                         msg_to_edit = self.msg if should_edit else None
                     
                     # Hacer el await fuera del lock para no bloquear otras interacciones
