@@ -546,7 +546,7 @@ class Robar(commands.Cog):
                     )
                 embed_fracaso.add_field(name="Nuevo Saldo", value=f"{data['nuevo_saldo_ladron']:,} monedas", inline=True)
                 embed_fracaso.set_footer(text=f"Próximo robo en {data['cooldown_minutes']:.0f} min · Usa /perfil_ladron para ver bonificaciones")
-                await msg.edit(content=f"🔔 {victima.mention}", embed=embed_fracaso)
+                await msg.edit(content=None, embed=embed_fracaso)
                 
         except Exception as e:
             print(f"Error en comando robar: {e}")
