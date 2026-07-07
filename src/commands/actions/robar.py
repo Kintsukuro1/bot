@@ -1,6 +1,9 @@
 import discord
 from discord.ext import commands
 import discord.app_commands as app_commands
+import logging
+
+logger = logging.getLogger(__name__)
 import random
 import asyncio
 from datetime import datetime, timedelta
@@ -25,6 +28,7 @@ from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 # Factor de reducción de cooldown cuando el robo falla (60% del cooldown normal)
 FAIL_COOLDOWN_FACTOR = 0.6
+VICTIMA_MIN_SALDO = 1000
 
 def _get_thief_stats(cursor, user_id, for_update=False):
     lock = " FOR UPDATE" if for_update else ""
@@ -39,6 +43,21 @@ def _get_thief_stats(cursor, user_id, for_update=False):
         return 1, 0, None, 0, 0
     return row[0], row[1], row[2], row[3], row[4]
 
+def _format_timedelta(td: timedelta, show_seconds: bool = False) -> str:
+    total_segundos = max(0, int(td.total_seconds()))
+    horas, resto = divmod(total_segundos, 3600)
+    minutos, segundos = divmod(resto, 60)
+    
+    partes = []
+    if horas > 0:
+        partes.append(f"{horas}h")
+    if minutos > 0 or (not horas and not show_seconds):
+        partes.append(f"{minutos}m")
+    if show_seconds and (segundos > 0 or not partes):
+        partes.append(f"{segundos}s")
+        
+    return " ".join(partes) if partes else ("0s" if show_seconds else "0m")
+
 def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
     """
     Realiza todas las validaciones de negocio y transacciones de base de datos para el robo de forma atómica en PostgreSQL.
@@ -51,6 +70,10 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
     ensure_user(victima_id, victima_name)
     
     with db_cursor() as cursor:
+        # Obtener una marca de tiempo consistente desde la base de datos para todo el flujo
+        cursor.execute("SELECT NOW()")
+        ahora_db = cursor.fetchone()[0]
+
         # Inicializar registros de robo si no existen usando ON CONFLICT
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (ladron_id,))
         cursor.execute("INSERT INTO RoboStats (UserID) VALUES (%s) ON CONFLICT (UserID) DO NOTHING", (victima_id,))
@@ -59,8 +82,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         cooldown_minutes = get_cooldown_minutes(thief_level)
         
         # Verificar cooldown de robo (reducido por nivel)
-        if last_robo and datetime.now() - last_robo < timedelta(minutes=cooldown_minutes):
-            tiempo_restante = last_robo + timedelta(minutes=cooldown_minutes) - datetime.now()
+        if last_robo and ahora_db - last_robo < timedelta(minutes=cooldown_minutes):
+            tiempo_restante = last_robo + timedelta(minutes=cooldown_minutes) - ahora_db
             return 'cooldown', {'tiempo_restante': tiempo_restante, 'cooldown_minutes': cooldown_minutes}
         
         # Obtener saldos bloqueando las filas (evita condiciones de carrera)
@@ -68,6 +91,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         id_1, id_2 = min(ladron_id, victima_id), max(ladron_id, victima_id)
         cursor.execute("SELECT UserID, Balance FROM Users WHERE UserID IN (%s, %s) FOR UPDATE", (id_1, id_2))
         rows = cursor.fetchall()
+        if len(rows) != 2:
+            raise ValueError("No se pudieron obtener los saldos de ambos usuarios (fila faltante en base de datos).")
         
         saldo_ladron = 0
         saldo_victima = 0
@@ -77,8 +102,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
             elif uid == victima_id:
                 saldo_victima = bal
         
-        # Verificar si la víctima tiene saldo suficiente (al menos 1000)
-        if saldo_victima < 1000:
+        # Verificar si la víctima tiene saldo suficiente (al menos VICTIMA_MIN_SALDO)
+        if saldo_victima < VICTIMA_MIN_SALDO:
             return 'no_money', {}
         
         # Verificar protección de la víctima (ESCALONADA según su saldo)
@@ -87,8 +112,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         result = cursor.fetchone()
         last_robado = result[0] if result else None
         
-        if last_robado and datetime.now() - last_robado < timedelta(hours=protection_hours):
-            tiempo_restante = last_robado + timedelta(hours=protection_hours) - datetime.now()
+        if last_robado and ahora_db - last_robado < timedelta(hours=protection_hours):
+            tiempo_restante = last_robado + timedelta(hours=protection_hours) - ahora_db
             return 'protection', {'tiempo_restante': tiempo_restante, 'protection_hours': protection_hours}
         
         # ============================================================
@@ -194,7 +219,8 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
                 'prob_exito_final': int(prob_exito),
             }
         else:
-            # Penalización dinámica basada en el tier
+            # Penalización dinámica basada en el tier (nota: penalizacion_pct ya incorpora
+            # la reducción de multa por nivel de ladrón calculada en calcular_robo_dinamico)
             penalizacion = int(cantidad_a_robar * (penalizacion_pct / 100))
             # Aplicar reducción por racha de mala suerte
             penalizacion = int(penalizacion * bad_luck["penalty_mult"])
@@ -222,7 +248,7 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
                 TotalPerdido = COALESCE(TotalPerdido, 0) + %s,
                 ThiefLevel = %s,
                 ThiefXP = %s,
-                LastRoboTime = CURRENT_TIMESTAMP - INTERVAL '%s seconds'
+                LastRoboTime = CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
                 WHERE UserID = %s
             """, (penalizacion, xp_result["level"], xp_result["xp"], reduccion_secs, ladron_id))
             
@@ -399,9 +425,8 @@ class Robar(commands.Cog):
             
             if status == 'cooldown':
                 tr = data['tiempo_restante']
-                minutos = tr.seconds // 60
-                segundos = tr.seconds % 60
-                respuesta = f"⏰ Debes esperar {minutos}m {segundos}s para intentar robar nuevamente."
+                tiempo_str = _format_timedelta(tr, show_seconds=True)
+                respuesta = f"⏰ Debes esperar {tiempo_str} para intentar robar nuevamente."
                 if is_slash:
                     await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
                 else:
@@ -410,10 +435,9 @@ class Robar(commands.Cog):
                 
             if status == 'protection':
                 tr = data['tiempo_restante']
-                horas = tr.seconds // 3600
-                minutos = (tr.seconds % 3600) // 60
+                tiempo_str = _format_timedelta(tr, show_seconds=False)
                 prot_h = data['protection_hours']
-                respuesta = f"🛡️ {victima.mention} tiene protección por {horas}h {minutos}m más (protección de {prot_h:.0f}h por su saldo)."
+                respuesta = f"🛡️ {victima.mention} tiene protección por {tiempo_str} más (protección de {prot_h:.0f}h por su saldo)."
                 if is_slash:
                     await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
                 else:
@@ -421,7 +445,7 @@ class Robar(commands.Cog):
                 return
                 
             if status == 'no_money':
-                respuesta = f"❌ {victima.mention} no tiene suficiente dinero para robarle (mínimo 1,000 monedas)."
+                respuesta = f"❌ {victima.mention} no tiene suficiente dinero para robarle (mínimo {VICTIMA_MIN_SALDO:,} monedas)."
                 if is_slash:
                     await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
                 else:
@@ -516,7 +540,10 @@ class Robar(commands.Cog):
                     value=f"{data['penalizacion']:,} monedas ({robo_params['penalizacion_pct']}% del botín)",
                     inline=False
                 )
-                embed_fracaso.add_field(name="XP Perdida", value=f"-{data['xp_perdida']:,} XP (tu nivel está protegido)", inline=True)
+                if data.get('leveled_down'):
+                    embed_fracaso.add_field(name="XP Perdida", value=f"-{data['xp_perdida']:,} XP (¡Has bajado de nivel!)", inline=True)
+                else:
+                    embed_fracaso.add_field(name="XP Perdida", value=f"-{data['xp_perdida']:,} XP (no bajas de nivel en este fallo)", inline=True)
                 embed_fracaso.add_field(
                     name="Tu Rango",
                     value=f"**{data['rank']}** (Nv. {data['thief_level']})",
@@ -538,7 +565,7 @@ class Robar(commands.Cog):
                         value=bad_luck_desc,
                         inline=False
                     )
-                elif next_bad_luck["descripcion"]:
+                elif next_bad_luck and next_bad_luck.get("descripcion"):
                     embed_fracaso.add_field(
                         name="🍀 Próximo Intento",
                         value=next_bad_luck["descripcion"],
@@ -549,7 +576,7 @@ class Robar(commands.Cog):
                 await msg.edit(content=None, embed=embed_fracaso)
                 
         except Exception as e:
-            print(f"Error en comando robar: {e}")
+            logger.error("Error en comando robar", exc_info=True)
             respuesta = "❌ Ocurrió un error al procesar el robo."
             if is_slash:
                 try:
