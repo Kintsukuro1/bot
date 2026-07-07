@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 CRASH_TICKET_MAX_BET = 5000
 CRASH_TICKET_ITEM_ID = 6
 
+async def _send_crash_error(ctx_or_interaction, is_slash: bool, message: str):
+    """Envía un mensaje de error de forma efímera para interacciones Slash o normal para comandos de prefijo."""
+    if is_slash:
+        await ctx_or_interaction.followup.send(message, ephemeral=True)
+    else:
+        await ctx_or_interaction.send(message)
+
 class Crash(commands.Cog):
     """Cog para el juego Crash."""
     def __init__(self, bot):
@@ -47,20 +54,12 @@ class Crash(commands.Cog):
             
         await asyncio.to_thread(ensure_user, user_id, user_name)
         if apuesta <= 0:
-            error_msg = "❌ La apuesta debe ser mayor a 0."
-            if is_slash:
-                await ctx_or_interaction.followup.send(error_msg, ephemeral=True)
-            else:
-                await ctx_or_interaction.send(error_msg)
+            await _send_crash_error(ctx_or_interaction, is_slash, "❌ La apuesta debe ser mayor a 0.")
             return
 
         success, saldo_post_apuesta = await asyncio.to_thread(deduct_balance, user_id, apuesta)
         if not success:
-            error_msg = f"❌ No tienes suficiente saldo para esa apuesta."
-            if is_slash:
-                await ctx_or_interaction.followup.send(error_msg, ephemeral=True)
-            else:
-                await ctx_or_interaction.send(error_msg)
+            await _send_crash_error(ctx_or_interaction, is_slash, "❌ No tienes suficiente saldo para esa apuesta.")
             return
         # Calcular dificultad dinámica
         difficulty_modifier, difficulty_explanation = await asyncio.to_thread(
@@ -169,6 +168,56 @@ class CrashView(discord.ui.View):
         if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
             ganancia_bonus += 0.15
         return ganancia_bonus
+
+    async def _safe_edit_or_followup(self, interaction: discord.Interaction | None, embed: discord.Embed):
+        """Edita de forma segura el mensaje del juego o envía un followup en caso de fallo,
+        evitando duplicación de lógica y manejando excepciones de red.
+        """
+        if interaction is not None:
+            try:
+                # Si tenemos un mensaje de juego, lo usamos como fuente de verdad.
+                if self.msg and hasattr(self.msg, "edit"):
+                    await self.msg.edit(embed=embed, view=self)
+                else:
+                    # Sin self.msg, intentamos editar la respuesta original de la interacción.
+                    try:
+                        if interaction.response.is_done():
+                            await interaction.edit_original_response(embed=embed, view=self)
+                        else:
+                            await interaction.response.edit_message(embed=embed, view=self)
+                    except discord.InteractionResponded:
+                        # Si la interacción ya fue respondida de otra forma, usamos un followup no efímero.
+                        await interaction.followup.send(embed=embed, view=self)
+            except discord.NotFound:
+                # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso no efímero.
+                try:
+                    await interaction.followup.send(embed=embed, view=self)
+                except discord.HTTPException as e:
+                    logger.warning(
+                        "HTTPException al enviar followup final de Crash: %s (status=%s)",
+                        getattr(e, "text", str(e)),
+                        getattr(e, "status", "desconocido"),
+                    )
+            except discord.HTTPException as e:
+                logger.warning(
+                    "HTTPException al editar respuesta final de Crash: %s (status=%s)",
+                    getattr(e, "text", str(e)),
+                    getattr(e, "status", "desconocido"),
+                )
+        else:
+            try:
+                if self.msg and hasattr(self.msg, 'edit'):
+                    await self.msg.edit(embed=embed, view=self)
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as e:
+                logger.warning(
+                    "HTTPException al editar mensaje final en run_crash: %s (status=%s)",
+                    getattr(e, "text", str(e)),
+                    getattr(e, "status", "desconocido"),
+                )
+            except Exception as e:
+                logger.exception("Error al editar mensaje final de Crash")
 
     async def _finalizar_juego(self, motivo: str, interaction: discord.Interaction | None = None):
         """Centraliza la lógica de finalización del juego para evitar condiciones de carrera."""
@@ -389,54 +438,7 @@ class CrashView(discord.ui.View):
                     color=discord.Color.orange()
                 )
 
-            # Intentar responder a la interacción con manejo más fino de excepciones.
-            # Preferimos editar self.msg cuando existe (tanto para comandos de prefijo como slash),
-            # y solo caemos a editar la respuesta original de la interacción cuando no hay self.msg.
-            if interaction is not None:
-                try:
-                    # Si tenemos un mensaje de juego, lo usamos como fuente de verdad.
-                    if self.msg and hasattr(self.msg, "edit"):
-                        await self.msg.edit(embed=resultado_embed, view=self)
-                    else:
-                        # Sin self.msg, intentamos editar la respuesta original de la interacción.
-                        try:
-                            if interaction.response.is_done():
-                                await interaction.edit_original_response(embed=resultado_embed, view=self)
-                            else:
-                                await interaction.response.edit_message(embed=resultado_embed, view=self)
-                        except discord.InteractionResponded:
-                            # Si la interacción ya fue respondida de otra forma, usamos un followup no efímero.
-                            await interaction.followup.send(embed=resultado_embed, view=self)
-                except discord.NotFound:
-                    # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso no efímero.
-                    try:
-                        await interaction.followup.send(embed=resultado_embed, view=self)
-                    except discord.HTTPException as e:
-                        logger.warning(
-                            "HTTPException al enviar followup en retirar: %s (status=%s)",
-                            getattr(e, "text", str(e)),
-                            getattr(e, "status", "desconocido"),
-                        )
-                except discord.HTTPException as e:
-                    logger.warning(
-                        "HTTPException al editar respuesta en retirar: %s (status=%s)",
-                        getattr(e, "text", str(e)),
-                        getattr(e, "status", "desconocido"),
-                    )
-            else:
-                try:
-                    if self.msg and hasattr(self.msg, 'edit'):
-                        await self.msg.edit(embed=resultado_embed, view=self)
-                except discord.NotFound:
-                    pass
-                except discord.HTTPException as e:
-                    logger.warning(
-                        "HTTPException al editar mensaje en run_crash: %s (status=%s)",
-                        getattr(e, "text", str(e)),
-                        getattr(e, "status", "desconocido"),
-                    )
-                except Exception as e:
-                    logger.exception("Error al editar mensaje final de Crash")
+            await self._safe_edit_or_followup(interaction, resultado_embed)
         finally:
             self.stop()
 
@@ -456,8 +458,8 @@ class CrashView(discord.ui.View):
                     await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
                 return
 
-            # Deferimos la interacción antes de proceder
-            await interaction.response.defer()
+        # Deferimos la interacción antes de proceder (fuera del lock para no bloquear el loop)
+        await interaction.response.defer()
 
         # Finalizar el juego por retiro (llamado fuera del lock)
         await self._finalizar_juego(motivo="retiro", interaction=interaction)
