@@ -23,6 +23,30 @@ class Minas(commands.Cog):
         # Locks por canal para evitar condiciones de carrera en operaciones concurrentes
         self._locks = {}
 
+    def _get_lock_for_channel(self, channel_id: int) -> asyncio.Lock:
+        """
+        Obtiene (o crea) el lock asociado a un canal concreto.
+
+        Mantener centralizada la creación de locks ayuda a controlar mejor
+        el ciclo de vida de _locks.
+        """
+        lock = self._locks.get(channel_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[channel_id] = lock
+        return lock
+
+    def _cleanup_channel_state_if_empty(self, channel_id: int) -> None:
+        """
+        Elimina el estado asociado a un canal (incluyendo su lock) cuando
+        ya no quedan minas activas en dicho canal.
+        """
+        minas_restantes = self.minas_activas.get(channel_id, 0)
+        if minas_restantes <= 0:
+            # Limpia minas y lock obsoletos para evitar crecimiento indefinido
+            self.minas_activas.pop(channel_id, None)
+            self._locks.pop(channel_id, None)
+
     async def cog_load(self):
         """Carga las minas desde la base de datos de manera asíncrona al cargar el cog."""
         try:
@@ -71,16 +95,21 @@ class Minas(commands.Cog):
     @app_commands.command(name="poner_minas", description="Coloca minas explosivas ocultas en un canal específico.")
     @app_commands.describe(
         cantidad="Número de minas a colocar",
-        canal="El canal donde se colocarán las minas"
+        canal="El canal donde se colocarán las minas (opcional, por defecto el canal actual)"
     )
     @app_commands.default_permissions(administrator=True)
-    async def poner_minas(self, interaction: discord.Interaction, cantidad: int, canal: discord.TextChannel):
+    async def poner_minas(self, interaction: discord.Interaction, cantidad: int, canal: discord.TextChannel = None):
         if cantidad <= 0:
             await interaction.response.send_message("❌ La cantidad de minas debe ser mayor a 0.", ephemeral=True)
             return
 
-        canal_id = canal.id
-        lock = self._locks.setdefault(canal_id, asyncio.Lock())
+        canal_obj = self._obtener_canal_texto(interaction, canal)
+        if canal_obj is None:
+            await interaction.response.send_message("❌ Este comando solo se puede usar en canales de texto de servidores.", ephemeral=True)
+            return
+
+        canal_id = canal_obj.id
+        lock = self._get_lock_for_channel(canal_id)
         async with lock:
             minas_actuales = self.minas_activas.get(canal_id, 0)
             es_valido, mensaje_error = self._validar_limite_minas(minas_actuales, cantidad)
@@ -103,7 +132,7 @@ class Minas(commands.Cog):
 
         embed = discord.Embed(
             title="💣 ¡Minas Colocadas!",
-            description=f"Se han colocado **{cantidad}** minas en el canal {canal.mention}.\n¡Tengan cuidado por dónde pisan!",
+            description=f"Se han colocado **{cantidad}** minas en el canal {canal_obj.mention}.\n¡Tengan cuidado por dónde pisan!",
             color=discord.Color.dark_red()
         )
         await interaction.response.send_message(embed=embed)
@@ -125,7 +154,7 @@ class Minas(commands.Cog):
         canal_id = message.channel.id
 
         # Intentar detonar una mina bajo lock para evitar condiciones de carrera
-        lock = self._locks.setdefault(canal_id, asyncio.Lock())
+        lock = self._get_lock_for_channel(canal_id)
         mina_detonada = False
         minas_restantes = 0
         async with lock:
@@ -136,14 +165,24 @@ class Minas(commands.Cog):
             if random.random() < PROB_EXPLOSION:
                 self.minas_activas[canal_id] -= 1
                 minas_restantes = self.minas_activas[canal_id]
-                # Actualizar DB
-                await asyncio.to_thread(set_minas_canal, canal_id, minas_restantes)
-                # Limpiar diccionario si ya no quedan minas
                 if minas_restantes <= 0:
-                    del self.minas_activas[canal_id]
+                    self._cleanup_channel_state_if_empty(canal_id)
                 mina_detonada = True
 
         if not mina_detonada:
+            return
+
+        # Actualizar DB fuera del lock para evitar mantenerlo bloqueado en operaciones lentas
+        try:
+            await asyncio.to_thread(set_minas_canal, canal_id, minas_restantes)
+        except Exception:
+            self.logger.exception(
+                "[Minas] Error al actualizar base de datos en on_message. Revertiendo decremento en memoria...",
+                extra={"canal_id": canal_id, "minas_restantes_intentadas": minas_restantes}
+            )
+            # Revertir decremento en memoria bajo lock
+            async with lock:
+                self.minas_activas[canal_id] = self.minas_activas.get(canal_id, 0) + 1
             return
 
         # Probabilidad de que la mina falle (dud)
@@ -231,7 +270,7 @@ class Minas(commands.Cog):
             return
 
         canal_id = canal_obj.id
-        lock = self._locks.setdefault(canal_id, asyncio.Lock())
+        lock = self._get_lock_for_channel(canal_id)
         async with lock:
             if canal_id in self.minas_activas:
                 # Guardar en base de datos primero para evitar inconsistencias si falla
@@ -245,7 +284,8 @@ class Minas(commands.Cog):
                     await interaction.response.send_message("❌ Ocurrió un error al eliminar las minas en la base de datos.", ephemeral=True)
                     return
 
-                del self.minas_activas[canal_id]
+                self.minas_activas[canal_id] = 0
+                self._cleanup_channel_state_if_empty(canal_id)
                 minas_existian = True
             else:
                 minas_existian = False
