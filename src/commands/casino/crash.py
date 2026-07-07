@@ -24,11 +24,12 @@ async def _send_crash_error(ctx_or_interaction, is_slash: bool, message: str):
     if is_slash:
         try:
             await ctx_or_interaction.edit_original_response(content=message)
-        except Exception:
+        except (discord.NotFound, discord.HTTPException, discord.InteractionResponded) as e:
+            logger.warning("No se pudo editar la respuesta original para enviar el error en crash: %s", str(e))
             try:
                 await ctx_or_interaction.followup.send(message, ephemeral=True)
-            except Exception:
-                pass
+            except (discord.NotFound, discord.HTTPException) as fe:
+                logger.error("No se pudo enviar el error por followup en crash: %s", str(fe))
     else:
         await ctx_or_interaction.send(message)
 
@@ -182,7 +183,8 @@ class CrashView(discord.ui.View):
         if interaction is not None:
             try:
                 if interaction.response.is_done():
-                    await interaction.edit_original_response(embed=embed, view=self)
+                    # edit_original_response actualiza el mensaje y mantiene self.msg sincronizado como fuente de verdad
+                    self.msg = await interaction.edit_original_response(embed=embed, view=self)
                 else:
                     await interaction.response.edit_message(embed=embed, view=self)
             except (discord.NotFound, discord.HTTPException, discord.InteractionResponded) as e:
