@@ -102,13 +102,17 @@ def set_balance(user_id, balance):
             ON CONFLICT (UserID) DO UPDATE SET Balance = EXCLUDED.Balance
             """, (user_id, balance))
 
-def add_balance(user_id, amount):
+def add_balance(user_id, amount, cursor=None):
     """Añade (o resta) saldo a un usuario de forma atómica usando Upsert nativo de PostgreSQL."""
-    with db_cursor() as cursor:
-        cursor.execute("""
+    query = """
             INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
             ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
-            """, (user_id, amount))
+            """
+    if cursor is not None:
+        cursor.execute(query, (user_id, amount))
+    else:
+        with db_cursor() as cursor:
+            cursor.execute(query, (user_id, amount))
 
 def deduct_balance(user_id, amount):
     """Resta saldo a un usuario de forma atómica y segura. 
@@ -165,14 +169,20 @@ def ensure_user(user_id, user_name=None):
                 set_clause = ", ".join(updates)
                 cursor.execute(f"UPDATE Users SET {set_clause} WHERE UserID = %s", tuple(params) + (user_id,))
 
-def registrar_transaccion(user_id, amount, tipo):
+def registrar_transaccion(user_id, amount, tipo, cursor=None):
     """Registra una transacción en el historial."""
     from datetime import datetime
-    with db_cursor() as cursor:
+    if cursor is not None:
         cursor.execute("""
             INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
             VALUES (%s, %s, %s, %s)
         """, (user_id, amount, tipo, datetime.now()))
+    else:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+                VALUES (%s, %s, %s, %s)
+            """, (user_id, amount, tipo, datetime.now()))
 
 def transfer_balance(from_user_id, to_user_id, amount, reason):
     """Realiza una transferencia atómica de saldo entre dos usuarios."""
@@ -481,13 +491,20 @@ def get_user_game_stats(user_id):
             }
     return None
 
-def record_game_result(user_id, game_type, bet_amount, result, win_amount, difficulty_applied, user_balance):
+def record_game_result(user_id, game_type, bet_amount, result, win_amount, difficulty_applied, user_balance, cursor=None):
     """Registrar resultado de un juego para el sistema de dificultad, sincronizando todas las tablas de estadísticas."""
     from datetime import datetime
     is_win = result.lower() in ['win', 'victory', 'won', 'ganaste', 'ganador']
     result_str = 'win' if is_win else 'loss'
     
+    if cursor is not None:
+        return _record_game_result_inner(cursor, user_id, game_type, bet_amount, result, win_amount, difficulty_applied, user_balance, result_str, is_win)
+        
     with db_cursor() as cursor:
+        return _record_game_result_inner(cursor, user_id, game_type, bet_amount, result, win_amount, difficulty_applied, user_balance, result_str, is_win)
+
+def _record_game_result_inner(cursor, user_id, game_type, bet_amount, result, win_amount, difficulty_applied, user_balance, result_str, is_win):
+        from datetime import datetime
         # Acumular un pozo constante del 2% de la apuesta para el loto si no es un juego PvP
         if game_type not in {'coinflip_duel', 'russian_roulette', 'liars_dice', 'rps', 'horse_race'}:
             contribution = int(bet_amount * 0.02)
@@ -2129,4 +2146,14 @@ def obtener_ranking_trabajo(job_type, limit=10):
 
 # Alias for compatibility with Mejoras files
 consumir_energia_atomico = consumir_energia
+
+
+def process_crash_payout_atomic(user_id, apuesta, ganancia_total, ganancia_neta, result_type, difficulty_modifier, nuevo_saldo, desc_transaccion):
+    """
+    Registra el balance, la transacción y el resultado del juego en una única transacción de BD atómica.
+    """
+    with db_cursor() as cursor:
+        add_balance(user_id, ganancia_total, cursor=cursor)
+        registrar_transaccion(user_id, ganancia_neta, desc_transaccion, cursor=cursor)
+        record_game_result(user_id, 'crash', apuesta, result_type, ganancia_neta, difficulty_modifier, nuevo_saldo, cursor=cursor)
 

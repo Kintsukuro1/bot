@@ -7,7 +7,8 @@ import logging
 from src.db import (
     get_balance, set_balance, deduct_balance, add_balance, ensure_user,
     registrar_transaccion, record_game_result, usuario_tiene_item,
-    usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora
+    usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora,
+    process_crash_payout_atomic
 )
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
@@ -74,8 +75,8 @@ class Crash(commands.Cog):
         edge = max(0.01, min(0.15, edge))
         
         U = random.random()
-        # Evitar división por cero
-        U_adj = min(U, 0.99)
+        # Evitar división por cero y evitar valores extremos en la cola
+        U_adj = min(max(U, 1e-6), 0.99)
         
         # Algoritmo clásico y justo de Crash: M = (1 - edge) / (1 - U)
         val = (1.0 - edge) / (1.0 - U_adj)
@@ -197,15 +198,19 @@ class CrashView(discord.ui.View):
                     ganancia_total = int(ganancia_total * 0.65)
                 ganancia_neta = ganancia_total - self.apuesta
                 
-                # Actualizar balance
+                # Actualizar balance y estadísticas atómicamente
                 nuevo_saldo = self.saldo + ganancia_total
-                await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
-                await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: retirado x{mult_final:.2f}")
-                
-                # Registrar resultado para el sistema de dificultad
-                await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 
-                                 'win' if ganancia_neta > 0 else 'loss', 
-                                 ganancia_neta, self.difficulty_modifier, nuevo_saldo)
+                await asyncio.to_thread(
+                    process_crash_payout_atomic,
+                    self.user.id,
+                    self.apuesta,
+                    ganancia_total,
+                    ganancia_neta,
+                    'win' if ganancia_neta > 0 else 'loss',
+                    self.difficulty_modifier,
+                    nuevo_saldo,
+                    f"Crash: retirado x{mult_final:.2f}"
+                )
                 
                 try:
                     await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
@@ -250,9 +255,17 @@ class CrashView(discord.ui.View):
                             
                 if reembolsado:
                     nuevo_saldo = self.saldo + self.apuesta
-                    await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
-                    await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{mult_final:.2f}")
-                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
+                    await asyncio.to_thread(
+                        process_crash_payout_atomic,
+                        self.user.id,
+                        self.apuesta,
+                        self.apuesta,
+                        0,
+                        'refund',
+                        self.difficulty_modifier,
+                        nuevo_saldo,
+                        f"Crash: Reembolso por Ticket (<1.5x) en x{mult_final:.2f}"
+                    )
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
                     except Exception:
@@ -269,8 +282,17 @@ class CrashView(discord.ui.View):
                     )
                 else:
                     nuevo_saldo = self.saldo
-                    await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{mult_final:.2f}")
-                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', -self.apuesta, self.difficulty_modifier, nuevo_saldo)
+                    await asyncio.to_thread(
+                        process_crash_payout_atomic,
+                        self.user.id,
+                        self.apuesta,
+                        0,
+                        -self.apuesta,
+                        'loss',
+                        self.difficulty_modifier,
+                        nuevo_saldo,
+                        f"Crash: explotó x{mult_final:.2f}"
+                    )
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
                     except Exception:
@@ -296,9 +318,17 @@ class CrashView(discord.ui.View):
                 ganancia_neta = ganancia_total - self.apuesta
                 
                 nuevo_saldo = self.saldo + ganancia_total
-                await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
-                await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{mult_final:.2f}")
-                await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
+                await asyncio.to_thread(
+                    process_crash_payout_atomic,
+                    self.user.id,
+                    self.apuesta,
+                    ganancia_total,
+                    ganancia_neta,
+                    'win',
+                    self.difficulty_modifier,
+                    nuevo_saldo,
+                    f"Crash: completó sin explotar x{mult_final:.2f}"
+                )
                 try:
                     await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
                 except Exception:
@@ -320,8 +350,17 @@ class CrashView(discord.ui.View):
                 )
             elif motivo == "error":
                 try:
-                    await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
-                    await asyncio.to_thread(registrar_transaccion, self.user.id, 0, "Crash: Reembolso por error de sistema")
+                    await asyncio.to_thread(
+                        process_crash_payout_atomic,
+                        self.user.id,
+                        self.apuesta,
+                        self.apuesta,
+                        0,
+                        'refund',
+                        0.0,
+                        self.saldo + self.apuesta,
+                        "Crash: Reembolso por error de sistema"
+                    )
                 except Exception as db_err:
                     print(f"Error al intentar reembolsar tras fallo en Crash: {db_err}")
                 
@@ -334,22 +373,26 @@ class CrashView(discord.ui.View):
                     color=discord.Color.orange()
                 )
 
-            # Intentar responder a la interacción con manejo más fino de excepciones
+            # Intentar responder a la interacción con manejo más fino de excepciones.
+            # Preferimos editar self.msg cuando existe (tanto para comandos de prefijo como slash),
+            # y solo caemos a editar la respuesta original de la interacción cuando no hay self.msg.
             if interaction is not None:
                 try:
-                    if interaction.response.is_done():
-                        await interaction.edit_original_response(embed=resultado_embed, view=self)
+                    # Si tenemos un mensaje de juego, lo usamos como fuente de verdad.
+                    if self.msg and hasattr(self.msg, "edit"):
+                        await self.msg.edit(embed=resultado_embed, view=self)
                     else:
-                        await interaction.response.edit_message(embed=resultado_embed, view=self)
-                except discord.InteractionResponded:
-                    try:
-                        if self.msg and hasattr(self.msg, 'edit'):
-                            await self.msg.edit(embed=resultado_embed, view=self)
-                        else:
+                        # Sin self.msg, intentamos editar la respuesta original de la interacción.
+                        try:
+                            if interaction.response.is_done():
+                                await interaction.edit_original_response(embed=resultado_embed, view=self)
+                            else:
+                                await interaction.response.edit_message(embed=resultado_embed, view=self)
+                        except discord.InteractionResponded:
+                            # Si la interacción ya fue respondida de otra forma, usamos un followup.
                             await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
-                    except discord.NotFound:
-                        await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
                 except discord.NotFound:
+                    # Si el mensaje objetivo ya no existe, hacemos un followup como último recurso.
                     try:
                         await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
                     except discord.HTTPException as e:
@@ -358,14 +401,12 @@ class CrashView(discord.ui.View):
                             getattr(e, "text", str(e)),
                             getattr(e, "status", "desconocido"),
                         )
-                        raise
                 except discord.HTTPException as e:
-                    logger.error(
+                    logger.warning(
                         "HTTPException al editar respuesta en retirar: %s (status=%s)",
                         getattr(e, "text", str(e)),
                         getattr(e, "status", "desconocido"),
                     )
-                    raise
             else:
                 try:
                     if self.msg and hasattr(self.msg, 'edit'):
@@ -373,12 +414,11 @@ class CrashView(discord.ui.View):
                 except discord.NotFound:
                     pass
                 except discord.HTTPException as e:
-                    logger.error(
+                    logger.warning(
                         "HTTPException al editar mensaje en run_crash: %s (status=%s)",
                         getattr(e, "text", str(e)),
                         getattr(e, "status", "desconocido"),
                     )
-                    raise
                 except Exception as e:
                     print(f"Error al editar mensaje final de Crash: {e}")
         finally:
