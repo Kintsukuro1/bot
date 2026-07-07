@@ -17,11 +17,10 @@ ADMIN_MUTE_OPTIONS = [
     ("se salvó", 0)
 ]
 
-# Opciones para usuarios con el item (más limitadas)
+# Opciones para usuarios con el item (más limitadas, máximo 10 minutos)
 USER_MUTE_OPTIONS = [
     ("5 minutos", 5),
-    ("10 minutos", 10), 
-    ("30 minutos", 30),
+    ("10 minutos", 10),
     ("se salvó", 0)
 ]
 
@@ -99,8 +98,14 @@ class SpecialMute(commands.Cog):
             return
         
         # Usar diferentes opciones según sea admin o usuario con item
-        options = ADMIN_MUTE_OPTIONS if es_admin else USER_MUTE_OPTIONS
-        resultado, minutos = random.choice(options)
+        if es_admin:
+            resultado, minutos = random.choice(ADMIN_MUTE_OPTIONS)
+        else:
+            # 1% de probabilidad de ser de 30 minutos, de lo contrario se elige de USER_MUTE_OPTIONS (máximo 10 min)
+            if random.random() < 0.01:
+                resultado, minutos = ("30 minutos", 30)
+            else:
+                resultado, minutos = random.choice(USER_MUTE_OPTIONS)
         
         # Primero consumir el item si es un usuario normal (no admin)
         # Esto asegura que se consuma SIEMPRE, independientemente del resultado del mute
