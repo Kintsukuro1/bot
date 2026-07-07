@@ -169,24 +169,23 @@ class CrashView(discord.ui.View):
         return ganancia_bonus
 
     async def _finalizar_juego(self, motivo: str, interaction: discord.Interaction | None = None):
-        """Centraliza la lógica de finalización del juego para evitar condiciones de carrera.
-        Debe ser llamado siempre dentro de `async with self._state_lock:`.
-        """
-        if self.cobrado or self.juego_terminado:
-            return
+        """Centraliza la lógica de finalización del juego para evitar condiciones de carrera."""
+        async with self._state_lock:
+            if self.cobrado or self.juego_terminado:
+                return
 
-        if motivo == "retiro":
-            self.cobrado = True
-        self.juego_terminado = True
+            if motivo == "retiro":
+                self.cobrado = True
+            self.juego_terminado = True
 
-        # Deshabilitar todos los botones
-        for item in self.children:
-            try:
-                item.disabled = True
-            except AttributeError:
-                pass  # Algunos items pueden no tener disabled
+            # Deshabilitar todos los botones
+            for item in self.children:
+                try:
+                    item.disabled = True
+                except AttributeError:
+                    pass  # Algunos items pueden no tener disabled
 
-        mult_final = self.current_mult
+            mult_final = self.current_mult
 
         try:
             if motivo == "retiro":
@@ -365,7 +364,15 @@ class CrashView(discord.ui.View):
                         "Crash: Reembolso por error de sistema"
                     )
                 except Exception as db_err:
-                    print(f"Error al intentar reembolsar tras fallo en Crash: {db_err}")
+                    logger.exception(
+                        "Error al intentar reembolsar tras fallo en Crash",
+                        extra={
+                            "user_id": self.user.id,
+                            "apuesta": self.apuesta,
+                            "saldo": self.saldo,
+                            "motivo": "error",
+                        },
+                    )
                 
                 resultado_embed = discord.Embed(
                     title="⚠️ Crash - Juego Cancelado",
@@ -423,7 +430,7 @@ class CrashView(discord.ui.View):
                         getattr(e, "status", "desconocido"),
                     )
                 except Exception as e:
-                    print(f"Error al editar mensaje final de Crash: {e}")
+                    logger.exception("Error al editar mensaje final de Crash")
         finally:
             self.stop()
 
@@ -446,8 +453,8 @@ class CrashView(discord.ui.View):
             # Deferimos la interacción antes de proceder
             await interaction.response.defer()
 
-            # Finalizar el juego por retiro
-            await self._finalizar_juego(motivo="retiro", interaction=interaction)
+        # Finalizar el juego por retiro (llamado fuera del lock)
+        await self._finalizar_juego(motivo="retiro", interaction=interaction)
 
     async def run_crash(self, msg, embed):
         self.msg = msg
@@ -535,15 +542,11 @@ class CrashView(discord.ui.View):
                         explosion = True
  
             # Solo procesar el final del juego si no se ha cobrado ya
-            async with self._state_lock:
-                if not self.cobrado and not self.juego_terminado:
-                    await self._finalizar_juego(motivo="explosion" if explosion else "completado")
+            await self._finalizar_juego(motivo="explosion" if explosion else "completado")
                         
         except Exception as e:
-            async with self._state_lock:
-                if not self.cobrado and not self.juego_terminado:
-                    await self._finalizar_juego(motivo="error")
-            print(f"Error crítico en Crash (run_crash): {e}")
+            await self._finalizar_juego(motivo="error")
+            logger.exception("Error crítico en Crash (run_crash)")
             raise
         finally:
             self.stop()
