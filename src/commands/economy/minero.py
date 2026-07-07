@@ -101,7 +101,7 @@ class MineroView(discord.ui.View):
                 else:
                     hours = time_remaining // 3600
                     minutes = (time_remaining % 3600) // 60
-                    await interaction.channel.send(f"⚠️ {self.user.mention} **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).")
+                    await interaction.followup.send(f"⚠️ **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).", ephemeral=True)
             
             # Derrumbe
             await self._completar_trabajo(interaction, exito=False)
