@@ -17,8 +17,6 @@ HORSE_TEMPLATES = [
     {"emoji": "🍃"}
 ]
 
-HORSES = [{"name": "", "emoji": t["emoji"]} for t in HORSE_TEMPLATES]
-
 POSSIBLE_NAMES = [
     "Foot licker",
     "Trash can",
@@ -32,36 +30,48 @@ SECRET_HORSES = [
     "turbulent waters"
 ]
 
-def randomize_horse_names():
-    names = random.sample(POSSIBLE_NAMES, len(HORSES))
-    for i in range(len(HORSES)):
-        HORSES[i]['name'] = names[i]
+def generate_horse_names(num_horses: int) -> List[str]:
+    """
+    Generate distinct random names for the given number of horses.
+    If there are more horses than possible names, generate fallback names.
+    """
+    base_count = len(POSSIBLE_NAMES)
 
-# Inicializar nombres aleatorios al cargar el módulo
-randomize_horse_names()
+    shuffled_names = POSSIBLE_NAMES[:]  # copy to avoid mutating the global list
+    random.shuffle(shuffled_names)
 
-HORSE_DOPING = {i: 0 for i in range(len(HORSES))}
+    # Use as many shuffled names as we have available
+    assigned_names = shuffled_names[:min(num_horses, base_count)]
 
-def create_horses():
-    """Creates a copy of the current global horses and their doping levels for a single race, then resets the global doping and randomizes the names for the next race."""
-    global HORSE_DOPING
+    # If we still have more horses than names, generate fallback names
+    if num_horses > base_count:
+        remaining = num_horses - base_count
+        for i in range(remaining):
+            assigned_names.append(f"Horse {i + 1}")
+            
+    return assigned_names
+
+def create_horses() -> Tuple[List[dict], Dict[int, int]]:
+    """Creates a list of horse dicts and a doping dictionary for a single race."""
+    num_horses = len(HORSE_TEMPLATES)
+    names = generate_horse_names(num_horses)
     
-    race_horses = [h.copy() for h in HORSES]
-    
+    race_horses = []
+    for i, template in enumerate(HORSE_TEMPLATES):
+        race_horses.append({
+            "name": names[i],
+            "emoji": template["emoji"]
+        })
+        
     # 5% chance para un caballo secreto en la carrera
     if random.random() < 0.05:
         secret_horse = random.choice(SECRET_HORSES)
-        replace_idx = random.randint(0, len(race_horses) - 1)
+        replace_idx = random.randint(0, num_horses - 1)
         race_horses[replace_idx]['name'] = secret_horse
 
-    race_doping = HORSE_DOPING.copy()
-    
-    # Resetear el estado de doping global y cambiar nombres globales para la siguiente carrera
-    for i in HORSE_DOPING:
-        HORSE_DOPING[i] = 0
-    randomize_horse_names()
-    
+    race_doping = {i: 0 for i in range(num_horses)}
     return race_horses, race_doping
+
 
 
 class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
@@ -171,8 +181,8 @@ class HorseRaceView(discord.ui.View):
         
         try:
             await self.message.edit(embed=embed, view=self)
-        except:
-            raise
+        except (discord.NotFound, discord.Forbidden):
+            return
 
     async def run_race(self):
         self.started = True
@@ -209,7 +219,16 @@ class HorseRaceView(discord.ui.View):
         else:
             embed.description = ""
 
-        while winner_idx == -1:
+        # Dibujar pista inicial
+        track = ""
+        for i, h in enumerate(self.horses):
+            line = emojis_pista[i] + "➖" * race_length + " 🏁"
+            track += f"{line}\n"
+
+        ticks = 0
+        max_ticks = 100
+        while winner_idx == -1 and ticks < max_ticks:
+            ticks += 1
             await asyncio.sleep(1.5)
             
             # Avanzar caballos aleatoriamente
@@ -240,6 +259,17 @@ class HorseRaceView(discord.ui.View):
             if caballos_muertos:
                 embed.description = f"⚠️ **Sobredosis:** {', '.join(caballos_muertos)} (Eliminados)\n\n" + embed.description
             await self.message.edit(embed=embed, view=self)
+
+        # Si terminó por límite de ticks sin un ganador oficial, resolver según posiciones actuales
+        if winner_idx == -1:
+            max_pos = -1
+            for i in range(len(self.horses)):
+                # Priorizar caballos vivos
+                if self.horse_doping[i] <= 3 and positions[i] > max_pos:
+                    max_pos = positions[i]
+                    winner_idx = i
+            if winner_idx == -1:
+                winner_idx = 0
 
         # Carrera terminada
         winner_horse = self.horses[winner_idx]
@@ -292,7 +322,7 @@ class HorseRaceView(discord.ui.View):
 class HorseRace(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.active_races = set() # channel_id
+        self.active_races = {} # channel_id -> HorseRaceView
 
     @app_commands.command(name="horse_race", description="Organiza una carrera de caballos multijugador.")
     async def horse_race(self, interaction: discord.Interaction):
@@ -301,10 +331,9 @@ class HorseRace(commands.Cog):
             await interaction.response.send_message("❌ Ya hay una carrera activa en este canal.", ephemeral=True)
             return
             
-        self.active_races.add(channel_id)
-        
         try:
             view = HorseRaceView(interaction.channel)
+            self.active_races[channel_id] = view
             
             desc = "**Caballos en pista:**\n"
             for i, h in enumerate(view.horses):
@@ -329,7 +358,7 @@ class HorseRace(commands.Cog):
             
         finally:
             if channel_id in self.active_races:
-                self.active_races.remove(channel_id)
+                del self.active_races[channel_id]
 
 async def setup(bot):
     await bot.add_cog(HorseRace(bot))
