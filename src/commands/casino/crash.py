@@ -4,7 +4,11 @@ from discord import app_commands
 import random
 import asyncio
 import logging
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import (
+    get_balance, set_balance, deduct_balance, add_balance, ensure_user,
+    registrar_transaccion, record_game_result, usuario_tiene_item,
+    usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora
+)
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
@@ -89,7 +93,6 @@ class Crash(commands.Cog):
         ticket_activo = False
         msg_cooldown_ticket = ""
         if apuesta <= CRASH_TICKET_MAX_BET:
-            from src.db import usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
             if await asyncio.to_thread(usuario_tiene_item, user_id, CRASH_TICKET_ITEM_ID):
                 status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id, CRASH_TICKET_ITEM_ID)
                 if status == 'ok' or status == 'blocked_start':
@@ -144,6 +147,13 @@ class CrashView(discord.ui.View):
         self.progress = []  # Para animación visual
         self._state_lock = asyncio.Lock()
 
+    async def _get_ganancia_bonus(self) -> float:
+        """Calcula el bono de ganancia basado en mejoras del mercado negro."""
+        ganancia_bonus = 1.0
+        if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
+            ganancia_bonus += 0.15
+        return ganancia_bonus
+
     async def _finalizar_juego(self, motivo: str, interaction: discord.Interaction | None = None):
         """Centraliza la lógica de finalización del juego para evitar condiciones de carrera.
         Debe ser llamado siempre dentro de `async with self._state_lock:`.
@@ -167,10 +177,7 @@ class CrashView(discord.ui.View):
         try:
             if motivo == "retiro":
                 # --- MEJORAS BLACK MARKET ---
-                ganancia_bonus = 1.0
-                from src.db import usuario_tiene_mejora
-                if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
-                    ganancia_bonus += 0.15
+                ganancia_bonus = await self._get_ganancia_bonus()
                 # ----------------------------
                 
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
@@ -186,7 +193,7 @@ class CrashView(discord.ui.View):
                 # Registrar resultado para el sistema de dificultad
                 await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 
                                  'win' if ganancia_neta > 0 else 'loss', 
-                                 max(0, ganancia_neta), self.difficulty_modifier, nuevo_saldo)
+                                 ganancia_neta, self.difficulty_modifier, nuevo_saldo)
                 
                 try:
                     await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
@@ -251,7 +258,7 @@ class CrashView(discord.ui.View):
                 else:
                     nuevo_saldo = self.saldo
                     await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{mult_final:.2f}")
-                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', -self.apuesta, self.difficulty_modifier, nuevo_saldo)
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
                     except Exception:
@@ -268,10 +275,7 @@ class CrashView(discord.ui.View):
                     )
             elif motivo == "completado":
                 # --- MEJORAS BLACK MARKET ---
-                ganancia_bonus = 1.0
-                from src.db import usuario_tiene_mejora
-                if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
-                    ganancia_bonus += 0.15
+                ganancia_bonus = await self._get_ganancia_bonus()
                 # ----------------------------
                 
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
@@ -452,13 +456,18 @@ class CrashView(discord.ui.View):
                         f"⚡ **¡RETÍRATE AHORA!** ¡Presiona el botón para cobrar!"
                     )
                     
-                    # Verificar nuevamente antes de actualizar el mensaje de Discord
+                    # Verificar nuevamente el estado bajo el lock y decidir si editar
                     async with self._state_lock:
-                        if not self.juego_terminado and self.msg:
-                            try:
-                                await self.msg.edit(embed=embed, view=self)
-                            except Exception:
-                                pass
+                        should_edit = not self.juego_terminado and self.msg is not None
+                        msg_to_edit = self.msg if should_edit else None
+                    
+                    # Hacer el await fuera del lock para no bloquear otras interacciones
+                    if msg_to_edit is not None:
+                        try:
+                            await msg_to_edit.edit(embed=embed, view=self)
+                        except Exception:
+                            # Ignorar errores de edición (por ejemplo, mensajes borrados o rate limits)
+                            pass
                     
                     # Esperar antes del siguiente paso
                     await asyncio.sleep(sleep_time)
