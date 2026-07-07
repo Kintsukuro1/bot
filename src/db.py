@@ -391,7 +391,7 @@ def check_and_register_energy_use(user_id, item_id):
         # En caso de error de BD, por seguridad permitimos el uso
         return 'ok', None
 
-def check_and_register_shield_use(user_id):
+def check_and_register_shield_use(user_id, shield_item_group_id=999):
     """
     Verifica si un usuario puede usar un escudo de protección en trabajos/casino (máximo 3 usos al día).
     Si está bloqueado por cooldown, retorna ('blocked', segundos_restantes).
@@ -399,7 +399,6 @@ def check_and_register_shield_use(user_id):
     De lo contrario, registra el uso y retorna ('ok', None).
     """
     from datetime import datetime, timedelta
-    shield_item_group_id = 999
     try:
         with db_cursor() as cursor:
             # 1. Verificar si el usuario está bloqueado actualmente

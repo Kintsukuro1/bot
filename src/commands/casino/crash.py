@@ -3,10 +3,13 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
+import logging
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
+
+logger = logging.getLogger(__name__)
 
 CRASH_TICKET_MAX_BET = 5000
 CRASH_TICKET_ITEM_ID = 6
@@ -88,15 +91,15 @@ class Crash(commands.Cog):
         if apuesta <= CRASH_TICKET_MAX_BET:
             from src.db import usuario_tiene_item, usar_item_usuario, check_and_register_shield_use
             if await asyncio.to_thread(usuario_tiene_item, user_id, CRASH_TICKET_ITEM_ID):
-                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id)
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id, CRASH_TICKET_ITEM_ID)
                 if status == 'ok' or status == 'blocked_start':
                     ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
                     if status == 'blocked_start' and ticket_activo:
-                        msg_cooldown_ticket = "⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
+                        msg_cooldown_ticket = "⏱️ **Has alcanzado el límite de 3 usos diarios de Ticket.** Cooldown de 24h iniciado."
                 else:
                     hours = time_remaining // 3600
                     minutes = (time_remaining % 3600) // 60
-                    msg_cooldown_ticket = f"⚠️ **No se pudo usar tu Ticket de Crash.** Bloqueado por cooldown de escudos ({hours}h {minutes:02d}m restantes)."
+                    msg_cooldown_ticket = f"⚠️ **No se pudo usar tu Ticket de Crash.** Bloqueado por cooldown de ticket ({hours}h {minutes:02d}m restantes)."
 
         desc_msg = (
             f"💰 **Apuesta:** {apuesta} monedas\n"
@@ -134,11 +137,236 @@ class CrashView(discord.ui.View):
         self.difficulty_explanation = difficulty_explanation
         self.ticket_activo = ticket_activo
         self.cobrado = False
-        self.juego_terminado = False  # Nueva bandera para evitar condiciones de carrera
+        self.juego_terminado = False
         self.msg = None
         self.embed = None
         self.current_mult = 1.00  # Empezar en 1.00x
         self.progress = []  # Para animación visual
+        self._state_lock = asyncio.Lock()
+
+    async def _finalizar_juego(self, motivo: str, interaction: discord.Interaction | None = None):
+        """Centraliza la lógica de finalización del juego para evitar condiciones de carrera.
+        Debe ser llamado siempre dentro de `async with self._state_lock:`.
+        """
+        if self.cobrado or self.juego_terminado:
+            return
+
+        if motivo == "retiro":
+            self.cobrado = True
+        self.juego_terminado = True
+
+        # Deshabilitar todos los botones
+        for item in self.children:
+            try:
+                item.disabled = True
+            except AttributeError:
+                pass  # Algunos items pueden no tener disabled
+
+        mult_final = self.current_mult
+
+        try:
+            if motivo == "retiro":
+                # --- MEJORAS BLACK MARKET ---
+                ganancia_bonus = 1.0
+                from src.db import usuario_tiene_mejora
+                if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
+                    ganancia_bonus += 0.15
+                # ----------------------------
+                
+                ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
+                if self.ticket_activo:
+                    ganancia_total = int(ganancia_total * 0.65)
+                ganancia_neta = ganancia_total - self.apuesta
+                
+                # Actualizar balance
+                nuevo_saldo = self.saldo + ganancia_total
+                await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
+                await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: retirado x{mult_final:.2f}")
+                
+                # Registrar resultado para el sistema de dificultad
+                await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 
+                                 'win' if ganancia_neta > 0 else 'loss', 
+                                 max(0, ganancia_neta), self.difficulty_modifier, nuevo_saldo)
+                
+                try:
+                    await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
+                except Exception:
+                    pass
+                
+                # Determinar color y mensaje según si ganó o perdió
+                if ganancia_neta > 0:
+                    color = discord.Color.green()
+                    resultado = f"✅ **¡GANASTE!** +{ganancia_neta} monedas"
+                elif ganancia_neta < 0:
+                    color = discord.Color.red()
+                    resultado = f"❌ **Perdiste** {abs(ganancia_neta)} monedas"
+                else:
+                    color = discord.Color.yellow()
+                    resultado = f"🟰 **Empate** (sin ganancias ni pérdidas)"
+                
+                debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
+                resultado_embed = discord.Embed(
+                    title="💥 Crash Casino - Te retiraste",
+                    description=(
+                        f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"  # Usar multiplicador capturado
+                        f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
+                        f"💵 **Total recibido:** {ganancia_total} monedas\n"
+                        f"{resultado}\n"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n"
+                        f"{self._progress_bar_blocks(min(15, len(self.progress)), 15, explosion=False)}"
+                    ),
+                    color=color
+                )
+                
+            elif motivo == "explosion":
+                # Crear barra visual para la explosión
+                progress_ratio = min(1.0, mult_final / max(self.crash_point, 5.0))
+                progress_visual = int(progress_ratio * 15)
+                bar = self._progress_bar_blocks(progress_visual, 15, explosion=True)
+                
+                # Registrar pérdida o reembolso
+                reembolsado = False
+                if self.ticket_activo and mult_final < 1.50:
+                    reembolsado = True
+                            
+                if reembolsado:
+                    nuevo_saldo = self.saldo + self.apuesta
+                    await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
+                    await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{mult_final:.2f}")
+                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
+                    try:
+                        await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
+                    except Exception:
+                        pass
+                    
+                    resultado_embed = discord.Embed(
+                        title="🛡️ Crash Casino - ¡Salvado por Ticket!",
+                        description=(
+                            f"💥 ¡El multiplicador explotó en **x{mult_final:.2f}**!\n"
+                            f"🎫 **¡Ticket de Suerte aplicado!** Se reembolsó tu apuesta de {self.apuesta} monedas por explotar antes de x1.50.\n"
+                            f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
+                        ),
+                        color=discord.Color.blue()
+                    )
+                else:
+                    nuevo_saldo = self.saldo
+                    await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{mult_final:.2f}")
+                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+                    try:
+                        await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
+                    except Exception:
+                        pass
+                    
+                    resultado_embed = discord.Embed(
+                        title="💥 Crash Casino - ¡Explotó!",
+                        description=(
+                            f"💥 ¡Crash! El multiplicador explotó en **x{mult_final:.2f}**\n"
+                            f"❌ **Perdiste** {self.apuesta} monedas.\n"
+                            f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
+                        ),
+                        color=discord.Color.red()
+                    )
+            elif motivo == "completado":
+                # --- MEJORAS BLACK MARKET ---
+                ganancia_bonus = 1.0
+                from src.db import usuario_tiene_mejora
+                if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
+                    ganancia_bonus += 0.15
+                # ----------------------------
+                
+                ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
+                if self.ticket_activo:
+                    ganancia_total = int(ganancia_total * 0.65)
+                ganancia_neta = ganancia_total - self.apuesta
+                
+                nuevo_saldo = self.saldo + ganancia_total
+                await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
+                await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{mult_final:.2f}")
+                await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
+                try:
+                    await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
+                except Exception:
+                    pass
+                
+                # Barra completa para victoria
+                bar = self._progress_bar_blocks(15, 15, explosion=False)
+                debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
+                resultado_embed = discord.Embed(
+                    title="🎉 Crash Casino - ¡Victoria!",
+                    description=(
+                        f"🎉 ¡Increíble! Llegaste al final sin que explotara\n"
+                        f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"
+                        f"✅ **¡GANASTE!** +{ganancia_neta:,} monedas\n"
+                        f"💰 **Total recibido:** {ganancia_total:,} monedas\n"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n{bar}"
+                    ),
+                    color=discord.Color.gold()
+                )
+            elif motivo == "error":
+                try:
+                    await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
+                    await asyncio.to_thread(registrar_transaccion, self.user.id, 0, "Crash: Reembolso por error de sistema")
+                except Exception as db_err:
+                    print(f"Error al intentar reembolsar tras fallo en Crash: {db_err}")
+                
+                resultado_embed = discord.Embed(
+                    title="⚠️ Crash - Juego Cancelado",
+                    description=(
+                        f"Ocurrió un error inesperado al procesar el juego de Crash.\n"
+                        f"**Tu apuesta de {self.apuesta} monedas ha sido devuelta.**"
+                    ),
+                    color=discord.Color.orange()
+                )
+
+            # Intentar responder a la interacción con manejo más fino de excepciones
+            if interaction is not None:
+                try:
+                    if interaction.response.is_done():
+                        await interaction.edit_original_response(embed=resultado_embed, view=self)
+                    else:
+                        await interaction.response.edit_message(embed=resultado_embed, view=self)
+                except discord.InteractionResponded:
+                    try:
+                        if self.msg and hasattr(self.msg, 'edit'):
+                            await self.msg.edit(embed=resultado_embed, view=self)
+                        else:
+                            await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
+                    except discord.NotFound:
+                        await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
+                except discord.NotFound:
+                    try:
+                        await interaction.followup.send(embed=resultado_embed, view=self, ephemeral=True)
+                    except discord.HTTPException as e:
+                        logger.warning(
+                            "HTTPException al enviar followup en retirar: %s (status=%s)",
+                            getattr(e, "text", str(e)),
+                            getattr(e, "status", "desconocido"),
+                        )
+                        raise
+                except discord.HTTPException as e:
+                    logger.error(
+                        "HTTPException al editar respuesta en retirar: %s (status=%s)",
+                        getattr(e, "text", str(e)),
+                        getattr(e, "status", "desconocido"),
+                    )
+                    raise
+            else:
+                try:
+                    if self.msg and hasattr(self.msg, 'edit'):
+                        await self.msg.edit(embed=resultado_embed, view=self)
+                except discord.NotFound:
+                    pass
+                except discord.HTTPException as e:
+                    logger.error(
+                        "HTTPException al editar mensaje en run_crash: %s (status=%s)",
+                        getattr(e, "text", str(e)),
+                        getattr(e, "status", "desconocido"),
+                    )
+                    raise
+                except Exception as e:
+                    print(f"Error al editar mensaje final de Crash: {e}")
+        finally:
+            self.stop()
 
     @discord.ui.button(label="Retirarse", style=discord.ButtonStyle.success)
     async def retirar(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -146,110 +374,21 @@ class CrashView(discord.ui.View):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("No puedes usar este botón.", ephemeral=True)
             return
-        
-        # Evitar condiciones de carrera con atomic check-and-set
-        if self.cobrado or self.juego_terminado:
-            try:
-                await interaction.response.send_message("El juego ya ha terminado.", ephemeral=True)
-            except discord.InteractionResponded:
-                await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
-            return
-        
-        mult_al_retirarse = self.current_mult
-        self.cobrado = True
-        self.juego_terminado = True
 
-        await interaction.response.defer()
-        
-        try:
-            # --- MEJORAS BLACK MARKET ---
-            ganancia_bonus = 1.0
-            from src.db import usuario_tiene_mejora
-            if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
-                ganancia_bonus += 0.15
-            # ----------------------------
-            
-            ganancia_total = int(self.apuesta * mult_al_retirarse * ganancia_bonus)
-            if self.ticket_activo:
-                ganancia_total = int(ganancia_total * 0.65)
-            ganancia_neta = ganancia_total - self.apuesta
-            
-            # Actualizar balance
-            nuevo_saldo = self.saldo + ganancia_total
-            await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
-            await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: retirado x{mult_al_retirarse:.2f}")
-            
-            # Registrar resultado para el sistema de dificultad
-            await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 
-                             'win' if ganancia_neta > 0 else 'loss', 
-                             max(0, ganancia_neta), self.difficulty_modifier, nuevo_saldo)
-            
-            try:
-                await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
-            except Exception:
-                pass
-            
-            # Determinar color y mensaje según si ganó o perdió
-            if ganancia_neta > 0:
-                color = discord.Color.green()
-                resultado = f"✅ **¡GANASTE!** +{ganancia_neta} monedas"
-            elif ganancia_neta < 0:
-                color = discord.Color.red()
-                resultado = f"❌ **Perdiste** {abs(ganancia_neta)} monedas"
-            else:
-                color = discord.Color.yellow()
-                resultado = f"🟰 **Empate** (sin ganancias ni pérdidas)"
-            
-            debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
-            resultado_embed = discord.Embed(
-                title="💥 Crash Casino - Te retiraste",
-                description=(
-                    f"🎯 **Multiplicador final:** x{mult_al_retirarse:.2f}\n"  # Usar multiplicador capturado
-                    f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
-                    f"💵 **Total recibido:** {ganancia_total} monedas\n"
-                    f"{resultado}\n"
-                    f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n"
-                    f"{self._progress_bar_blocks(min(15, len(self.progress)), 15, explosion=False)}"
-                ),
-                color=color
-            )
-            
-            # Deshabilitar todos los botones
-            for item in self.children:
+        async with self._state_lock:
+            # Si el juego ya terminó o el usuario ya cobró, avisar y salir
+            if self.cobrado or self.juego_terminado:
                 try:
-                    item.disabled = True
-                except AttributeError:
-                    pass  # Algunos items pueden no tener disabled
-            
-            # Intentar responder a la interacción
-            try:
-                if interaction.response.is_done():
-                    await interaction.edit_original_response(embed=resultado_embed, view=self)
-                else:
-                    await interaction.response.edit_message(embed=resultado_embed, view=self)
-            except (discord.InteractionResponded, discord.NotFound, discord.HTTPException):
-                # Si falla, intentar editar el mensaje directamente
-                try:
-                    if self.msg and hasattr(self.msg, 'edit'):
-                        await self.msg.edit(embed=resultado_embed, view=self)
-                    else:
-                        await interaction.followup.send(embed=resultado_embed, ephemeral=True)
-                except:
-                    # Como último recurso, enviar un nuevo mensaje
-                    await interaction.followup.send(embed=resultado_embed, ephemeral=True)
-            
-        except Exception as e:
-            # En caso de error, enviar mensaje de error
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ Error procesando el retiro. Contacta al administrador.", ephemeral=True)
-                else:
-                    await interaction.followup.send("❌ Error procesando el retiro. Contacta al administrador.", ephemeral=True)
-            except:
-                pass
-            raise
-        finally:
-            self.stop()
+                    await interaction.response.send_message("El juego ya ha terminado.", ephemeral=True)
+                except discord.InteractionResponded:
+                    await interaction.followup.send("El juego ya ha terminado.", ephemeral=True)
+                return
+
+            # Deferimos la interacción antes de proceder
+            await interaction.response.defer()
+
+            # Finalizar el juego por retiro
+            await self._finalizar_juego(motivo="retiro", interaction=interaction)
 
     async def run_crash(self, msg, embed):
         self.msg = msg
@@ -266,8 +405,9 @@ class CrashView(discord.ui.View):
             else:
                 while True:
                     # VERIFICACIÓN ATÓMICA: si el juego terminó, salir inmediatamente
-                    if self.cobrado or self.juego_terminado:
-                        return
+                    async with self._state_lock:
+                        if self.cobrado or self.juego_terminado:
+                            return
                     
                     # Determinar incremento y tiempo de espera según el multiplicador actual
                     if self.current_mult < 1.5:
@@ -313,149 +453,31 @@ class CrashView(discord.ui.View):
                     )
                     
                     # Verificar nuevamente antes de actualizar el mensaje de Discord
-                    if not self.juego_terminado and self.msg:
-                        try:
-                            await self.msg.edit(embed=embed, view=self)
-                        except Exception:
-                            pass
+                    async with self._state_lock:
+                        if not self.juego_terminado and self.msg:
+                            try:
+                                await self.msg.edit(embed=embed, view=self)
+                            except Exception:
+                                pass
                     
                     # Esperar antes del siguiente paso
                     await asyncio.sleep(sleep_time)
                 
                 # Si salió del bucle y no se ha cobrado, significa que llegó al crash_point
-                if not self.cobrado and not self.juego_terminado:
-                    explosion = True
-
+                async with self._state_lock:
+                    if not self.cobrado and not self.juego_terminado:
+                        explosion = True
+ 
             # Solo procesar el final del juego si no se ha cobrado ya
-            if not self.cobrado and not self.juego_terminado:
-                self.juego_terminado = True  # Marcar como terminado
-                
-                # Desactivar botones
-                for item in self.children:
-                    try:
-                        item.disabled = True
-                    except AttributeError:
-                        pass
-                
-                if explosion:
-                    # Crear barra visual para la explosión
-                    progress_ratio = min(1.0, self.current_mult / max(self.crash_point, 5.0))
-                    progress_visual = int(progress_ratio * 15)
-                    bar = self._progress_bar_blocks(progress_visual, 15, explosion=True)
-                    
-                    # Registrar pérdida o reembolso
-                    reembolsado = False
-                    if self.ticket_activo and self.current_mult < 1.50:
-                        reembolsado = True
-                                
-                    if reembolsado:
-                        nuevo_saldo = self.saldo + self.apuesta
-                        await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
-                        await asyncio.to_thread(registrar_transaccion, self.user.id, 0, f"Crash: Reembolso por Ticket (<1.5x) en x{self.current_mult:.2f}")
-                        await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'refund', 0, self.difficulty_modifier, nuevo_saldo)
-                        try:
-                            await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
-                        except Exception:
-                            pass
-                        
-                        resultado_embed = discord.Embed(
-                            title="🛡️ Crash Casino - ¡Salvado por Ticket!",
-                            description=(
-                                f"💥 ¡El multiplicador explotó en **x{self.current_mult:.2f}**!\n"
-                                f"🎫 **¡Ticket de Suerte aplicado!** Se reembolsó tu apuesta de {self.apuesta} monedas por explotar antes de x1.50.\n"
-                                f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
-                            ),
-                            color=discord.Color.blue()
-                        )
-                    else:
-                        nuevo_saldo = self.saldo
-                        await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, f"Crash: explotó x{self.current_mult:.2f}")
-                        await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
-                        try:
-                            await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
-                        except Exception:
-                            pass
-                        
-                        resultado_embed = discord.Embed(
-                            title="💥 Crash Casino - ¡Explotó!",
-                            description=(
-                                f"💥 ¡Crash! El multiplicador explotó en **x{self.current_mult:.2f}**\n"
-                                f"❌ **Perdiste** {self.apuesta} monedas.\n"
-                                f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
-                            ),
-                            color=discord.Color.red()
-                        )
-                else:
-                    # Si llegó al final sin explotar, es una victoria automática
-                    # --- MEJORAS BLACK MARKET ---
-                    ganancia_bonus = 1.0
-                    from src.db import usuario_tiene_mejora
-                    if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
-                        ganancia_bonus += 0.15
-                    # ----------------------------
-                    
-                    ganancia_total = int(self.apuesta * self.current_mult * ganancia_bonus)
-                    if self.ticket_activo:
-                        ganancia_total = int(ganancia_total * 0.65)
-                    ganancia_neta = ganancia_total - self.apuesta
-                    
-                    nuevo_saldo = self.saldo + ganancia_total
-                    await asyncio.to_thread(add_balance, self.user.id, ganancia_total)
-                    await asyncio.to_thread(registrar_transaccion, self.user.id, ganancia_neta, f"Crash: completó sin explotar x{self.current_mult:.2f}")
-                    await asyncio.to_thread(record_game_result, self.user.id, 'crash', self.apuesta, 'win', ganancia_neta, self.difficulty_modifier, nuevo_saldo)
-                    try:
-                        await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
-                    except Exception:
-                        pass
-                    
-                    # Barra completa para victoria
-                    bar = self._progress_bar_blocks(15, 15, explosion=False)
-                    debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
-                    resultado_embed = discord.Embed(
-                        title="🎉 Crash Casino - ¡Victoria!",
-                        description=(
-                            f"🎉 ¡Increíble! Llegaste al final sin que explotara\n"
-                            f"🎯 **Multiplicador final:** x{self.current_mult:.2f}\n"
-                            f"✅ **¡GANASTE!** +{ganancia_neta:,} monedas\n"
-                            f"💰 **Total recibido:** {ganancia_total:,} monedas\n"
-                            f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n{bar}"
-                        ),
-                        color=discord.Color.gold()
-                    )
-                
-                try:
-                    if self.msg:
-                        await self.msg.edit(embed=resultado_embed, view=self)
-                except Exception:
-                    try:
-                        if self.msg:
-                            await self.msg.channel.send(embed=resultado_embed)
-                    except:
-                        pass
+            async with self._state_lock:
+                if not self.cobrado and not self.juego_terminado:
+                    await self._finalizar_juego(motivo="explosion" if explosion else "completado")
                         
         except Exception as e:
-            # En caso de error, marcar como terminado y reembolsar
-            self.juego_terminado = True
+            async with self._state_lock:
+                if not self.cobrado and not self.juego_terminado:
+                    await self._finalizar_juego(motivo="error")
             print(f"Error crítico en Crash (run_crash): {e}")
-            try:
-                await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
-                await asyncio.to_thread(registrar_transaccion, self.user.id, 0, "Crash: Reembolso por error de sistema")
-            except Exception as db_err:
-                print(f"Error al intentar reembolsar tras fallo en Crash: {db_err}")
-                
-            try:
-                error_embed = discord.Embed(
-                    title="⚠️ Crash - Juego Cancelado",
-                    description=(
-                        f"Ocurrió un error inesperado al procesar el juego de Crash.\n"
-                        f"**Tu apuesta de {self.apuesta} monedas ha sido devuelta.**"
-                    ),
-                    color=discord.Color.orange()
-                )
-                if self.msg:
-                    await self.msg.edit(embed=error_embed, view=self)
-            except Exception:
-                pass
             raise
         finally:
             self.stop()
