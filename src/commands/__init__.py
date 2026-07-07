@@ -7,7 +7,7 @@ base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if base_path not in sys.path:
     sys.path.insert(0, base_path)
 
-__all__ = ['economy', 'casino', 'general', 'actions', 'moderation', 'shop']
+__all__ = ['economy', 'casino', 'general', 'actions', 'moderation', 'shop', 'duels']
 
 # Esta función permite cargar todos los módulos de comandos de una vez
 async def setup(bot):
@@ -17,6 +17,7 @@ async def setup(bot):
     from .actions import setup as setup_actions
     from .moderation import setup as setup_moderation
     from .shop import setup as setup_shop
+    from .duels import setup as setup_duels
     
     try:
         await setup_economy(bot)
@@ -53,3 +54,9 @@ async def setup(bot):
         print("Shop module loaded successfully")
     except Exception as e:
         print(f"Error loading shop module: {e}")
+
+    try:
+        await setup_duels(bot)
+        print("Duels module loaded successfully")
+    except Exception as e:
+        print(f"Error loading duels module: {e}")

@@ -149,7 +149,6 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
 
     if ratio > 3.0:
         # Víctima MUCHO más rica — "Golpe al Magnate"
-        pct_min, pct_max = 10, 15
         prob_min, prob_max = 35, 50
         penal_min, penal_max = 3, 6
         tier_nombre = "Golpe al Magnate"
@@ -157,7 +156,6 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
         tier_desc = "Objetivo blindado. Alto botín si lo logras."
     elif ratio > 1.5:
         # Víctima más rica — "Asalto Táctico"
-        pct_min, pct_max = 7, 10
         prob_min, prob_max = 45, 58
         penal_min, penal_max = 6, 10
         tier_nombre = "Asalto Táctico"
@@ -165,7 +163,6 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
         tier_desc = "Objetivo con buena seguridad. Riesgo calculado."
     elif ratio > 0.5:
         # Riqueza similar — "Robo Callejero"
-        pct_min, pct_max = 5, 8
         prob_min, prob_max = 48, 58
         penal_min, penal_max = 8, 12
         tier_nombre = "Robo Callejero"
@@ -173,7 +170,6 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
         tier_desc = "Están parejos. El que se descuide pierde."
     else:
         # Víctima más pobre — "Hurto Menor"
-        pct_min, pct_max = 2, 5
         prob_min, prob_max = 60, 72
         penal_min, penal_max = 12, 18
         tier_nombre = "Hurto Menor"
@@ -181,17 +177,19 @@ def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):
         tier_desc = "Objetivo fácil pero poco botín. ¿Vale la pena el riesgo?"
 
     # Calcular valores con algo de varianza
-    porcentaje_robo = random.uniform(pct_min, pct_max)
     prob_exito = random.uniform(prob_min, prob_max)
     penalizacion_pct = random.uniform(penal_min, penal_max)
 
+    # El porcentaje de robo se calcula automáticamente según el nivel del ladrón
+    # Nivel 1 -> 5%, Nivel 25 -> 20%
+    porcentaje_robo = 5.0 + (thief_level - 1) * 0.625
+
     # Aplicar bonificaciones del nivel de ladrón
-    porcentaje_robo += bonuses["loot_bonus_pct"] * 5  # Máx +2% extra al porcentaje
     prob_exito += bonuses["prob_bonus"]  # Máx +30% extra a la probabilidad
     penalizacion_pct *= (1 - bonuses["penalty_reduction"])  # Reducir penalización
 
     # Clampear valores
-    porcentaje_robo = max(1.0, min(20.0, porcentaje_robo))
+    porcentaje_robo = max(5.0, min(20.0, porcentaje_robo))
     prob_exito = max(15.0, min(85.0, prob_exito))
     penalizacion_pct = max(2.0, min(25.0, penalizacion_pct))
 

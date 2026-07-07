@@ -365,7 +365,6 @@ class Robar(commands.Cog):
     async def _robar_logica(self, ctx_or_interaction, victima: discord.Member, is_slash: bool = False):
         """Lógica principal del comando robar."""
         if is_slash:
-            await ctx_or_interaction.response.defer()
             ladron = ctx_or_interaction.user
         else:
             ladron = ctx_or_interaction.author
@@ -379,7 +378,7 @@ class Robar(commands.Cog):
         if victima.bot:
             respuesta = "❌ No puedes robar a un bot."
             if is_slash:
-                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
+                await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
             return
@@ -387,19 +386,13 @@ class Robar(commands.Cog):
         if ladron_id == victima_id:
             respuesta = "❌ No puedes robarte a ti mismo."
             if is_slash:
-                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
+                await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
             else:
                 await ctx_or_interaction.send(respuesta)
             return
             
         try:
-            # Enviar mensaje inicial
-            if is_slash:
-                msg = await ctx_or_interaction.followup.send("🕵️ Analizando al objetivo... calculando el plan...", ephemeral=False)
-            else:
-                msg = await ctx_or_interaction.send("🕵️ Analizando al objetivo... calculando el plan...")
-            
-            # Ejecutar validaciones y lógica de robo en base de datos en un hilo secundario
+            # Ejecutar validaciones y lógica de robo en base de datos en un hilo secundario PRIMERO
             status, data = await asyncio.to_thread(
                 _ejecutar_robo_db, ladron_id, victima_id, ladron_name, victima_name
             )
@@ -408,7 +401,11 @@ class Robar(commands.Cog):
                 tr = data['tiempo_restante']
                 minutos = tr.seconds // 60
                 segundos = tr.seconds % 60
-                await msg.edit(content=f"⏰ Debes esperar {minutos}m {segundos}s para intentar robar nuevamente.", embed=None)
+                respuesta = f"⏰ Debes esperar {minutos}m {segundos}s para intentar robar nuevamente."
+                if is_slash:
+                    await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                else:
+                    await ctx_or_interaction.send(respuesta)
                 return
                 
             if status == 'protection':
@@ -416,12 +413,28 @@ class Robar(commands.Cog):
                 horas = tr.seconds // 3600
                 minutos = (tr.seconds % 3600) // 60
                 prot_h = data['protection_hours']
-                await msg.edit(content=f"🛡️ {victima.mention} tiene protección por {horas}h {minutos}m más (protección de {prot_h:.0f}h por su saldo).", embed=None)
+                respuesta = f"🛡️ {victima.mention} tiene protección por {horas}h {minutos}m más (protección de {prot_h:.0f}h por su saldo)."
+                if is_slash:
+                    await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                else:
+                    await ctx_or_interaction.send(respuesta)
                 return
                 
             if status == 'no_money':
-                await msg.edit(content=f"❌ {victima.mention} no tiene suficiente dinero para robarle (mínimo 1,000 monedas).", embed=None)
+                respuesta = f"❌ {victima.mention} no tiene suficiente dinero para robarle (mínimo 1,000 monedas)."
+                if is_slash:
+                    await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                else:
+                    await ctx_or_interaction.send(respuesta)
                 return
+            
+            # Si llegamos aquí, el robo fue success o fail y la base de datos ya se actualizó.
+            # Procedemos a enviar el mensaje público de preparación y la animación.
+            if is_slash:
+                await ctx_or_interaction.response.defer(ephemeral=False)
+                msg = await ctx_or_interaction.followup.send("🕵️ Analizando al objetivo... calculando el plan...", ephemeral=False)
+            else:
+                msg = await ctx_or_interaction.send("🕵️ Analizando al objetivo... calculando el plan...")
             
             # Obtener parámetros dinámicos del robo para el embed
             robo_params = data['robo_params']
@@ -445,11 +458,11 @@ class Robar(commands.Cog):
                 ),
                 inline=False
             )
-            embed_preparacion.add_field(name="Preparándose", value="Reconociendo el terreno...", inline=False)
+            embed_preparacion.add_field(name="🔍 Estado", value="🕵️ Reconociendo el terreno...", inline=False)
             await msg.edit(content=None, embed=embed_preparacion)
             
             await asyncio.sleep(2)
-            embed_preparacion.add_field(name="En Posición", value="Calculando rutas de escape...", inline=False)
+            embed_preparacion.set_field_at(2, name="🔍 Estado", value="🏃 Calculando rutas de escape...", inline=False)
             await msg.edit(embed=embed_preparacion)
             
             await asyncio.sleep(2)
@@ -490,7 +503,7 @@ class Robar(commands.Cog):
                 embed_exito.add_field(name="Nuevo Saldo (Ladrón)", value=f"{data['nuevo_saldo_ladron']:,} monedas", inline=True)
                 embed_exito.add_field(name="Nuevo Saldo (Víctima)", value=f"{data['nuevo_saldo_victima']:,} monedas", inline=True)
                 embed_exito.set_footer(text=f"{victima_name} tiene protección {data['protection_hours']:.0f}h · Próximo robo en {data['cooldown_minutes']:.0f} min")
-                await msg.edit(embed=embed_exito)
+                await msg.edit(content=f"🔔 {victima.mention}", embed=embed_exito)
                 
             else:  # status == 'fail'
                 embed_fracaso = discord.Embed(
@@ -533,13 +546,19 @@ class Robar(commands.Cog):
                     )
                 embed_fracaso.add_field(name="Nuevo Saldo", value=f"{data['nuevo_saldo_ladron']:,} monedas", inline=True)
                 embed_fracaso.set_footer(text=f"Próximo robo en {data['cooldown_minutes']:.0f} min · Usa /perfil_ladron para ver bonificaciones")
-                await msg.edit(embed=embed_fracaso)
+                await msg.edit(content=f"🔔 {victima.mention}", embed=embed_fracaso)
                 
         except Exception as e:
             print(f"Error en comando robar: {e}")
             respuesta = "❌ Ocurrió un error al procesar el robo."
             if is_slash:
-                await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
+                try:
+                    if not ctx_or_interaction.response.is_done():
+                        await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                    else:
+                        await ctx_or_interaction.followup.send(respuesta, ephemeral=True)
+                except Exception:
+                    pass
             else:
                 await ctx_or_interaction.send(respuesta)
             raise

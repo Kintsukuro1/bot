@@ -1766,11 +1766,283 @@ def init_db():
                     PRIMARY KEY (UserID, ItemID, UsageDate)
                 )
             """)
-            
+
+            # ─── TABLAS DEL SISTEMA DE DUELOS PVP ───
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS CombatStats (
+                    UserID BIGINT PRIMARY KEY,
+                    CombatLevel INT DEFAULT 1,
+                    CombatXP BIGINT DEFAULT 0,
+                    Wins INT DEFAULT 0,
+                    Losses INT DEFAULT 0,
+                    WinStreak INT DEFAULT 0,
+                    BestWinStreak INT DEFAULT 0,
+                    LastDuelTime TIMESTAMP,
+                    TotalMoneyWon BIGINT DEFAULT 0,
+                    TotalMoneyLost BIGINT DEFAULT 0
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS CombatLog (
+                    LogID SERIAL PRIMARY KEY,
+                    ChallengerID BIGINT NOT NULL,
+                    RivalID BIGINT NOT NULL,
+                    WinnerID BIGINT NOT NULL,
+                    Bet BIGINT NOT NULL,
+                    Turns INT NOT NULL,
+                    ChallengerLevel INT,
+                    RivalLevel INT,
+                    Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Drop old table to migrate to new schema if it lacks PrimaryStat
+            cursor.execute("""
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'userequipment' AND column_name = 'primarystat'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("DROP TABLE IF EXISTS UserEquipment CASCADE")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserEquipment (
+                    ID SERIAL PRIMARY KEY,
+                    UserID BIGINT NOT NULL,
+                    Slot VARCHAR(20) NOT NULL,
+                    ItemName VARCHAR(100) NOT NULL,
+                    Rarity VARCHAR(20) NOT NULL,
+                    ItemLevel INT NOT NULL,
+                    PrimaryStat VARCHAR(10) NOT NULL,
+                    PrimaryValue INT NOT NULL,
+                    Secondaries JSONB DEFAULT '[]'::jsonb,
+                    Passive JSONB DEFAULT NULL,
+                    CONSTRAINT uq_user_slot UNIQUE (UserID, Slot)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_combatlog_challenger
+                ON CombatLog (ChallengerID, Timestamp DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_combatlog_rival
+                ON CombatLog (RivalID, Timestamp DESC)
+            """)
+            # ─── FIN TABLAS DUELOS PVP ───
+
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
     except Exception as e:
         logger.error(f"Error inicializando las tablas de la base de datos: {e}")
         raise e
+
+# ==========================================
+# SISTEMA DE DUELOS PVP
+# ==========================================
+
+def get_combat_stats(user_id):
+    """Obtiene las estadísticas de combate de un usuario. Las crea si no existen."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO CombatStats (UserID)
+            VALUES (%s)
+            ON CONFLICT (UserID) DO NOTHING
+        """, (user_id,))
+        cursor.execute("""
+            SELECT CombatLevel, CombatXP, Wins, Losses, WinStreak,
+                   BestWinStreak, LastDuelTime, TotalMoneyWon, TotalMoneyLost
+            FROM CombatStats WHERE UserID = %s
+        """, (user_id,))
+        row = cursor.fetchone()
+        return {
+            'level': row[0] or 1,
+            'xp': row[1] or 0,
+            'wins': row[2] or 0,
+            'losses': row[3] or 0,
+            'win_streak': row[4] or 0,
+            'best_win_streak': row[5] or 0,
+            'last_duel_time': row[6],
+            'total_money_won': row[7] or 0,
+            'total_money_lost': row[8] or 0,
+        }
+
+
+def update_combat_stats_after_duel(user_id, xp_gained, is_win, money_change):
+    """Actualiza las stats de combate tras un duelo, con level-up automático.
+
+    Args:
+        user_id: ID del usuario
+        xp_gained: XP obtenida
+        is_win: True si ganó
+        money_change: monedas ganadas (positivo) o perdidas (negativo)
+
+    Returns:
+        dict con level, xp, leveled_up, previous_level, rank, xp_for_next
+    """
+    from src.utils.combat_progression import apply_combat_xp, get_combat_rank
+    with db_cursor() as cursor:
+        # Asegurar que existe
+        cursor.execute("""
+            INSERT INTO CombatStats (UserID)
+            VALUES (%s)
+            ON CONFLICT (UserID) DO NOTHING
+        """, (user_id,))
+        cursor.execute("""
+            SELECT CombatLevel, CombatXP, WinStreak, BestWinStreak
+            FROM CombatStats WHERE UserID = %s FOR UPDATE
+        """, (user_id,))
+        row = cursor.fetchone()
+        current_level = row[0] or 1
+        current_xp = row[1] or 0
+        win_streak = row[2] or 0
+        best_streak = row[3] or 0
+
+        # Calcular nivel y XP
+        xp_result = apply_combat_xp(current_level, current_xp, xp_gained)
+
+        # Actualizar racha
+        if is_win:
+            win_streak += 1
+            best_streak = max(best_streak, win_streak)
+        else:
+            win_streak = 0
+
+        # Actualizar money stats
+        money_won_add = money_change if money_change > 0 else 0
+        money_lost_add = abs(money_change) if money_change < 0 else 0
+
+        cursor.execute("""
+            UPDATE CombatStats SET
+                CombatLevel = %s,
+                CombatXP = %s,
+                Wins = Wins + %s,
+                Losses = Losses + %s,
+                WinStreak = %s,
+                BestWinStreak = %s,
+                LastDuelTime = CURRENT_TIMESTAMP,
+                TotalMoneyWon = TotalMoneyWon + %s,
+                TotalMoneyLost = TotalMoneyLost + %s
+            WHERE UserID = %s
+        """, (
+            xp_result['level'], xp_result['xp'],
+            1 if is_win else 0,
+            0 if is_win else 1,
+            win_streak, best_streak,
+            money_won_add, money_lost_add,
+            user_id
+        ))
+
+        xp_result['win_streak'] = win_streak
+        xp_result['best_win_streak'] = best_streak
+        return xp_result
+
+
+def log_duel(challenger_id, rival_id, winner_id, bet, turns, c_level, r_level):
+    """Registra un duelo en el historial."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO CombatLog (ChallengerID, RivalID, WinnerID, Bet, Turns, ChallengerLevel, RivalLevel)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (challenger_id, rival_id, winner_id, bet, turns, c_level, r_level))
+
+
+def get_user_equipment(user_id):
+    """Obtiene todo el equipo de un usuario.
+
+    Returns:
+        dict de slot -> {item_name, rarity, item_level, primary_stat, primary_value, secondaries, passive}
+    """
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT Slot, ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive
+            FROM UserEquipment WHERE UserID = %s
+        """, (user_id,))
+        equipment = {}
+        for row in cursor.fetchall():
+            equipment[row[0]] = {
+                'item_name': row[1],
+                'rarity': row[2],
+                'item_level': row[3],
+                'primary_stat': row[4],
+                'primary_value': row[5],
+                'secondaries': row[6] if isinstance(row[6], list) else [],
+                'passive': row[7] if isinstance(row[7], dict) else None,
+            }
+        return equipment
+
+
+def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_value, secondaries=None, passive=None):
+    """Equipa un ítem en un slot (UPSERT). Retorna la pieza anterior si existía.
+
+    Returns:
+        dict de la pieza anterior o None si el slot estaba vacío
+    """
+    import psycopg2.extras
+    if secondaries is None:
+        secondaries = []
+    
+    with db_cursor() as cursor:
+        # Obtener pieza actual
+        cursor.execute("""
+            SELECT ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive
+            FROM UserEquipment WHERE UserID = %s AND Slot = %s
+        """, (user_id, slot))
+        old_row = cursor.fetchone()
+        old_item = None
+        if old_row:
+            old_item = {
+                'item_name': old_row[0],
+                'rarity': old_row[1],
+                'item_level': old_row[2],
+                'primary_stat': old_row[3],
+                'primary_value': old_row[4],
+                'secondaries': old_row[5] if isinstance(old_row[5], list) else [],
+                'passive': old_row[6] if isinstance(old_row[6], dict) else None,
+            }
+
+        # UPSERT
+        cursor.execute("""
+            INSERT INTO UserEquipment (UserID, Slot, ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT ON CONSTRAINT uq_user_slot
+            DO UPDATE SET ItemName = EXCLUDED.ItemName,
+                         Rarity = EXCLUDED.Rarity,
+                         ItemLevel = EXCLUDED.ItemLevel,
+                         PrimaryStat = EXCLUDED.PrimaryStat,
+                         PrimaryValue = EXCLUDED.PrimaryValue,
+                         Secondaries = EXCLUDED.Secondaries,
+                         Passive = EXCLUDED.Passive
+        """, (user_id, slot, name, rarity, item_level, primary_stat, primary_value,
+              psycopg2.extras.Json(secondaries), psycopg2.extras.Json(passive) if passive else None))
+
+        return old_item
+
+
+def get_duel_leaderboard(order_by='wins', limit=10):
+    """Obtiene el ranking de duelos.
+
+    Args:
+        order_by: 'wins' o 'level'
+        limit: número de resultados
+
+    Returns:
+        lista de tuplas (UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak)
+    """
+    valid_orders = {
+        'wins': 'Wins DESC, CombatLevel DESC',
+        'level': 'CombatLevel DESC, CombatXP DESC',
+    }
+    order_clause = valid_orders.get(order_by, valid_orders['wins'])
+    with db_cursor() as cursor:
+        cursor.execute(f"""
+            SELECT UserID, CombatLevel, Wins, Losses, WinStreak, BestWinStreak
+            FROM CombatStats
+            WHERE Wins + Losses > 0
+            ORDER BY {order_clause}
+            LIMIT %s
+        """, (limit,))
+        return cursor.fetchall()
+
 
 def actualizar_racha_trabajo(user_id, job_type):
     """

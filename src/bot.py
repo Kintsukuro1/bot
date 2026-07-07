@@ -199,6 +199,13 @@ async def on_ready():
     user_count = len(unique_user_ids)
     logger.info(f"[USERS] Sirviendo a {user_count} usuarios únicos")
 
+    # Sincronizar comandos slash globalmente al arrancar
+    try:
+        logger.info("[SYNC] Sincronizando comandos slash globalmente...")
+        synced = await bot.tree.sync()
+        logger.info(f"[SYNC] ¡Sincronización global completada! {len(synced)} comandos registrados.")
+    except Exception as e:
+        logger.error(f"[SYNC] Error al sincronizar comandos globalmente: {e}")
     
     # No se inicializa Lavalink - Funcionalidad de música desactivada
     
