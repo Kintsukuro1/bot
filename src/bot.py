@@ -208,14 +208,14 @@ async def on_ready():
             # Discord trata un comando global y un comando de guild como DOS objetos
             # distintos aunque compartan nombre, y el cliente los muestra duplicados.
             #
-            # Mientras el bot esté en desarrollo activo, sincronizamos SOLO a nivel
-            # de guild (instantáneo). Además, limpiamos cualquier comando global viejo
-            # para eliminar los duplicados que ya existan.
-            logger.info("[SYNC] Limpiando comandos globales (evitar duplicados)...")
-            bot.tree.clear_commands(guild=None)
-            await bot.tree.sync()
-            logger.info("[SYNC] Comandos globales limpiados.")
-
+            # Orden correcto:
+            # 1. Los cogs registran sus comandos en el scope GLOBAL del árbol local
+            #    (comportamiento por defecto de discord.py).
+            # 2. copy_global_to(guild) copia esa lista local a cada guild -> sync(guild=...)
+            #    los publica ahí de forma instantánea. Esto debe hacerse ANTES de tocar
+            #    el scope global, porque copy_global_to lee de la lista local global.
+            # 3. Recién al final limpiamos el scope global local y lo sincronizamos
+            #    (vacío) para que Discord no siga mostrando la versión global vieja.
             guild_synced_total = 0
             guild_failed_total = 0
             for guild in bot.guilds:
@@ -235,6 +235,12 @@ async def on_ready():
             logger.info(
                 f"[SYNC] Resumen guild sync: comandos={guild_synced_total} | guilds con error={guild_failed_total}"
             )
+
+            logger.info("[SYNC] Limpiando comandos globales (evitar duplicados)...")
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+            logger.info("[SYNC] Comandos globales limpiados.")
+
             bot.synced = True
         except Exception as e:
             logger.error(f"[SYNC] Error al sincronizar comandos: {e}")

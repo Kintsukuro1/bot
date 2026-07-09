@@ -34,16 +34,17 @@ class SyncCommand(commands.Cog):
                 synced = await ctx.bot.tree.sync()
                 await ctx.send(f"✅ {len(synced)} comandos slash globales sincronizados.")
             else:
-                # Modo por defecto: SOLO guild (instantáneo). No tocamos el scope
-                # global aquí para no generar comandos duplicados en el picker
-                # (un comando global y uno de guild con el mismo nombre se muestran
-                # como dos entradas separadas en Discord).
-                await ctx.send("⏳ Limpiando comandos globales (evitar duplicados) y sincronizando este servidor...")
-                ctx.bot.tree.clear_commands(guild=None)
-                await ctx.bot.tree.sync()
+                # Modo por defecto: SOLO guild (instantáneo). Primero copiamos y
+                # sincronizamos el guild (mientras el árbol local global todavía
+                # tiene los comandos), y RECIÉN DESPUÉS limpiamos el scope global
+                # para no dejar duplicados. Si se limpia el global primero,
+                # copy_global_to no tiene nada que copiar.
+                await ctx.send("⏳ Sincronizando este servidor y limpiando comandos globales...")
                 ctx.bot.tree.copy_global_to(guild=ctx.guild)
                 synced = await ctx.bot.tree.sync(guild=ctx.guild)
-                await ctx.send(f"✅ Comandos globales limpiados. {len(synced)} comandos sincronizados en este servidor.")
+                ctx.bot.tree.clear_commands(guild=None)
+                await ctx.bot.tree.sync()
+                await ctx.send(f"✅ {len(synced)} comandos sincronizados en este servidor. Comandos globales limpiados.")
         except Exception as e:
             await ctx.send(f"❌ Error al sincronizar comandos: {str(e)}")
             raise
