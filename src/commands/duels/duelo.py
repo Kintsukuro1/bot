@@ -604,7 +604,11 @@ class DuelView(discord.ui.View):
             return
         self._payout_done = True
 
-        embed = await self._resolve_duel()
+        try:
+            embed = await self._resolve_duel()
+        finally:
+            self.cog.active_duels.discard(self.p1.user.id)
+            self.cog.active_duels.discard(self.p2.user.id)
 
         for item in self.children:
             if hasattr(item, 'disabled'):
@@ -619,7 +623,11 @@ class DuelView(discord.ui.View):
             return
         self._payout_done = True
 
-        embed = await self._resolve_duel()
+        try:
+            embed = await self._resolve_duel()
+        finally:
+            self.cog.active_duels.discard(self.p1.user.id)
+            self.cog.active_duels.discard(self.p2.user.id)
 
         for item in self.children:
             if hasattr(item, 'disabled'):
