@@ -1251,4 +1251,4 @@ class DuelsCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(DuelsCog(bot))
-    print("✅ Duels cog loaded successfully.")
+    logger.info("Duels cog loaded successfully.")

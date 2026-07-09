@@ -93,7 +93,10 @@ class SpecialMute(commands.Cog):
             msg = f"🛡️ ¡El mute en contra de {mention} ha fallado! La maldición fue protegida por su Escudo Anti-Mute y el escudo se ha consumido.{mensaje_item}"
             
             if log_channel and isinstance(log_channel, discord.TextChannel):
-                await log_channel.send(msg)
+                try:
+                    await log_channel.send(msg)
+                except discord.Forbidden:
+                    pass
             await interaction.response.send_message(msg, ephemeral=True)
             return
         
@@ -135,6 +138,8 @@ class SpecialMute(commands.Cog):
                     if miembro.id not in mute_cooldown:
                         mute_cooldown[miembro.id] = {}
                     mute_cooldown[miembro.id][user_id] = datetime.datetime.now()
+            except discord.Forbidden:
+                msg = f"❌ No tengo permisos suficientes para mutear (dar timeout) a {mention}. Asegúrate de que mi rol esté por encima de su rol en la jerarquía y que tenga habilitado el permiso 'Silenciar miembros' (Moderate Members) en el servidor."
             except Exception as e:
                 msg = f"No se pudo mutear a {mention}: {e}"
         else:
@@ -145,7 +150,10 @@ class SpecialMute(commands.Cog):
 
         # Solo enviar al canal de logs si existe y es un canal de texto
         if log_channel and isinstance(log_channel, discord.TextChannel):
-            await log_channel.send(msg)
+            try:
+                await log_channel.send(msg)
+            except discord.Forbidden:
+                pass
         await interaction.response.send_message(msg, ephemeral=True)
 
 async def setup(bot):

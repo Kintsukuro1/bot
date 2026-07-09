@@ -8,14 +8,19 @@ from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
 
+# Definición de baraja estándar de 52 cartas sin comodines (Jokers) para realismo
 suits = ["♠", "♥", "♦", "♣"]
 ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 values = {"A": 11, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10, "J": 10, "Q": 10, "K": 10}
 
 def draw_card(deck):
-    card = random.choice(deck)
-    deck.remove(card)
-    return card
+    # Dibuja la carta superior de la baraja mezclada (pop).
+    # Si la baraja está vacía, la regeneramos y mezclamos (52 cartas, sin comodines).
+    if not deck:
+        new_deck = [f"{rank}{suit}" for suit in suits for rank in ranks]
+        random.shuffle(new_deck)
+        deck.extend(new_deck)
+    return deck.pop()
 
 def hand_value(hand):
     value = sum(values[card[:-1]] for card in hand)
@@ -57,7 +62,7 @@ class BlackjackView(discord.ui.View):
         from src.db import deduct_balance
         success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user.id, self.apuesta)
         if not success:
-            await interaction.response.send_message("❌ No tienes suficiente saldo para dividir (requiere apostar de nuevo).", ephemeral=True)
+            await interaction.followup.send("❌ No tienes suficiente saldo para dividir (requiere apostar de nuevo).", ephemeral=True)
             return
             
         self.saldo = nuevo_saldo
