@@ -180,6 +180,8 @@ class DuelView(discord.ui.View):
         # Elecciones de acción de cada jugador en la ronda actual
         self.p1_action = None  # 'attack', 'defend', 'special', 'timeout' o None
         self.p2_action = None
+        self.p1_special_id = None
+        self.p2_special_id = None
 
         # Turnos restantes del debuff de ceguera (Tierra a los ojos)
         self.p1_blinded_turns = 0
@@ -321,8 +323,21 @@ class DuelView(discord.ui.View):
 
         await self._check_and_resolve(interaction)
 
-    @discord.ui.button(label="✨ Especial", style=discord.ButtonStyle.success, row=0)
-    async def special_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.select(
+        placeholder="✨ Lanzar Habilidad Especial...",
+        min_values=1,
+        max_values=1,
+        row=1,
+        options=[
+            discord.SelectOption(label="Tierra a los ojos (Nvl. 1)", value="ceguera", emoji="👁️", description="Reduce precisión del rival por 3 turnos."),
+            discord.SelectOption(label="Frenesí de Batalla (Guerrero Nvl. 5)", value="frenesi", emoji="⚔️", description="Guerrero: +ATK, +daño recibido."),
+            discord.SelectOption(label="Postura de Represalia (Paladín Nvl. 5)", value="represalia", emoji="🛡️", description="Paladín: Mitiga y refleja daño."),
+            discord.SelectOption(label="Daga Envenenada (Pícaro Nvl. 5)", value="veneno", emoji="🥷", description="Pícaro: Daño físico y veneno continuo."),
+            discord.SelectOption(label="Tormenta de Fuego (Mago Nvl. 5)", value="quemadura", emoji="🔥", description="Mago: Daño mágico y quemadura continua."),
+            discord.SelectOption(label="Drenaje Sagrado (Clérigo Nvl. 5)", value="drenaje", emoji="⚕️", description="Clérigo: Roba vida y limpia debuffs.")
+        ]
+    )
+    async def select_special(self, interaction: discord.Interaction, select: discord.ui.Select):
         if self.game_over:
             await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
             return
@@ -334,49 +349,75 @@ class DuelView(discord.ui.View):
             await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
 
-        if cp.level < SPECIAL_UNLOCK_LEVEL:
-            await interaction.response.send_message(
-                f"❌ Necesitas nivel {SPECIAL_UNLOCK_LEVEL} para usar Especial (tienes nivel {cp.level}).",
-                ephemeral=True
-            )
-            return
-
         if cp.special_cooldown > 0:
             await interaction.response.send_message(
                 f"❌ Habilidad Especial en enfriamiento ({cp.special_cooldown} turnos restantes).",
                 ephemeral=True
             )
+            # Re-edit para quitar la selección visual
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
             return
 
-        # Nombre y emoji del especial
-        def get_special_info(combatant):
-            if combatant.level < 5 or not combatant.combat_class:
-                return "Tierra a los ojos", "👁️"
-            specials = {
-                "Guerrero": ("Frenesí de Batalla", "⚔️"),
-                "Paladín": ("Postura de Represalia", "🛡️"),
-                "Pícaro": ("Daga Envenenada", "🥷"),
-                "Mago": ("Tormenta de Fuego", "🔥"),
-                "Clérigo": ("Drenaje Sagrado", "⚕️")
-            }
-            return specials.get(combatant.combat_class, ("Tierra a los ojos", "👁️"))
+        selected_value = select.values[0]
+        
+        # Validar si el especial seleccionado corresponde a su clase y nivel
+        skills_requirements = {
+            "ceguera": {"class": None, "min_level": 1, "name": "Tierra a los ojos", "emoji": "👁️"},
+            "frenesi": {"class": "Guerrero", "min_level": 5, "name": "Frenesí de Batalla", "emoji": "⚔️"},
+            "represalia": {"class": "Paladín", "min_level": 5, "name": "Postura de Represalia", "emoji": "🛡️"},
+            "veneno": {"class": "Pícaro", "min_level": 5, "name": "Daga Envenenada", "emoji": "🥷"},
+            "quemadura": {"class": "Mago", "min_level": 5, "name": "Tormenta de Fuego", "emoji": "🔥"},
+            "drenaje": {"class": "Clérigo", "min_level": 5, "name": "Drenaje Sagrado", "emoji": "⚕️"},
+        }
+        
+        req = skills_requirements.get(selected_value)
+        if not req:
+            await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
+            return
+            
+        if req["class"] is not None:
+            if cp.level < req["min_level"] or cp.combat_class != req["class"]:
+                await interaction.response.send_message(
+                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    ephemeral=True
+                )
+                try:
+                    await interaction.message.edit(view=self)
+                except Exception:
+                    pass
+                return
+        else:
+            if cp.level >= 5 and cp.combat_class is not None:
+                await interaction.response.send_message(
+                    "❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
+                    ephemeral=True
+                )
+                try:
+                    await interaction.message.edit(view=self)
+                except Exception:
+                    pass
+                return
 
-        sp_name, sp_emoji = get_special_info(cp)
-
+        # Registrar la acción
         if user_id == self.p1.user.id:
             if self.p1_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p1_action = 'special'
+            self.p1_special_id = selected_value
             self.p1.consecutive_timeouts = 0
-            await interaction.response.send_message(f"{sp_emoji} Has elegido lanzar **{sp_name}**.", ephemeral=True)
+            await interaction.response.send_message(f"{req['emoji']} Has elegido lanzar **{req['name']}**.", ephemeral=True)
         else:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'special'
+            self.p2_special_id = selected_value
             self.p2.consecutive_timeouts = 0
-            await interaction.response.send_message(f"{sp_emoji} Has elegido lanzar **{sp_name}**.", ephemeral=True)
+            await interaction.response.send_message(f"{req['emoji']} Has elegido lanzar **{req['name']}**.", ephemeral=True)
 
         await self._check_and_resolve(interaction)
 
@@ -464,26 +505,26 @@ class DuelView(discord.ui.View):
                 cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
                 caster.special_cooldown = cooldown + 1 # +1 porque se decrementa al final de esta ronda
                 
-                c_class = caster.combat_class
-                if caster.level < 5 or not c_class:
+                special_id = self.p1_special_id if caster == self.p1 else self.p2_special_id
+                if not special_id or special_id == "ceguera":
                     if target == self.p1:
                         self.p1_blinded_turns = 4 # 3 turnos + 1
                     else:
                         self.p2_blinded_turns = 4
                     logs.append(f"👁️ **Tierra a los ojos:** {caster.user.display_name} lanza tierra a los ojos de {target.user.display_name}!")
-                elif c_class == "Guerrero":
+                elif special_id == "frenesi":
                     if caster == self.p1:
                         self.p1_frenzy_turns = 3 # 2 turnos + 1
                     else:
                         self.p2_frenzy_turns = 3
                     logs.append(f"⚔️ **Frenesí de Batalla:** {caster.user.display_name} entra en Frenesí (+ATK, -DEF)!")
-                elif c_class == "Paladín":
+                elif special_id == "represalia":
                     if caster == self.p1:
                         self.p1_retribution_active = True
                     else:
                         self.p2_retribution_active = True
                     logs.append(f"🛡️ **Postura de Represalia:** {caster.user.display_name} prepara un contraataque total para esta ronda!")
-                elif c_class == "Clérigo":
+                elif special_id == "drenaje":
                     steal_amt = max(1, int(target.hp * 0.15))
                     target.hp = max(0, target.hp - steal_amt)
                     caster.hp = min(caster.max_hp, caster.hp + steal_amt)
@@ -590,6 +631,8 @@ class DuelView(discord.ui.View):
         # Limpiar acciones y estados para la próxima ronda
         self.p1_action = None
         self.p2_action = None
+        self.p1_special_id = None
+        self.p2_special_id = None
         self.p1.is_defending = False
         self.p2.is_defending = False
 
@@ -637,6 +680,8 @@ class DuelView(discord.ui.View):
             new_view.p2_poison_turns = self.p2_poison_turns
             new_view.p1_burn_turns = self.p1_burn_turns
             new_view.p2_burn_turns = self.p2_burn_turns
+            new_view.p1_special_id = self.p1_special_id
+            new_view.p2_special_id = self.p2_special_id
             new_view.interaction_msg = self.interaction_msg
             
             try:
@@ -709,28 +754,29 @@ class DuelView(discord.ui.View):
             return damage, log_line
 
         elif action_type == 'special':
-            c_class = attacker.combat_class
-            if attacker.level < 5 or not c_class:
+            special_id = self.p1_special_id if attacker == self.p1 else self.p2_special_id
+            
+            if not special_id or special_id == "ceguera":
                 # Básico: Tierra a los ojos
                 log_line = f"👁️ {attacker.user.display_name} lanzó tierra en los ojos de {defender.user.display_name}."
                 return 0, log_line
             
-            elif c_class == "Guerrero":
+            elif special_id == "frenesi":
                 # Frenesí de Batalla (ya manejado en buffs/debuffs)
                 log_line = f"⚔️ {attacker.user.display_name} activa Frenesí de Batalla."
                 return 0, log_line
                 
-            elif c_class == "Paladín":
+            elif special_id == "represalia":
                 # Postura de Represalia (ya manejado en buffs/debuffs)
                 log_line = f"🛡️ {attacker.user.display_name} adopta la Postura de Represalia."
                 return 0, log_line
                 
-            elif c_class == "Clérigo":
+            elif special_id == "drenaje":
                 # Drenaje Sagrado (ya manejado en buffs/debuffs)
                 log_line = f"⚕️ {attacker.user.display_name} usa Drenaje Sagrado."
                 return 0, log_line
                 
-            elif c_class == "Pícaro":
+            elif special_id == "veneno":
                 # Daga Envenenada: daño físico y aplica envenenamiento
                 if defender == self.p1:
                     self.p1_poison_turns = 4
@@ -758,7 +804,7 @@ class DuelView(discord.ui.View):
                 log_line = f"🥷 {attacker.user.display_name} usa **Daga Envenenada** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}"
                 return damage, log_line
                 
-            elif c_class == "Mago":
+            elif special_id == "quemadura":
                 # Tormenta de Fuego: daño mágico y aplica quemadura
                 if defender == self.p1:
                     self.p1_burn_turns = 4
