@@ -42,8 +42,13 @@ class SyncCommand(commands.Cog):
                 await ctx.send("⏳ Sincronizando este servidor y limpiando comandos globales...")
                 ctx.bot.tree.copy_global_to(guild=ctx.guild)
                 synced = await ctx.bot.tree.sync(guild=ctx.guild)
+                # Guardamos y restauramos los comandos globales locales para no perder la
+                # definición en memoria que se usará en futuras copias/sincronizaciones
+                global_cmds = ctx.bot.tree.get_commands(guild=None)
                 ctx.bot.tree.clear_commands(guild=None)
                 await ctx.bot.tree.sync()
+                for cmd in global_cmds:
+                    ctx.bot.tree.add_command(cmd)
                 await ctx.send(f"✅ {len(synced)} comandos sincronizados en este servidor. Comandos globales limpiados.")
         except Exception as e:
             await ctx.send(f"❌ Error al sincronizar comandos: {str(e)}")

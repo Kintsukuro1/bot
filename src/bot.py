@@ -237,8 +237,12 @@ async def on_ready():
             )
 
             logger.info("[SYNC] Limpiando comandos globales (evitar duplicados)...")
+            # Guardamos los comandos globales locales antes de vaciar para no perderlos en memoria
+            global_cmds = bot.tree.get_commands(guild=None)
             bot.tree.clear_commands(guild=None)
             await bot.tree.sync()
+            for cmd in global_cmds:
+                bot.tree.add_command(cmd)
             logger.info("[SYNC] Comandos globales limpiados.")
 
             bot.synced = True
@@ -436,7 +440,13 @@ async def reload_cog(ctx, cog: Optional[str] = None):
 async def sync_slash(ctx):
     """Fuerza la sincronización de comandos slash (global + por servidor)."""
     try:
+        # Guardamos y restauramos los comandos globales locales para que no se pierdan
+        # en la memoria del bot al limpiar el scope global en Discord.
+        global_cmds = bot.tree.get_commands(guild=None)
+        bot.tree.clear_commands(guild=None)
         synced_global = await bot.tree.sync()
+        for cmd in global_cmds:
+            bot.tree.add_command(cmd)
 
         guild_ok = 0
         guild_fail = 0
