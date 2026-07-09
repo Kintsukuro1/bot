@@ -57,6 +57,12 @@ class SpecialMute(commands.Cog):
             await interaction.response.send_message("No puedes mutearte a ti mismo con este comando.", ephemeral=True)
             # No consumir el item en este caso
             return
+
+        # Evitar mutear a usuarios ignorados
+        from src.db import is_user_ignored
+        if await asyncio.to_thread(is_user_ignored, miembro.id):
+            await interaction.response.send_message("❌ Este usuario está en la lista de ignorados y no puede ser afectado por Special Mute.", ephemeral=True)
+            return
             
         # Verificar cooldown (solo para usuarios no admin)
         if not es_admin:
