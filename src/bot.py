@@ -204,9 +204,17 @@ async def on_ready():
     # Además de la sync global, copiamos global->guild para propagación inmediata por servidor.
     if not getattr(bot, "synced", False):
         try:
-            logger.info("[SYNC] Sincronizando comandos slash globalmente...")
-            synced_global = await bot.tree.sync()
-            logger.info(f"[SYNC] ¡Sincronización global completada! {len(synced_global)} comandos registrados.")
+            # IMPORTANTE: no mezclar sync global + sync por guild para el mismo servidor.
+            # Discord trata un comando global y un comando de guild como DOS objetos
+            # distintos aunque compartan nombre, y el cliente los muestra duplicados.
+            #
+            # Mientras el bot esté en desarrollo activo, sincronizamos SOLO a nivel
+            # de guild (instantáneo). Además, limpiamos cualquier comando global viejo
+            # para eliminar los duplicados que ya existan.
+            logger.info("[SYNC] Limpiando comandos globales (evitar duplicados)...")
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+            logger.info("[SYNC] Comandos globales limpiados.")
 
             guild_synced_total = 0
             guild_failed_total = 0
@@ -229,7 +237,7 @@ async def on_ready():
             )
             bot.synced = True
         except Exception as e:
-            logger.error(f"[SYNC] Error al sincronizar comandos globalmente: {e}")
+            logger.error(f"[SYNC] Error al sincronizar comandos: {e}")
     
     # No se inicializa Lavalink - Funcionalidad de música desactivada
     
