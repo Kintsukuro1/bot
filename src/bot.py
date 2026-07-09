@@ -539,6 +539,22 @@ async def list_ignored_users(ctx):
     else:
         await ctx.send("📋 La lista de ignorados está vacía.")
 
+
+@bot.command(name='resettickets')
+async def reset_tickets(ctx, user_id: int):
+    """Resetea los tickets/escudos diarios y cooldowns de un usuario (Solo Dueño)."""
+    if ctx.author.id != 287396390747766795:
+        await ctx.send("❌ No tienes permisos para usar este comando.")
+        return
+    
+    from src.db import reset_user_daily_usage
+    success = await asyncio.to_thread(reset_user_daily_usage, user_id)
+    if success:
+        await ctx.send(f"✅ Se han reseteado los tickets de protección, límites diarios de escudos y energía para el usuario `{user_id}`.")
+    else:
+        await ctx.send("❌ Error al resetear los tickets del usuario.")
+
+
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):
     """Manejo de errores para comandos slash."""

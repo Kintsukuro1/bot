@@ -2212,3 +2212,23 @@ def get_all_ignored_users() -> list[int]:
         logger.error(f"Error getting ignored users list: {e}")
         return []
 
+
+def reset_user_daily_usage(user_id: int, item_id: int = None) -> bool:
+    """Resetea los límites/tickets diarios de un usuario eliminando sus registros en DailyItemUsage."""
+    try:
+        with db_cursor() as cursor:
+            if item_id is not None:
+                cursor.execute("""
+                    DELETE FROM DailyItemUsage 
+                    WHERE UserID = %s AND ItemID = %s
+                """, (user_id, item_id))
+            else:
+                cursor.execute("""
+                    DELETE FROM DailyItemUsage 
+                    WHERE UserID = %s
+                """, (user_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error resetting daily usage for user {user_id}: {e}")
+        return False
+
