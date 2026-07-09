@@ -468,14 +468,27 @@ class DuelView(discord.ui.View):
         # Siguiente ronda
         self.reset_timeout()
         embed = self._build_embed()
-        if interaction:
-            await interaction.message.edit(embed=embed, view=self)
-        else:
+        
+        # Si la ronda se resolvió desde timeout, esta vista se ha detenido.
+        # Debemos crear una nueva vista para la siguiente ronda para que los botones sigan activos.
+        if interaction is None:
+            new_view = DuelView(self.p1, self.p2, self.bet, self.cog)
+            new_view.turn_count = self.turn_count
+            new_view.action_log = self.action_log
+            new_view.p1_blinded_turns = self.p1_blinded_turns
+            new_view.p2_blinded_turns = self.p2_blinded_turns
+            new_view.interaction_msg = self.interaction_msg
+            
             try:
                 if self.interaction_msg:
-                    await self.interaction_msg.edit(embed=embed, view=self)
+                    await self.interaction_msg.edit(embed=embed, view=new_view)
             except Exception:
                 pass
+            self.stop()
+            return
+
+        if interaction:
+            await interaction.message.edit(embed=embed, view=self)
 
     def _calculate_action_result(self, attacker: Combatant, defender: Combatant, action_type: str) -> tuple[int, str]:
         """Calcula el daño y genera la línea de log para una acción ofensiva individual."""
