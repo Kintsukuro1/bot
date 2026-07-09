@@ -897,8 +897,6 @@ class DuelsCog(commands.Cog):
         apuesta="Cantidad de monedas a apostar"
     )
     async def duelo_cmd(self, interaction: discord.Interaction, rival: discord.Member, apuesta: int):
-        await interaction.response.defer()
-
         challenger = interaction.user
         challenger_id = challenger.id
         rival_id = rival.id
@@ -906,21 +904,21 @@ class DuelsCog(commands.Cog):
         # ── Validaciones ──
 
         if rival.bot:
-            await interaction.followup.send("❌ No puedes retar a un bot.", ephemeral=True)
+            await interaction.response.send_message("❌ No puedes retar a un bot.", ephemeral=True)
             return
 
         if challenger_id == rival_id:
-            await interaction.followup.send("❌ No puedes retarte a ti mismo.", ephemeral=True)
+            await interaction.response.send_message("❌ No puedes retarte a ti mismo.", ephemeral=True)
             return
 
         if apuesta < MIN_BET:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f"❌ La apuesta mínima es **{MIN_BET:,}** monedas.", ephemeral=True
             )
             return
 
         if challenger_id in self.active_duels or rival_id in self.active_duels:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 "❌ Uno de los jugadores ya tiene un duelo en curso.", ephemeral=True
             )
             return
@@ -934,13 +932,13 @@ class DuelsCog(commands.Cog):
         r_balance = await asyncio.to_thread(get_balance, rival_id)
 
         if c_balance < apuesta:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f"❌ No tienes suficiente saldo ({c_balance:,}/{apuesta:,} monedas).", ephemeral=True
             )
             return
 
         if r_balance < apuesta:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f"❌ {rival.mention} no tiene suficiente saldo para la apuesta.", ephemeral=True
             )
             return
@@ -957,7 +955,7 @@ class DuelsCog(commands.Cog):
                 remaining = c_stats['last_duel_time'] + cooldown_delta - datetime.now()
                 mins = remaining.seconds // 60
                 secs = remaining.seconds % 60
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     f"⏰ Debes esperar **{mins}m {secs}s** para tu próximo duelo.",
                     ephemeral=True
                 )
@@ -966,7 +964,7 @@ class DuelsCog(commands.Cog):
         # Diferencia de nivel
         level_diff = abs(c_stats['level'] - r_stats['level'])
         if level_diff > MAX_LEVEL_DIFFERENCE:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f"❌ La diferencia de nivel es demasiado grande "
                 f"(Nv.{c_stats['level']} vs Nv.{r_stats['level']}, máx {MAX_LEVEL_DIFFERENCE}).",
                 ephemeral=True
@@ -976,7 +974,7 @@ class DuelsCog(commands.Cog):
         # ── Cobrar apuesta al retador ──
         success, _ = await asyncio.to_thread(deduct_balance, challenger_id, apuesta)
         if not success:
-            await interaction.followup.send("❌ No se pudo cobrar la apuesta.", ephemeral=True)
+            await interaction.response.send_message("❌ No se pudo cobrar la apuesta.", ephemeral=True)
             return
 
         # Marcar como activos
@@ -1009,7 +1007,8 @@ class DuelsCog(commands.Cog):
         embed.set_footer(text=f"El reto expira en {CHALLENGE_TIMEOUT_SECONDS}s · Solo {rival.display_name} puede responder")
 
         challenge_view = ChallengeView(challenger, rival, apuesta, self)
-        msg = await interaction.followup.send(embed=embed, view=challenge_view)
+        await interaction.response.send_message(embed=embed, view=challenge_view)
+        msg = await interaction.original_response()
 
         # Esperar respuesta
         await challenge_view.wait()
