@@ -947,19 +947,7 @@ class DuelsCog(commands.Cog):
         c_stats = await asyncio.to_thread(get_combat_stats, challenger_id)
         r_stats = await asyncio.to_thread(get_combat_stats, rival_id)
 
-        # Cooldown
-        if c_stats['last_duel_time']:
-            cooldown_mins = get_duel_cooldown_minutes(c_stats['level'])
-            cooldown_delta = timedelta(minutes=cooldown_mins)
-            if datetime.now() - c_stats['last_duel_time'] < cooldown_delta:
-                remaining = c_stats['last_duel_time'] + cooldown_delta - datetime.now()
-                mins = remaining.seconds // 60
-                secs = remaining.seconds % 60
-                await interaction.response.send_message(
-                    f"⏰ Debes esperar **{mins}m {secs}s** para tu próximo duelo.",
-                    ephemeral=True
-                )
-                return
+
 
         # Diferencia de nivel
         level_diff = abs(c_stats['level'] - r_stats['level'])
