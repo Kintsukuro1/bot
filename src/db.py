@@ -1854,6 +1854,14 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_combatlog_rival
                 ON CombatLog (RivalID, Timestamp DESC)
             """)
+
+            # Tabla: IgnoredUsers
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS IgnoredUsers (
+                    UserID BIGINT PRIMARY KEY,
+                    AddedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             # ─── FIN TABLAS DUELOS PVP ───
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
@@ -2156,4 +2164,51 @@ def process_crash_payout_atomic(user_id, apuesta, ganancia_total, ganancia_neta,
         add_balance(user_id, ganancia_total, cursor=cursor)
         registrar_transaccion(user_id, ganancia_neta, desc_transaccion, cursor=cursor)
         record_game_result(user_id, 'crash', apuesta, result_type, ganancia_neta, difficulty_modifier, nuevo_saldo, cursor=cursor)
+
+
+def is_user_ignored(user_id: int) -> bool:
+    """Verifica si un usuario está en la lista de ignorados."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("SELECT 1 FROM IgnoredUsers WHERE UserID = %s", (user_id,))
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error checking if user {user_id} is ignored: {e}")
+        return False
+
+
+def add_ignored_user(user_id: int) -> bool:
+    """Añade un usuario a la lista de ignorados (evita duplicados)."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO IgnoredUsers (UserID) VALUES (%s)
+                ON CONFLICT (UserID) DO NOTHING
+            """, (user_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error adding user {user_id} to ignored list: {e}")
+        return False
+
+
+def remove_ignored_user(user_id: int) -> bool:
+    """Elimina un usuario de la lista de ignorados."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("DELETE FROM IgnoredUsers WHERE UserID = %s", (user_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error removing user {user_id} from ignored list: {e}")
+        return False
+
+
+def get_all_ignored_users() -> list[int]:
+    """Obtiene la lista de IDs de todos los usuarios ignorados."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("SELECT UserID FROM IgnoredUsers")
+            return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting ignored users list: {e}")
+        return []
 

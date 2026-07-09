@@ -258,6 +258,11 @@ ALLOWED_CHANNEL_ID = 1519533661806923866
 
 @bot.check
 async def global_prefix_check(ctx):
+    # Ignorar usuarios en la lista de ignorados
+    from src.db import is_user_ignored
+    if await asyncio.to_thread(is_user_ignored, ctx.author.id):
+        return False
+
     # Permitir libremente en el servidor de pruebas (Little paradise)
     if ctx.guild and ctx.guild.id == 1019371540908884090:
         return True
@@ -270,6 +275,18 @@ async def global_prefix_check(ctx):
 
 @bot.tree.interaction_check
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
+    # Ignorar usuarios en la lista de ignorados
+    from src.db import is_user_ignored
+    if await asyncio.to_thread(is_user_ignored, interaction.user.id):
+        try:
+            await interaction.response.send_message(
+                "❌ Estás en la lista de ignorados y no puedes interactuar con el bot.", 
+                ephemeral=True
+            )
+        except Exception:
+            pass
+        return False
+
     # Permitir libremente en el servidor de pruebas (Little paradise)
     if interaction.guild and interaction.guild.id == 1019371540908884090:
         return True
@@ -475,6 +492,52 @@ async def sync_slash(ctx):
     except Exception as e:
         await ctx.send(f"❌ **Error al sincronizar slash commands:** {e}")
         logger.error(f"[SYNC] Error en syncslash: {e}")
+
+
+@bot.command(name='ignore')
+async def ignore_user(ctx, user_id: int):
+    """Añade un usuario por ID a la lista de ignorados (Solo Dueño)."""
+    if ctx.author.id != 287396390747766795:
+        await ctx.send("❌ No tienes permisos para usar este comando.")
+        return
+    
+    from src.db import add_ignored_user
+    success = await asyncio.to_thread(add_ignored_user, user_id)
+    if success:
+        await ctx.send(f"✅ Usuario `{user_id}` añadido a la lista de ignorados.")
+    else:
+        await ctx.send("❌ Error al añadir el usuario.")
+
+
+@bot.command(name='unignore')
+async def unignore_user(ctx, user_id: int):
+    """Elimina un usuario por ID de la lista de ignorados (Solo Dueño)."""
+    if ctx.author.id != 287396390747766795:
+        await ctx.send("❌ No tienes permisos para usar este comando.")
+        return
+    
+    from src.db import remove_ignored_user
+    success = await asyncio.to_thread(remove_ignored_user, user_id)
+    if success:
+        await ctx.send(f"✅ Usuario `{user_id}` eliminado de la lista de ignorados.")
+    else:
+        await ctx.send("❌ Error al eliminar el usuario.")
+
+
+@bot.command(name='ignoredlist')
+async def list_ignored_users(ctx):
+    """Muestra la lista de usuarios ignorados (Solo Dueño)."""
+    if ctx.author.id != 287396390747766795:
+        await ctx.send("❌ No tienes permisos para usar este comando.")
+        return
+    
+    from src.db import get_all_ignored_users
+    users = await asyncio.to_thread(get_all_ignored_users)
+    if users:
+        users_str = ", ".join(f"`{uid}`" for uid in users)
+        await ctx.send(f"📋 **Usuarios ignorados:** {users_str}")
+    else:
+        await ctx.send("📋 La lista de ignorados está vacía.")
 
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):

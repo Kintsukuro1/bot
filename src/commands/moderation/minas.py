@@ -146,6 +146,11 @@ class Minas(commands.Cog):
         if message.author.bot:
             return
 
+        # Ignorar usuarios en la lista de ignorados
+        from src.db import is_user_ignored
+        if await asyncio.to_thread(is_user_ignored, message.author.id):
+            return
+
         # Ignorar DMs u otros contextos sin guild
         if message.guild is None:
             return
