@@ -179,6 +179,10 @@ class DuelView(discord.ui.View):
         # Elecciones de acción de cada jugador en la ronda actual
         self.p1_action = None  # 'attack', 'defend', 'special', 'timeout' o None
         self.p2_action = None
+
+        # Turnos restantes del debuff de ceguera (Tierra a los ojos)
+        self.p1_blinded_turns = 0
+        self.p2_blinded_turns = 0
         
         self.turn_count = 0
         self.game_over = False
@@ -203,7 +207,12 @@ class DuelView(discord.ui.View):
         for p in (self.p1, self.p2):
             rank_emoji = get_combat_rank_emoji(p.level)
             hp_bar = format_hp_bar(p.hp, p.max_hp)
+            
+            # Comprobar si está cegado
+            blind_turns = self.p1_blinded_turns if p == self.p1 else self.p2_blinded_turns
             status_icons = ""
+            if blind_turns > 0:
+                status_icons += f" 👁️(Cegado {blind_turns}t)"
             if p.special_cooldown > 0:
                 status_icons += f" ✨({p.special_cooldown}t)"
             
@@ -229,7 +238,7 @@ class DuelView(discord.ui.View):
         )
 
         # Indicar acciones disponibles
-        actions = ["⚔️ Atacar", "🛡️ Defender", "✨ Especial"]
+        actions = ["⚔️ Atacar", "🛡️ Defender", "👁️ Tierra a los ojos"]
         embed.set_footer(text=f"Acciones: {' · '.join(actions)} · Tiempo por ronda: {TURN_TIMEOUT_SECONDS}s")
 
         return embed
@@ -290,7 +299,7 @@ class DuelView(discord.ui.View):
 
         await self._check_and_resolve(interaction)
 
-    @discord.ui.button(label="✨ Especial", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="👁️ Tierra a los ojos", style=discord.ButtonStyle.success, row=0)
     async def special_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.game_over:
             await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
@@ -323,14 +332,14 @@ class DuelView(discord.ui.View):
                 return
             self.p1_action = 'special'
             self.p1.consecutive_timeouts = 0
-            await interaction.response.send_message("✨ Has elegido lanzar tu **Especial**.", ephemeral=True)
+            await interaction.response.send_message("👁️ Has elegido lanzar **Tierra a los ojos**.", ephemeral=True)
         else:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'special'
             self.p2.consecutive_timeouts = 0
-            await interaction.response.send_message("✨ Has elegido lanzar tu **Especial**.", ephemeral=True)
+            await interaction.response.send_message("👁️ Has elegido lanzar **Tierra a los ojos**.", ephemeral=True)
 
         await self._check_and_resolve(interaction)
 
@@ -414,10 +423,15 @@ class DuelView(discord.ui.View):
         if p2_act == 'timeout':
             logs.append(f"⏰ {self.p2.user.display_name} no respondió a tiempo.")
 
-        # Decrementar cooldowns de especial
+        # Decrementar cooldowns de especial y turnos de ceguera
         for p in (self.p1, self.p2):
             if p.special_cooldown > 0:
                 p.special_cooldown -= 1
+
+        if self.p1_blinded_turns > 0:
+            self.p1_blinded_turns -= 1
+        if self.p2_blinded_turns > 0:
+            self.p2_blinded_turns -= 1
 
         # Limpiar acciones y estados para la próxima ronda
         self.p1_action = None
@@ -465,6 +479,19 @@ class DuelView(discord.ui.View):
 
     def _calculate_action_result(self, attacker: Combatant, defender: Combatant, action_type: str) -> tuple[int, str]:
         """Calcula el daño y genera la línea de log para una acción ofensiva individual."""
+        import random
+
+        # Verificar si el atacante está cegado
+        blind_turns = self.p1_blinded_turns if attacker == self.p1 else self.p2_blinded_turns
+        if blind_turns > 0 and random.random() < 0.65:
+            log_line = f"💨 {attacker.user.display_name} tiene los ojos llenos de tierra y **FALLÓ** su ataque!"
+            # Si era especial, el cooldown se aplica igual
+            if action_type == 'special':
+                has_mana_residual = any(p['id'] == 'mana_residual' for p in attacker.passives)
+                cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
+                attacker.special_cooldown = cooldown + 1
+            return 0, log_line
+
         # Pasivo: Golpe crítico
         extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
         
@@ -506,26 +533,14 @@ class DuelView(discord.ui.View):
             cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
             attacker.special_cooldown = cooldown + 1 # +1 porque se restará 1 al final del turno
             
-            damage, crit = calc_special_damage(attacker.mag, defender.def_stat, defender.is_defending)
-            
-            # Pasivo: Escudo arcano
-            shield_log = ""
-            if defender.arcane_shield_active:
-                damage = max(1, int(damage / 2))
-                defender.arcane_shield_active = False
-                shield_log = " 🔮*(Escudo arcano reduce daño)*"
+            # Aplicar ceguera (65% probabilidad de fallar ataques por 3 turnos)
+            if attacker == self.p1:
+                self.p2_blinded_turns = 3
+            else:
+                self.p1_blinded_turns = 3
                 
-            crit_text = " **¡CRÍTICO!**" if crit else ""
-            defend_text = " *(bloqueado parcialmente)*" if defender.is_defending else ""
-            log_line = f"✨ {attacker.user.display_name} lanza Especial → **{damage}** daño{crit_text}{defend_text}{shield_log}"
-            
-            # Pasivo: Vampirismo
-            if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
-                heal = max(1, int(damage * 0.08))
-                attacker.hp = min(attacker.max_hp, attacker.hp + heal)
-                log_line += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
-                
-            return damage, log_line
+            log_line = f"👁️ {attacker.user.display_name} le tira tierra en los ojos a {defender.user.display_name} (precisión reducida por 3 turnos)."
+            return 0, log_line
 
         return 0, ""
 
