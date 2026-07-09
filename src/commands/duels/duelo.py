@@ -4,6 +4,7 @@ Combate por turnos entre dos usuarios con apuesta de monedas,
 progresión de nivel propia y sistema de equipo con drops estilo WoW.
 """
 
+from __future__ import annotations
 import discord
 from discord.ext import commands
 from discord import app_commands
