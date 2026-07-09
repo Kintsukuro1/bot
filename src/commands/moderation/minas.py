@@ -113,10 +113,12 @@ class Minas(commands.Cog):
         lock = self._get_lock_for_channel(canal_id)
         async with lock:
             minas_actuales = self.minas_activas.get(canal_id, 0)
-            es_valido, mensaje_error = self._validar_limite_minas(minas_actuales, cantidad)
-            if not es_valido:
-                await interaction.response.send_message(mensaje_error, ephemeral=True)
-                return
+            is_admin = interaction.guild and interaction.user.guild_permissions.administrator
+            if not is_admin:
+                es_valido, mensaje_error = self._validar_limite_minas(minas_actuales, cantidad)
+                if not es_valido:
+                    await interaction.response.send_message(mensaje_error, ephemeral=True)
+                    return
 
             # Guardar en base de datos primero para evitar inconsistencias si falla
             try:
