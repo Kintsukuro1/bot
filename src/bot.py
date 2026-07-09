@@ -200,12 +200,33 @@ async def on_ready():
     user_count = len(unique_user_ids)
     logger.info(f"[USERS] Sirviendo a {user_count} usuarios únicos")
 
-    # Sincronizar comandos slash globalmente al arrancar (solo una vez por sesión del bot)
+    # Sincronizar comandos slash al arrancar (solo una vez por sesión del bot).
+    # Además de la sync global, copiamos global->guild para propagación inmediata por servidor.
     if not getattr(bot, "synced", False):
         try:
             logger.info("[SYNC] Sincronizando comandos slash globalmente...")
-            synced = await bot.tree.sync()
-            logger.info(f"[SYNC] ¡Sincronización global completada! {len(synced)} comandos registrados.")
+            synced_global = await bot.tree.sync()
+            logger.info(f"[SYNC] ¡Sincronización global completada! {len(synced_global)} comandos registrados.")
+
+            guild_synced_total = 0
+            guild_failed_total = 0
+            for guild in bot.guilds:
+                try:
+                    bot.tree.copy_global_to(guild=guild)
+                    synced_guild = await bot.tree.sync(guild=guild)
+                    guild_synced_total += len(synced_guild)
+                    logger.info(
+                        f"[SYNC] Guild sync OK: {guild.name} ({guild.id}) -> {len(synced_guild)} comandos"
+                    )
+                except Exception as guild_error:
+                    guild_failed_total += 1
+                    logger.error(
+                        f"[SYNC] Guild sync fallida: {guild.name} ({guild.id}) -> {guild_error}"
+                    )
+
+            logger.info(
+                f"[SYNC] Resumen guild sync: comandos={guild_synced_total} | guilds con error={guild_failed_total}"
+            )
             bot.synced = True
         except Exception as e:
             logger.error(f"[SYNC] Error al sincronizar comandos globalmente: {e}")
@@ -394,6 +415,42 @@ async def reload_cog(ctx, cog: Optional[str] = None):
                 logger.error(f"[ERROR] Error recargando {ext}: {e}")
         
         await ctx.send(f"✅ **Reload completado:** {reloaded} correctos, {failed} fallidos")
+
+
+@bot.command(name='syncslash')
+@commands.is_owner()
+async def sync_slash(ctx):
+    """Fuerza la sincronización de comandos slash (global + por servidor)."""
+    try:
+        synced_global = await bot.tree.sync()
+
+        guild_ok = 0
+        guild_fail = 0
+        guild_commands_total = 0
+
+        for guild in bot.guilds:
+            try:
+                bot.tree.copy_global_to(guild=guild)
+                synced_guild = await bot.tree.sync(guild=guild)
+                guild_commands_total += len(synced_guild)
+                guild_ok += 1
+            except Exception as guild_error:
+                guild_fail += 1
+                logger.error(
+                    f"[SYNC] Error sincronizando guild {guild.name} ({guild.id}): {guild_error}"
+                )
+
+        bot.synced = True
+        await ctx.send(
+            "✅ **Sync slash completado**\n"
+            f"Global: {len(synced_global)} comandos\n"
+            f"Guilds OK: {guild_ok}\n"
+            f"Guilds con error: {guild_fail}\n"
+            f"Comandos sincronizados en guilds: {guild_commands_total}"
+        )
+    except Exception as e:
+        await ctx.send(f"❌ **Error al sincronizar slash commands:** {e}")
+        logger.error(f"[SYNC] Error en syncslash: {e}")
 
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):
