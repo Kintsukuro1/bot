@@ -555,6 +555,29 @@ async def reset_tickets(ctx, user_id: int):
         await ctx.send("❌ Error al resetear los tickets del usuario.")
 
 
+@bot.command(name='clearduels')
+async def clear_duels_cmd(ctx, user_id: int = None):
+    """Limpia la lista de duelos activos. Si se pasa un ID, desbloquea a ese usuario (Solo Dueño)."""
+    if ctx.author.id != 287396390747766795:
+        await ctx.send("❌ No tienes permisos para usar este comando.")
+        return
+
+    duels_cog = bot.get_cog("DuelsCog")
+    if not duels_cog:
+        await ctx.send("❌ No se encontró la cog de Duelos.")
+        return
+
+    if user_id is not None:
+        if user_id in duels_cog.active_duels:
+            duels_cog.active_duels.discard(user_id)
+            await ctx.send(f"✅ Se ha desbloqueado al usuario `{user_id}` de la lista de duelos activos.")
+        else:
+            await ctx.send(f"ℹ️ El usuario `{user_id}` no estaba registrado en ningún duelo activo.")
+    else:
+        duels_cog.active_duels.clear()
+        await ctx.send("✅ Se ha limpiado la lista completa de duelos activos.")
+
+
 @bot.tree.error
 async def on_slash_error(interaction: discord.Interaction, error):
     """Manejo de errores para comandos slash."""

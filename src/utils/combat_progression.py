@@ -23,7 +23,7 @@ MAX_TURNS = 25                   # Límite de turnos por duelo
 TURN_TIMEOUT_SECONDS = 30        # Segundos por turno
 CHALLENGE_TIMEOUT_SECONDS = 60   # Segundos para aceptar un reto
 LOOT_TIMEOUT_SECONDS = 120       # Segundos para decidir sobre un drop
-SPECIAL_UNLOCK_LEVEL = 5         # Nivel para desbloquear Especial
+SPECIAL_UNLOCK_LEVEL = 1         # Nivel para desbloquear Especial
 SPECIAL_COOLDOWN_TURNS = 3       # Turnos de enfriamiento del Especial
 MAX_GEAR_BONUS_PCT = 0.40        # Tope de bonus de equipo (40%) por stat
 
