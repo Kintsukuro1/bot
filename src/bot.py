@@ -142,7 +142,7 @@ async def load_cogs():
         '__init__.py',
         'hacker.py', 'chef.py', 'artista.py', 'mecanico.py', 'minero.py', 'pescador.py',  # Módulos auxiliares de minijuegos
         'medico.py', 'piloto.py', 'cientifico.py', 'ladron.py', 'cazarrecompensas.py',
-        'niveles_trabajo.py',  # Sistema de niveles
+        'niveles_trabajo.py', 'job_fx.py',  # Sistema de niveles y efectos auxiliares
         'black_market_items.py'  # Módulos de datos, no cogs
     }
     

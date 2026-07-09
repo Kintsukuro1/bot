@@ -3,6 +3,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any
 import os
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Importar configuración de base de datos
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,10 +51,10 @@ class DynamicDifficulty:
                         LastUpdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-            print("✅ Sistema de dificultad dinámica inicializado en PostgreSQL")
+            logger.info("Sistema de dificultad dinámica inicializado en PostgreSQL")
             
         except Exception as e:
-            print(f"❌ Error inicializando sistema de dificultad: {e}")
+            logger.error(f"Error inicializando sistema de dificultad: {e}")
     
     @staticmethod
     def calculate_dynamic_difficulty(user_id: int, bet_amount: int, game_type: str) -> Tuple[float, str]:
@@ -261,7 +264,7 @@ class DynamicDifficulty:
                 }
             
         except Exception as e:
-            print(f"Error obteniendo estadísticas: {e}")
+            logger.error(f"Error obteniendo estadísticas: {e}")
             return {'status': 'error'}
     
     @staticmethod
@@ -370,7 +373,7 @@ class DynamicDifficulty:
                           new_avg_bet, risk_profile, user_id))
             
         except Exception as e:
-            print(f"Error actualizando estadísticas: {e}")
+            logger.error(f"Error actualizando estadísticas: {e}")
     
     @staticmethod
     def _generate_explanation(difficulty: float, factors: list) -> str:

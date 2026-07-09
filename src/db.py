@@ -804,11 +804,11 @@ def init_energia_db():
         
         if 'energia' not in columns:
             cursor.execute("ALTER TABLE Users ADD COLUMN Energia INT DEFAULT 100")
-            print("✅ Columna 'Energia' agregada")
+            logger.info("Columna 'Energia' agregada a la tabla Users")
             
         if 'ultimarecarga' not in columns:
             cursor.execute("ALTER TABLE Users ADD COLUMN UltimaRecarga BIGINT DEFAULT 0")
-            print("✅ Columna 'UltimaRecarga' agregada")
+            logger.info("Columna 'UltimaRecarga' agregada a la tabla Users")
             
         import time
         tiempo_actual = int(time.time())
