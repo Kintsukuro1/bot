@@ -1795,9 +1795,25 @@ def init_db():
                     BestWinStreak INT DEFAULT 0,
                     LastDuelTime TIMESTAMP,
                     TotalMoneyWon BIGINT DEFAULT 0,
-                    TotalMoneyLost BIGINT DEFAULT 0
+                    TotalMoneyLost BIGINT DEFAULT 0,
+                    CombatClass VARCHAR(20) DEFAULT NULL
                 )
             """)
+
+            # Migración dirigida para añadir CombatClass si CombatStats existe
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'combatstats'
+                )
+            """)
+            if cursor.fetchone()[0]:
+                cursor.execute("""
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'combatstats' AND column_name = 'combatclass'
+                """)
+                if not cursor.fetchone():
+                    cursor.execute("ALTER TABLE CombatStats ADD COLUMN CombatClass VARCHAR(20) DEFAULT NULL")
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS CombatLog (
@@ -1883,7 +1899,7 @@ def get_combat_stats(user_id):
         """, (user_id,))
         cursor.execute("""
             SELECT CombatLevel, CombatXP, Wins, Losses, WinStreak,
-                   BestWinStreak, LastDuelTime, TotalMoneyWon, TotalMoneyLost
+                   BestWinStreak, LastDuelTime, TotalMoneyWon, TotalMoneyLost, CombatClass
             FROM CombatStats WHERE UserID = %s
         """, (user_id,))
         row = cursor.fetchone()
@@ -1897,6 +1913,7 @@ def get_combat_stats(user_id):
             'last_duel_time': row[6],
             'total_money_won': row[7] or 0,
             'total_money_lost': row[8] or 0,
+            'combat_class': row[9],  # None o nombre de la clase
         }
 
 
@@ -2230,5 +2247,20 @@ def reset_user_daily_usage(user_id: int, item_id: int = None) -> bool:
             return True
     except Exception as e:
         logger.error(f"Error resetting daily usage for user {user_id}: {e}")
+        return False
+
+
+def update_user_class(user_id: int, class_name: str) -> bool:
+    """Actualiza la clase de combate de un usuario."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                UPDATE CombatStats 
+                SET CombatClass = %s 
+                WHERE UserID = %s
+            """, (class_name, user_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error updating user class for user {user_id}: {e}")
         return False
 

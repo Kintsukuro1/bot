@@ -308,6 +308,12 @@ LEGENDARY_PASSIVES = [
         "emoji": "✨",
         "desc": "La acción Especial tiene un turno menos de enfriamiento",
     },
+    {
+        "id": "parry",
+        "name": "Parada y Contraataque",
+        "emoji": "⚔️",
+        "desc": "Al Defender, contraatacas por el 75% del daño recibido y te curas un 30% del mismo, pero no reduces daño ni te curas de forma normal.",
+    },
 ]
 
 PASSIVE_LOOKUP = {p["id"]: p for p in LEGENDARY_PASSIVES}
@@ -329,6 +335,34 @@ _SLOT_BASE_NAMES = {
     "Bastón mágico": ["Bastón", "Cetro", "Vara", "Báculo", "Vara arcana", "Cayado"],
 }
 
+_SLOT_BASE_NAMES_BY_MATERIAL = {
+    "Cabeza": {
+        "Tela": ["Capucha", "Diadema", "Tocado", "Sombrero arcano", "Corona de tela"],
+        "Cuero": ["Capucha de cuero", "Casco de cuero", "Visera de cuero", "Tocado de cuero", "Máscara de cuero"],
+        "Hierro": ["Yelmo de placas", "Casco de hierro", "Corona de hierro", "Gran yelmo", "Yelmo cerrado"]
+    },
+    "Hombros": {
+        "Tela": ["Manto", "Estola", "Hombreras de seda", "Amparo arcano"],
+        "Cuero": ["Hombreras de cuero", "Espaldar de cuero", "Guardahombros de cuero"],
+        "Hierro": ["Hombreras de placas", "Espaldar de hierro", "Guardahombros de hierro", "Placas de hombro"]
+    },
+    "Pecho": {
+        "Tela": ["Túnica", "Toga", "Vestiduras", "Hábito", "Seda de pecho"],
+        "Cuero": ["Jubón", "Pechera de cuero", "Armadura de cuero", "Chaqueta de cuero"],
+        "Hierro": ["Coraza", "Peto de placas", "Armadura de hierro", "Cota de malla"]
+    },
+    "Pantalones": {
+        "Tela": ["Calzas", "Pantalones de lino", "Faldón de seda", "Falda arcana"],
+        "Cuero": ["Pantalones de cuero", "Calzas de cuero", "Perneras de cuero"],
+        "Hierro": ["Grebas", "Pantalones de placas", "Perneras de hierro", "Faldón de placas"]
+    },
+    "Botas": {
+        "Tela": ["Botas de seda", "Zapatos de lino", "Sandalias arcanas", "Zapatillas"],
+        "Cuero": ["Botas de cuero", "Botines de cuero", "Zapatos de cuero"],
+        "Hierro": ["Escarpes de hierro", "Botas de placas", "Botas de hierro", "Grebas de pie"]
+    }
+}
+
 # 6.2 — Sufijos por stat secundaria dominante
 _STAT_SUFFIXES = {
     "atk": ["del Águila", "del Cazador"],
@@ -347,14 +381,17 @@ _RARITY_PREFIXES = {
 }
 
 
-def _generate_item_name(slot, rarity_name, first_secondary_stat):
+def _generate_item_name(slot, rarity_name, first_secondary_stat, material=None):
     """Genera un nombre procedural: [Prefijo rareza] [Base slot] [Sufijo secondary].
 
     - Común sin secundario: no lleva sufijo.
     - Épico / Legendario: siempre llevan prefijo de rareza.
     - Poco Común / Raro: prefijo opcional (50%).
     """
-    base_name = random.choice(_SLOT_BASE_NAMES.get(slot, ["Objeto"]))
+    if material and slot in _SLOT_BASE_NAMES_BY_MATERIAL:
+        base_name = random.choice(_SLOT_BASE_NAMES_BY_MATERIAL[slot][material])
+    else:
+        base_name = random.choice(_SLOT_BASE_NAMES.get(slot, ["Objeto"]))
 
     # Sufijo (basado en primera stat secundaria)
     suffix = ""
@@ -397,15 +434,36 @@ def _calc_secondary_value(primary_value, sec_weight):
     return max(1, int(primary_value * sec_weight))
 
 
-def _pick_secondary_stats(primary_stat, count):
-    """Elige `count` stats secundarias de las 3 restantes (nunca repite principal).
-
-    Si por casualidad la primera elegida coincide con el principal del slot,
-    se re-sortea entre las restantes (doc sección 8 nota).
-    """
+def _pick_secondary_stats(primary_stat, count, material=None):
+    """Elige `count` stats secundarias de las 3 restantes (nunca repite principal) con sesgo de material."""
     pool = [s for s in ALL_STATS if s != primary_stat]
-    random.shuffle(pool)
-    return pool[:count]
+    if material == "Hierro":
+        weights = {"hp": 5, "def": 5, "atk": 2, "mag": 0.1}
+    elif material == "Cuero":
+        weights = {"atk": 5, "hp": 4, "def": 2, "mag": 0.5}
+    elif material == "Tela":
+        weights = {"mag": 6, "hp": 4, "def": 0.5, "atk": 0.5}
+    else:
+        random.shuffle(pool)
+        return pool[:count]
+
+    filtered_pool = [s for s in pool if s in weights]
+    filtered_weights = [weights[s] for s in filtered_pool]
+    chosen = []
+    for _ in range(min(count, len(filtered_pool))):
+        total_w = sum(filtered_weights)
+        if total_w <= 0:
+            break
+        roll = random.random() * total_w
+        cum = 0.0
+        for idx, s in enumerate(filtered_pool):
+            cum += filtered_weights[idx]
+            if roll <= cum:
+                chosen.append(s)
+                filtered_pool.pop(idx)
+                filtered_weights.pop(idx)
+                break
+    return chosen
 
 
 def generate_loot(player_level):
@@ -414,12 +472,26 @@ def generate_loot(player_level):
     Returns:
         dict con: slot, name, rarity, rarity_color, rarity_hex, item_level,
                   primary_stat, primary_value, secondaries (list of {stat, value}),
-                  passive (dict or None), sell_price, stats_summary (dict)
+                  passive (dict or None), sell_price, stats_summary (dict), material
     """
     slot = random.choice(EQUIPMENT_SLOTS)
     rarity = _roll_rarity()
     ilvl = player_level
-    primary_stat = SLOT_PRIMARY_STAT[slot]
+    
+    is_armor = slot in ("Cabeza", "Hombros", "Pecho", "Pantalones", "Botas")
+    material = None
+    
+    if is_armor:
+        material = random.choice(["Tela", "Cuero", "Hierro"])
+        if material == "Hierro":
+            primary_stat = random.choice(["hp", "def"])
+        elif material == "Cuero":
+            primary_stat = random.choice(["hp", "atk"])
+        else: # Tela
+            primary_stat = random.choice(["hp", "mag"])
+    else:
+        primary_stat = SLOT_PRIMARY_STAT[slot]
+        
     is_chest = (slot == "Pecho")
 
     # Stat principal
@@ -428,7 +500,7 @@ def generate_loot(player_level):
     # Stats secundarias
     sec_count = rarity["secondaries"]
     sec_weight = rarity["sec_weight"]
-    secondary_stats = _pick_secondary_stats(primary_stat, sec_count)
+    secondary_stats = _pick_secondary_stats(primary_stat, sec_count, material)
     secondaries = []
     for sec_stat in secondary_stats:
         sec_value = _calc_secondary_value(primary_value, sec_weight)
@@ -436,7 +508,7 @@ def generate_loot(player_level):
 
     # Nombre procedural
     first_sec = secondaries[0]["stat"] if secondaries else None
-    name = _generate_item_name(slot, rarity["name"], first_sec)
+    name = _generate_item_name(slot, rarity["name"], first_sec, material)
 
     # Pasivo de Legendario
     passive = None
@@ -464,6 +536,7 @@ def generate_loot(player_level):
         "passive": passive,
         "sell_price": sell_price,
         "stats_summary": stats_summary,
+        "material": material,
     }
 
 
