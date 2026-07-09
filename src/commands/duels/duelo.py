@@ -167,7 +167,7 @@ class ChallengeView(discord.ui.View):
 # ══════════════════════════════════════════════
 
 class DuelView(discord.ui.View):
-    """Vista principal del combate PvP por turnos."""
+    """Vista principal del combate PvP por turnos simultáneos."""
 
     def __init__(self, p1: Combatant, p2: Combatant, bet: int, cog: 'DuelsCog'):
         super().__init__(timeout=TURN_TIMEOUT_SECONDS)
@@ -175,57 +175,27 @@ class DuelView(discord.ui.View):
         self.p2 = p2
         self.bet = bet
         self.cog = cog
-        self.turn = 0  # 0 = p1, 1 = p2
+        
+        # Elecciones de acción de cada jugador en la ronda actual
+        self.p1_action = None  # 'attack', 'defend', 'special', 'timeout' o None
+        self.p2_action = None
+        
         self.turn_count = 0
         self.game_over = False
         self._payout_done = False
         self.action_log = []  # Registro de acciones recientes
         self.interaction_msg = None  # Referencia al mensaje del duelo
 
-        # Decidir quién empieza (aleatorio)
-        if random.random() < 0.5:
-            self.turn = 1
-
-    @property
-    def current_player(self) -> Combatant:
-        return self.p1 if self.turn == 0 else self.p2
-
-    @property
-    def opponent(self) -> Combatant:
-        return self.p2 if self.turn == 0 else self.p1
-
-    def _next_turn(self):
-        """Avanza al siguiente turno."""
-        # Decrementar cooldown del especial
-        for p in (self.p1, self.p2):
-            if p.special_cooldown > 0:
-                p.special_cooldown -= 1
-        # Reset defending del jugador que acaba de actuar
-        self.current_player.is_defending = False
-        # Cambiar turno
-        self.turn = 1 - self.turn
-        self.turn_count += 1
-
-        # Aplicar Regeneración (regen) al inicio del turno del nuevo jugador activo
-        new_cp = self.current_player
-        if any(p['id'] == 'regen' for p in new_cp.passives) and new_cp.hp > 0 and new_cp.hp < new_cp.max_hp:
-            new_cp.pre_hit_hp = new_cp.hp
-            heal = max(1, int(new_cp.max_hp * 0.03))
-            new_cp.hp = min(new_cp.max_hp, new_cp.hp + heal)
-            self.action_log.append(f"💚 Regeneración: {new_cp.user.display_name} se cura **{heal}** HP.")
-
-    def _build_embed(self, extra_log=None):
+    def _build_embed(self):
         """Construye el embed de estado del combate."""
-        if extra_log:
-            self.action_log.append(extra_log)
-            # Mantener solo las últimas 4 entradas
-            if len(self.action_log) > 4:
-                self.action_log = self.action_log[-4:]
+        status_p1 = "🟢 ¡Listo!" if self.p1_action else "🔴 Eligiendo..."
+        status_p2 = "🟢 ¡Listo!" if self.p2_action else "🔴 Eligiendo..."
 
-        cp = self.current_player
         embed = discord.Embed(
-            title="⚔️ Duelo PvP",
-            description=f"**Turno {self.turn_count + 1}/{MAX_TURNS}** — Le toca a {cp.user.mention}",
+            title="⚔️ Duelo PvP Simultáneo",
+            description=f"**Ronda {self.turn_count + 1}/{MAX_TURNS}**\n"
+                        f"{self.p1.user.mention}: {status_p1}\n"
+                        f"{self.p2.user.mention}: {status_p2}",
             color=discord.Color.dark_gold()
         )
 
@@ -234,8 +204,6 @@ class DuelView(discord.ui.View):
             rank_emoji = get_combat_rank_emoji(p.level)
             hp_bar = format_hp_bar(p.hp, p.max_hp)
             status_icons = ""
-            if p.is_defending:
-                status_icons += " 🛡️"
             if p.special_cooldown > 0:
                 status_icons += f" ✨({p.special_cooldown}t)"
             
@@ -251,7 +219,7 @@ class DuelView(discord.ui.View):
 
         # Log de acciones
         if self.action_log:
-            log_text = "\n".join(self.action_log[-4:])
+            log_text = "\n".join(self.action_log[-5:])
             embed.add_field(name="📜 Registro", value=log_text, inline=False)
 
         embed.add_field(
@@ -261,10 +229,8 @@ class DuelView(discord.ui.View):
         )
 
         # Indicar acciones disponibles
-        actions = ["⚔️ Atacar", "🛡️ Defender"]
-        if cp.level >= SPECIAL_UNLOCK_LEVEL and cp.special_cooldown == 0:
-            actions.append("✨ Especial")
-        embed.set_footer(text=f"Acciones: {' · '.join(actions)} · Tiempo: {TURN_TIMEOUT_SECONDS}s")
+        actions = ["⚔️ Atacar", "🛡️ Defender", "✨ Especial"]
+        embed.set_footer(text=f"Acciones: {' · '.join(actions)} · Tiempo por ronda: {TURN_TIMEOUT_SECONDS}s")
 
         return embed
 
@@ -272,107 +238,71 @@ class DuelView(discord.ui.View):
 
     @discord.ui.button(label="⚔️ Atacar", style=discord.ButtonStyle.danger, row=0)
     async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.current_player.user.id or self.game_over:
-            await interaction.response.send_message(
-                "❌ No es tu turno." if not self.game_over else "❌ El duelo ya terminó.",
-                ephemeral=True
-            )
+        if self.game_over:
+            await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
             return
 
-        await interaction.response.defer()
-        self.current_player.consecutive_timeouts = 0
-
-        attacker = self.current_player
-        defender = self.opponent
-
-        # Pasivo: Golpe crítico
-        extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
-        
-        # Pasivo: Furia creciente
-        has_fury = any(p['id'] == 'fury' for p in attacker.passives)
-        fury_active = (attacker.hp / attacker.max_hp) < 0.30
-
-        # Pasivo: Esquiva mejorada
-        has_dodge = any(p['id'] == 'dodge' for p in defender.passives)
-        if has_dodge and random.random() < 0.05:
-            log = f"💨 {defender.user.display_name} **ESQUIVÓ** el ataque de {attacker.user.display_name}!"
+        user_id = interaction.user.id
+        if user_id == self.p1.user.id:
+            if self.p1_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p1_action = 'attack'
+            self.p1.consecutive_timeouts = 0
+            await interaction.response.send_message("⚔️ Has elegido **Atacar**.", ephemeral=True)
+        elif user_id == self.p2.user.id:
+            if self.p2_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p2_action = 'attack'
+            self.p2.consecutive_timeouts = 0
+            await interaction.response.send_message("⚔️ Has elegido **Atacar**.", ephemeral=True)
         else:
-            damage, crit = calc_attack_damage(attacker.atk, defender.def_stat, defender.is_defending, extra_crit, has_fury, fury_active)
-            
-            # Pasivo: Escudo arcano
-            shield_log = ""
-            if defender.arcane_shield_active:
-                damage = max(1, int(damage / 2))
-                defender.arcane_shield_active = False
-                shield_log = " 🔮*(Escudo arcano reduce daño)*"
-                
-            defender.pre_hit_hp = defender.hp
-            defender.hp = max(0, defender.hp - damage)
-            crit_text = " **¡CRÍTICO!**" if crit else ""
-            defend_text = " *(bloqueado parcialmente)*" if defender.is_defending else ""
-            log = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}"
-            
-            # Pasivo: Vampirismo
-            if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
-                attacker.pre_hit_hp = attacker.hp
-                heal = max(1, int(damage * 0.08))
-                attacker.hp = min(attacker.max_hp, attacker.hp + heal)
-                log += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
-
-            # Pasivo: Segundo aliento
-            if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
-                defender.hp = 1
-                defender.pre_hit_hp = defender.hp
-                defender.used_second_wind = True
-                log += f"\n💫 Segundo aliento: {defender.user.display_name} sobrevive con 1 HP."
-
-        if defender.hp <= 0:
-            self.game_over = True
-            self.action_log.append(log)
-            self.action_log.append(f"💀 **{defender.user.display_name}** ha caído!")
-            await self._finish_duel(interaction)
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
 
-        self._next_turn()
-        embed = self._build_embed(log)
-        self.reset_timeout()
-        await interaction.edit_original_response(embed=embed, view=self)
+        await self._check_and_resolve(interaction)
 
     @discord.ui.button(label="🛡️ Defender", style=discord.ButtonStyle.primary, row=0)
     async def defend_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.current_player.user.id or self.game_over:
-            await interaction.response.send_message(
-                "❌ No es tu turno." if not self.game_over else "❌ El duelo ya terminó.",
-                ephemeral=True
-            )
+        if self.game_over:
+            await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
             return
 
-        await interaction.response.defer()
-        self.current_player.consecutive_timeouts = 0
+        user_id = interaction.user.id
+        if user_id == self.p1.user.id:
+            if self.p1_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p1_action = 'defend'
+            self.p1.consecutive_timeouts = 0
+            await interaction.response.send_message("🛡️ Has elegido **Defender** (mitiga daño y cura HP).", ephemeral=True)
+        elif user_id == self.p2.user.id:
+            if self.p2_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p2_action = 'defend'
+            self.p2.consecutive_timeouts = 0
+            await interaction.response.send_message("🛡️ Has elegido **Defender** (mitiga daño y cura HP).", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
+            return
 
-        player = self.current_player
-        player.is_defending = True
-        heal = calc_defend_heal(player.max_hp)
-        player.pre_hit_hp = player.hp
-        player.hp = min(player.max_hp, player.hp + heal)
-
-        log = f"🛡️ {player.user.display_name} se defiende y recupera **{heal}** HP"
-
-        self._next_turn()
-        embed = self._build_embed(log)
-        self.reset_timeout()
-        await interaction.edit_original_response(embed=embed, view=self)
+        await self._check_and_resolve(interaction)
 
     @discord.ui.button(label="✨ Especial", style=discord.ButtonStyle.success, row=0)
     async def special_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.current_player.user.id or self.game_over:
-            await interaction.response.send_message(
-                "❌ No es tu turno." if not self.game_over else "❌ El duelo ya terminó.",
-                ephemeral=True
-            )
+        if self.game_over:
+            await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
             return
 
-        cp = self.current_player
+        user_id = interaction.user.id
+        cp = self.p1 if user_id == self.p1.user.id else self.p2 if user_id == self.p2.user.id else None
+
+        if cp is None:
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
+            return
+
         if cp.level < SPECIAL_UNLOCK_LEVEL:
             await interaction.response.send_message(
                 f"❌ Necesitas nivel {SPECIAL_UNLOCK_LEVEL} para usar Especial (tienes nivel {cp.level}).",
@@ -387,23 +317,169 @@ class DuelView(discord.ui.View):
             )
             return
 
-        await interaction.response.defer()
-        cp.consecutive_timeouts = 0
+        if user_id == self.p1.user.id:
+            if self.p1_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p1_action = 'special'
+            self.p1.consecutive_timeouts = 0
+            await interaction.response.send_message("✨ Has elegido lanzar tu **Especial**.", ephemeral=True)
+        else:
+            if self.p2_action is not None:
+                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+                return
+            self.p2_action = 'special'
+            self.p2.consecutive_timeouts = 0
+            await interaction.response.send_message("✨ Has elegido lanzar tu **Especial**.", ephemeral=True)
 
-        defender = self.opponent
+        await self._check_and_resolve(interaction)
 
-        # Pasivo: Maná residual
-        has_mana_residual = any(p['id'] == 'mana_residual' for p in cp.passives)
-        cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
+    async def _check_and_resolve(self, interaction: discord.Interaction):
+        """Verifica si ambos jugadores han votado y resuelve el turno."""
+        if self.p1_action is not None and self.p2_action is not None:
+            await self._resolve_round(interaction)
+        else:
+            # Actualizar embed de forma silenciosa para mostrar quién está listo
+            embed = self._build_embed()
+            await interaction.message.edit(embed=embed, view=self)
+
+    # ──────────────────── RESOLUCIÓN SIMULTÁNEA ────────────────────
+
+    async def _resolve_round(self, interaction: discord.Interaction = None):
+        """Procesa y resuelve las acciones elegidas por ambos jugadores simultáneamente."""
+        # Respaldar HPs iniciales para el cálculo de daño simultáneo
+        self.p1.pre_hit_hp = self.p1.hp
+        self.p2.pre_hit_hp = self.p2.hp
+
+        p1_act = self.p1_action
+        p2_act = self.p2_action
+
+        # Establecer estado defensivo temporal
+        self.p1.is_defending = (p1_act == 'defend')
+        self.p2.is_defending = (p2_act == 'defend')
+
+        logs = []
+        logs.append(f"🏁 **Ronda {self.turn_count + 1}:**")
+
+        # 1. Aplicar regeneraciones pasivas de inicio de turno
+        for p in (self.p1, self.p2):
+            if any(p_item['id'] == 'regen' for p_item in p.passives) and p.hp > 0 and p.hp < p.max_hp:
+                heal = max(1, int(p.max_hp * 0.03))
+                p.hp = min(p.max_hp, p.hp + heal)
+                logs.append(f"💚 **Regen:** {p.user.display_name} se cura **{heal}** HP.")
+
+        # 2. Aplicar curación/defensa activa si eligieron Defender
+        if self.p1.is_defending:
+            heal = calc_defend_heal(self.p1.max_hp)
+            self.p1.hp = min(self.p1.max_hp, self.p1.hp + heal)
+            logs.append(f"🛡️ {self.p1.user.display_name} se defiende y recupera **{heal}** HP.")
+        if self.p2.is_defending:
+            heal = calc_defend_heal(self.p2.max_hp)
+            self.p2.hp = min(self.p2.max_hp, self.p2.hp + heal)
+            logs.append(f"🛡️ {self.p2.user.display_name} se defiende y recupera **{heal}** HP.")
+
+        # 3. Calcular ataque de P1 a P2
+        p1_dmg = 0
+        p1_log = ""
+        if p1_act in ('attack', 'special'):
+            p1_dmg, p1_log = self._calculate_action_result(self.p1, self.p2, p1_act)
+
+        # 4. Calcular ataque de P2 a P1
+        p2_dmg = 0
+        p2_log = ""
+        if p2_act in ('attack', 'special'):
+            p2_dmg, p2_log = self._calculate_action_result(self.p2, self.p1, p2_act)
+
+        # 5. Aplicar daño simultáneamente
+        if p1_dmg > 0:
+            self.p2.hp = max(0, self.p2.hp - p1_dmg)
+        if p1_log:
+            logs.append(p1_log)
+
+        if p2_dmg > 0:
+            self.p1.hp = max(0, self.p1.hp - p2_dmg)
+        if p2_log:
+            logs.append(p2_log)
+
+        # 6. Procesar pasivos post-daño (como Segundo Aliento)
+        for attacker, defender in ((self.p1, self.p2), (self.p2, self.p1)):
+            if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
+                defender.hp = 1
+                defender.used_second_wind = True
+                logs.append(f"💫 **Segundo Aliento:** {defender.user.display_name} sobrevive con 1 HP.")
+
+        # 7. Si hubo timeouts
+        if p1_act == 'timeout':
+            logs.append(f"⏰ {self.p1.user.display_name} no respondió a tiempo.")
+        if p2_act == 'timeout':
+            logs.append(f"⏰ {self.p2.user.display_name} no respondió a tiempo.")
+
+        # Decrementar cooldowns de especial
+        for p in (self.p1, self.p2):
+            if p.special_cooldown > 0:
+                p.special_cooldown -= 1
+
+        # Limpiar acciones y estados para la próxima ronda
+        self.p1_action = None
+        self.p2_action = None
+        self.p1.is_defending = False
+        self.p2.is_defending = False
+
+        self.turn_count += 1
+
+        # Agregar los logs de este turno al registro de acciones
+        for log_line in logs:
+            self.action_log.append(log_line)
+
+        # Mantener un registro razonable (últimas 6 líneas)
+        if len(self.action_log) > 6:
+            self.action_log = self.action_log[-6:]
+
+        # Comprobar si el juego ha terminado
+        if self.p1.hp <= 0 or self.p2.hp <= 0 or self.turn_count >= MAX_TURNS:
+            self.game_over = True
+            if self.p1.hp <= 0 and self.p2.hp <= 0:
+                self.action_log.append("💥 ¡Doble K.O.! Ambos guerreros han caído.")
+            elif self.p1.hp <= 0:
+                self.action_log.append(f"💀 **{self.p1.user.display_name}** ha caído.")
+            elif self.p2.hp <= 0:
+                self.action_log.append(f"💀 **{self.p2.user.display_name}** ha caído.")
+            
+            if interaction:
+                await self._finish_duel(interaction)
+            else:
+                await self._finish_duel_from_timeout()
+            return
+
+        # Siguiente ronda
+        self.reset_timeout()
+        embed = self._build_embed()
+        if interaction:
+            await interaction.message.edit(embed=embed, view=self)
+        else:
+            try:
+                if self.interaction_msg:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+            except Exception:
+                pass
+
+    def _calculate_action_result(self, attacker: Combatant, defender: Combatant, action_type: str) -> tuple[int, str]:
+        """Calcula el daño y genera la línea de log para una acción ofensiva individual."""
+        # Pasivo: Golpe crítico
+        extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
+        
+        # Pasivo: Furia creciente
+        has_fury = any(p['id'] == 'fury' for p in attacker.passives)
+        fury_active = (attacker.hp / attacker.max_hp) < 0.30
 
         # Pasivo: Esquiva mejorada
         has_dodge = any(p['id'] == 'dodge' for p in defender.passives)
         if has_dodge and random.random() < 0.05:
-            cp.special_cooldown = cooldown
-            log = f"💨 {defender.user.display_name} **ESQUIVÓ** el especial de {cp.user.display_name}!"
-        else:
-            # Especial escala con MAG
-            damage, crit = calc_special_damage(cp.mag, defender.def_stat, defender.is_defending)
+            log_line = f"💨 {defender.user.display_name} **ESQUIVÓ** el ataque de {attacker.user.display_name}!"
+            return 0, log_line
+
+        if action_type == 'attack':
+            damage, crit = calc_attack_damage(attacker.atk, defender.def_stat, defender.is_defending, extra_crit, has_fury, fury_active)
             
             # Pasivo: Escudo arcano
             shield_log = ""
@@ -412,82 +488,85 @@ class DuelView(discord.ui.View):
                 defender.arcane_shield_active = False
                 shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
-            defender.pre_hit_hp = defender.hp
-            defender.hp = max(0, defender.hp - damage)
-            cp.special_cooldown = cooldown
             crit_text = " **¡CRÍTICO!**" if crit else ""
             defend_text = " *(bloqueado parcialmente)*" if defender.is_defending else ""
-            log = f"✨ {cp.user.display_name} lanza Especial → **{damage}** daño{crit_text}{defend_text}{shield_log}"
+            log_line = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}"
             
             # Pasivo: Vampirismo
-            if any(p['id'] == 'vampirism' for p in cp.passives) and damage > 0:
-                cp.pre_hit_hp = cp.hp
+            if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
                 heal = max(1, int(damage * 0.08))
-                cp.hp = min(cp.max_hp, cp.hp + heal)
-                log += f"\n🧛 Vampirismo: {cp.user.display_name} se cura **{heal}** HP."
+                attacker.hp = min(attacker.max_hp, attacker.hp + heal)
+                log_line += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
+                
+            return damage, log_line
 
-            # Pasivo: Segundo aliento
-            if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
-                defender.hp = 1
-                defender.pre_hit_hp = defender.hp
-                defender.used_second_wind = True
-                log += f"\n💫 Segundo aliento: {defender.user.display_name} sobrevive con 1 HP."
+        elif action_type == 'special':
+            # Cooldown de Especial
+            has_mana_residual = any(p['id'] == 'mana_residual' for p in attacker.passives)
+            cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
+            attacker.special_cooldown = cooldown + 1 # +1 porque se restará 1 al final del turno
+            
+            damage, crit = calc_special_damage(attacker.mag, defender.def_stat, defender.is_defending)
+            
+            # Pasivo: Escudo arcano
+            shield_log = ""
+            if defender.arcane_shield_active:
+                damage = max(1, int(damage / 2))
+                defender.arcane_shield_active = False
+                shield_log = " 🔮*(Escudo arcano reduce daño)*"
+                
+            crit_text = " **¡CRÍTICO!**" if crit else ""
+            defend_text = " *(bloqueado parcialmente)*" if defender.is_defending else ""
+            log_line = f"✨ {attacker.user.display_name} lanza Especial → **{damage}** daño{crit_text}{defend_text}{shield_log}"
+            
+            # Pasivo: Vampirismo
+            if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
+                heal = max(1, int(damage * 0.08))
+                attacker.hp = min(attacker.max_hp, attacker.hp + heal)
+                log_line += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
+                
+            return damage, log_line
 
-        if defender.hp <= 0:
-            self.game_over = True
-            self.action_log.append(log)
-            self.action_log.append(f"💀 **{defender.user.display_name}** ha caído!")
-            await self._finish_duel(interaction)
-            return
-
-        self._next_turn()
-        embed = self._build_embed(log)
-        self.reset_timeout()
-        await interaction.edit_original_response(embed=embed, view=self)
+        return 0, ""
 
     # ──────────────────── TIMEOUT (TURNO PERDIDO) ────────────────────
 
     def reset_timeout(self):
-        """Reinicia el timeout para el siguiente turno."""
+        """Reinicia el timeout para la siguiente ronda."""
         self.timeout = TURN_TIMEOUT_SECONDS
 
     async def on_timeout(self):
-        """Se ejecuta cuando un jugador no actúa a tiempo."""
+        """Se ejecuta cuando expira el tiempo de la ronda."""
         if self.game_over:
             return
 
-        cp = self.current_player
-        cp.consecutive_timeouts += 1
+        # Marcar como 'timeout' a quienes no hayan elegido acción
+        if self.p1_action is None:
+            self.p1_action = 'timeout'
+            self.p1.consecutive_timeouts += 1
+        
+        if self.p2_action is None:
+            self.p2_action = 'timeout'
+            self.p2.consecutive_timeouts += 1
 
-        if cp.consecutive_timeouts >= 2:
-            # 2 timeouts seguidos = derrota automática
-            cp.pre_hit_hp = cp.hp
-            cp.hp = 0
+        # Comprobar derrotas automáticas por inactividad
+        if self.p1.consecutive_timeouts >= 2 or self.p2.consecutive_timeouts >= 2:
             self.game_over = True
-            self.action_log.append(f"⏰ {cp.user.display_name} no respondió 2 veces → **Derrota automática**")
-            # No tenemos el interaction aquí, usamos el mensaje guardado
+            if self.p1.consecutive_timeouts >= 2 and self.p2.consecutive_timeouts >= 2:
+                self.action_log.append("⏰ Ambos jugadores no respondieron 2 veces → **Derrota por inactividad**")
+                self.p1.hp = 0
+                self.p2.hp = 0
+            elif self.p1.consecutive_timeouts >= 2:
+                self.action_log.append(f"⏰ {self.p1.user.display_name} no respondió 2 veces → **Derrota automática**")
+                self.p1.hp = 0
+            else:
+                self.action_log.append(f"⏰ {self.p2.user.display_name} no respondió 2 veces → **Derrota automática**")
+                self.p2.hp = 0
             await self._finish_duel_from_timeout()
             return
 
-        # Solo pierde el turno
-        log = f"⏰ {cp.user.display_name} no respondió → Turno perdido"
-        self._next_turn()
-
-        # Verificar si se alcanzó el límite de turnos
-        if self.turn_count >= MAX_TURNS:
-            self.game_over = True
-            self.action_log.append(log)
-            await self._finish_duel_from_timeout()
-            return
-
-        embed = self._build_embed(log)
-        self.timeout = TURN_TIMEOUT_SECONDS
-
-        try:
-            if self.interaction_msg:
-                await self.interaction_msg.edit(embed=embed, view=self)
-        except Exception:
-            pass
+        # Resolver la ronda con el timeout
+        await self._resolve_round(interaction=None)
 
     # ──────────────────── FIN DEL DUELO ────────────────────
 
@@ -503,11 +582,11 @@ class DuelView(discord.ui.View):
             if hasattr(item, 'disabled'):
                 item.disabled = True
 
-        await interaction.edit_original_response(embed=embed, view=self)
+        await interaction.message.edit(embed=embed, view=self)
         self.stop()
 
     async def _finish_duel_from_timeout(self):
-        """Finaliza el duelo desde un timeout (sin interaction disponible)."""
+        """Finaliza el duelo desde un timeout (sin interacción disponible)."""
         if self._payout_done:
             return
         self._payout_done = True
