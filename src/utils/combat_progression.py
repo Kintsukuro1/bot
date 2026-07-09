@@ -256,10 +256,10 @@ DROP_RATE_WINNER = 0.35
 DROP_RATE_LOSER = 0.15
 
 # ──────────────────────────────────────────────
-# EFECTOS PASIVOS DE LEGENDARIO (doc sección 7)
+# EFECTOS PASIVOS DE EQUIPAMIENTO
 # ──────────────────────────────────────────────
 
-LEGENDARY_PASSIVES = [
+ITEM_PASSIVES = [
     {
         "id": "dodge",
         "name": "Esquiva mejorada",
@@ -316,7 +316,7 @@ LEGENDARY_PASSIVES = [
     },
 ]
 
-PASSIVE_LOOKUP = {p["id"]: p for p in LEGENDARY_PASSIVES}
+PASSIVE_LOOKUP = {p["id"]: p for p in ITEM_PASSIVES}
 
 
 # ──────────────────────────────────────────────
@@ -510,10 +510,10 @@ def generate_loot(player_level):
     first_sec = secondaries[0]["stat"] if secondaries else None
     name = _generate_item_name(slot, rarity["name"], first_sec, material)
 
-    # Pasivo de Legendario
+    # Pasivos: se otorgan a partir de rareza "Raro" en adelante
     passive = None
-    if rarity["name"] == "Legendario":
-        passive = random.choice(LEGENDARY_PASSIVES).copy()
+    if rarity["name"] in ("Raro", "Épico", "Legendario"):
+        passive = random.choice(ITEM_PASSIVES).copy()
 
     # Precio de venta
     sell_price = calc_sell_price(rarity["name"], ilvl)
