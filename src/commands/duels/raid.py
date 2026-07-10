@@ -36,7 +36,7 @@ from src.utils.raid_config import (
     RAID_DROP_RATE_DEFEAT,
     RAID_RARITY_BONUS_VICTORY, RAID_RARITY_MALUS_DEFEAT,
     BOSS_SPECIAL_INTERVAL, BOSS_ABILITIES,
-    RAID_BOSSES,
+    RAID_BOSSES, RAID_AFFIXES,
     get_today_boss, calc_boss_stats, generate_raid_loot,
 )
 
@@ -100,6 +100,11 @@ class RaidCombatant:
         self.poison_damage = 0     # Daño por turno de veneno
         self.atk_debuff_turns = 0  # Turnos de reducción de ATK
         self.atk_debuff_pct = 0.0  # Porcentaje de reducción
+        
+        # Nuevos estados para habilidades activas y mecánicas
+        self.shield = 0            # Escudo de absorción (Paladín)
+        self.is_taunting = False   # Provocación activa (Guerrero)
+        self.class_ability_cooldown = 0 # Enfriamiento de habilidad de clase
 
 
 # ══════════════════════════════════════════════
@@ -245,11 +250,12 @@ class RaidLobbyView(discord.ui.View):
 class RaidCombatView(discord.ui.View):
     """Vista principal del combate cooperativo contra el boss."""
 
-    def __init__(self, players: list[RaidCombatant], boss: RaidBoss, cog: 'RaidsCog'):
+    def __init__(self, players: list[RaidCombatant], boss: RaidBoss, cog: 'RaidsCog', affix: str = "Ninguno"):
         super().__init__(timeout=RAID_TURN_TIMEOUT)
         self.players = players
         self.boss = boss
         self.cog = cog
+        self.affix = affix
 
         # Acciones elegidas por cada jugador (user_id -> action)
         self.actions: dict[int, str] = {}
@@ -260,6 +266,15 @@ class RaidCombatView(discord.ui.View):
         self.action_log: list[str] = []
         self.interaction_msg = None
 
+        # Nuevos estados de mecánicas dinámicas y estados
+        self.minions: list[dict] = []
+        self.minions_summoned = False
+        self.boss_channeling = False
+        self.boss_channeled_damage = 0
+        self.boss_channeling_threshold = 0
+        self.boss_poison_turns = 0
+        self.boss_poison_damage = 0
+
     def _alive_players(self) -> list[RaidCombatant]:
         """Retorna los jugadores que siguen vivos."""
         return [p for p in self.players if not p.is_dead]
@@ -269,16 +284,23 @@ class RaidCombatView(discord.ui.View):
         total_alive = len(alive)
         total_players = len(self.players)
 
+        # Afijo activo
+        affix_info = RAID_AFFIXES.get(self.affix, {"emoji": "⚪", "desc": "Ninguno"})
+        desc = (
+            f"**Ronda {self.turn_count + 1}** · "
+            f"Jugadores vivos: {total_alive}/{total_players}\n"
+            f"**Afijo:** {affix_info['emoji']} **{self.affix}** — *{affix_info['desc']}*\n"
+            f"Habilidad especial en: **{BOSS_SPECIAL_INTERVAL - (self.turn_count % BOSS_SPECIAL_INTERVAL)}** turnos"
+        )
+        if self.boss_channeling:
+            desc += f"\n⚠️ **¡{self.boss.name} está canalizando su ataque definitivo!** Daño acumulado: **{self.boss_channeled_damage}/{self.boss_channeling_threshold}**"
+
         # Boss HP bar
         boss_hp_bar = format_hp_bar(max(0, self.boss.hp), self.boss.max_hp, size=20)
 
         embed = discord.Embed(
             title=f"{self.boss.emoji} Raid — {self.boss.name}",
-            description=(
-                f"**Ronda {self.turn_count + 1}** · "
-                f"Jugadores vivos: {total_alive}/{total_players}\n"
-                f"Habilidad especial en: **{BOSS_SPECIAL_INTERVAL - (self.turn_count % BOSS_SPECIAL_INTERVAL)}** turnos"
-            ),
+            description=desc,
             color=self.boss.color
         )
 
@@ -294,6 +316,12 @@ class RaidCombatView(discord.ui.View):
             inline=False
         )
 
+        # Minions field if any are alive
+        alive_minions = [m for m in self.minions if m["hp"] > 0]
+        if alive_minions:
+            minions_text = "\n".join(f"👾 **{m['name']}**: {format_hp_bar(m['hp'], m['max_hp'])}" for m in alive_minions)
+            embed.add_field(name="👾 Esbirros del Jefe", value=minions_text, inline=False)
+
         # Player fields
         for p in self.players:
             rank_emoji = get_combat_rank_emoji(p.level)
@@ -307,6 +335,10 @@ class RaidCombatView(discord.ui.View):
                     status += f" 🧪({p.poison_turns}t)"
                 if p.atk_debuff_turns > 0:
                     status += f" ❄️({p.atk_debuff_turns}t)"
+                if p.shield > 0:
+                    status += f" 🛡️(Escudo: {p.shield})"
+                if p.is_taunting:
+                    status += " 📣(Taunt)"
 
             # Acción elegida
             action_status = ""
@@ -315,6 +347,8 @@ class RaidCombatView(discord.ui.View):
                     action_status = " · 🟢 ¡Listo!"
                 else:
                     action_status = " · 🔴 Eligiendo..."
+                if p.class_ability_cooldown > 0:
+                    action_status += f" ⏳({p.class_ability_cooldown}t)"
 
             class_tag = f" [{p.combat_class}]" if p.combat_class else ""
             embed.add_field(
@@ -328,7 +362,7 @@ class RaidCombatView(discord.ui.View):
             log_text = "\n".join(self.action_log[-6:])
             embed.add_field(name="📜 Registro", value=log_text, inline=False)
 
-        embed.set_footer(text=f"Acciones: ⚔️ Atacar · 🛡️ Defender · Tiempo por ronda: {RAID_TURN_TIMEOUT}s")
+        embed.set_footer(text=f"Acciones: ⚔️ Atacar · 🛡️ Defender · ✨ Especial de Clase · Tiempo por ronda: {RAID_TURN_TIMEOUT}s")
         return embed
 
     # ──────────────────── BOTONES ────────────────────
@@ -340,6 +374,28 @@ class RaidCombatView(discord.ui.View):
     @discord.ui.button(label="🛡️ Defender", style=discord.ButtonStyle.primary, row=0)
     async def defend_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._register_action(interaction, 'defend')
+
+    @discord.ui.button(label="✨ Especial de Clase", style=discord.ButtonStyle.secondary, row=0)
+    async def class_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        player = next((p for p in self.players if p.user.id == user_id), None)
+        if player is None:
+            await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
+            return
+        if player.is_dead:
+            await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
+            return
+        if not player.combat_class:
+            await interaction.response.send_message("❌ No tienes una clase (requiere Nv. 5+).", ephemeral=True)
+            return
+        if player.class_ability_cooldown > 0:
+            await interaction.response.send_message(
+                f"⏳ Tu habilidad de clase está en enfriamiento ({player.class_ability_cooldown} turnos).",
+                ephemeral=True
+            )
+            return
+
+        await self._register_action(interaction, 'class_special')
 
     async def _register_action(self, interaction: discord.Interaction, action: str):
         if self.game_over:
@@ -382,16 +438,59 @@ class RaidCombatView(discord.ui.View):
         logs = [f"🏁 **Ronda {self.turn_count + 1}:**"]
         alive = self._alive_players()
 
-        # 1. Aplicar DOTs (veneno) a jugadores
+        # Helper para aplicar daño a jugadores
+        def apply_damage_to_player(target, raw_dmg):
+            if target.is_dead:
+                return
+            absorbed = 0
+            if target.shield > 0:
+                absorbed = min(target.shield, raw_dmg)
+                raw_dmg -= absorbed
+                target.shield -= absorbed
+                logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
+            if target.is_defending:
+                raw_dmg = max(1, int(raw_dmg * 0.4))
+            target.hp = max(0, target.hp - raw_dmg)
+            logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
+            if target.hp <= 0:
+                target.is_dead = True
+                logs.append(f"💀 **{target.user.display_name}** ha caído en combate!")
+                if self.affix == "Sangriento":
+                    heal = int(self.boss.max_hp * 0.15)
+                    self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
+                    logs.append(f"🩸 **Sangriento:** {self.boss.name} se cura **{heal}** HP debido a la caída de un jugador.")
+
+        # 1. Aplicar afijo "Niebla Venenosa"
+        if self.affix == "Niebla Venenosa":
+            logs.append("🧪 **Niebla Venenosa:** La niebla asfixiante daña a todos los jugadores.")
+            for p in alive:
+                apply_damage_to_player(p, 5)
+
+        # Refrescar vivos
+        alive = self._alive_players()
+        if not alive:
+            self.game_over = True
+            logs.append(f"💀 **Todos los jugadores han caído. {self.boss.name} es victorioso.**")
+            self.action_log.extend(logs)
+            await self._finish_raid(interaction, victory=False)
+            return
+
+        # 2. Aplicar DOTs (veneno) a jugadores
         for p in alive:
             if p.poison_turns > 0:
                 dmg = min(p.hp, p.poison_damage)
-                p.hp = max(0, p.hp - dmg)
                 p.poison_turns -= 1
-                logs.append(f"🧪 **Veneno:** {p.user.display_name} sufre **{dmg}** daño.")
-                if p.hp <= 0:
-                    p.is_dead = True
-                    logs.append(f"💀 **{p.user.display_name}** ha caído por veneno!")
+                logs.append(f"🧪 **Veneno:** {p.user.display_name} sufre **{dmg}** daño por veneno.")
+                apply_damage_to_player(p, dmg)
+
+        # Refrescar vivos
+        alive = self._alive_players()
+        if not alive:
+            self.game_over = True
+            logs.append(f"💀 **Todos los jugadores han caído. {self.boss.name} es victorioso.**")
+            self.action_log.extend(logs)
+            await self._finish_raid(interaction, victory=False)
+            return
 
         # Decrementar debuffs
         for p in alive:
@@ -401,15 +500,26 @@ class RaidCombatView(discord.ui.View):
                     p.atk = p.base_atk  # Restaurar ATK
                     logs.append(f"❄️ El debuff de ATK de {p.user.display_name} ha terminado.")
 
-        # 2. Procesar acciones de jugadores
-        alive = self._alive_players()  # Refrescar por si murieron por DOT
-        total_damage_to_boss = 0
+        # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
+        if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:
+            self.minions_summoned = True
+            self.minions = [
+                {"name": "Esbirro de Sombras A", "hp": 40, "max_hp": 40},
+                {"name": "Esbirro de Sombras B", "hp": 40, "max_hp": 40}
+            ]
+            logs.append("\n👾 **¡El jefe invoca 2 Esbirros de Sombras!** Los ataques se redirigirán a ellos hasta destruirlos.")
+
+        # 4. Procesar acciones de jugadores
+        total_damage_dealt_this_turn = 0
 
         for p in alive:
             action = self.actions.get(p.user.id, 'timeout')
+            damage = 0
+            is_magic = False
+            crit = False
 
             if action == 'attack':
-                # Calcular daño al boss
+                # Ataque normal (daño físico)
                 effective_atk = p.atk
                 if p.atk_debuff_turns > 0:
                     effective_atk = int(p.atk * (1.0 - p.atk_debuff_pct))
@@ -423,9 +533,42 @@ class RaidCombatView(discord.ui.View):
                 if crit:
                     damage = int(damage * 1.5)
 
-                total_damage_to_boss += damage
-                crit_text = " **¡CRÍTICO!**" if crit else ""
-                logs.append(f"⚔️ {p.user.display_name} ataca al boss → **{damage}** daño{crit_text}")
+            elif action == 'class_special':
+                # Habilidad especial de clase
+                if p.combat_class == 'Guerrero':
+                    # Daño físico 50% y taunt
+                    damage = max(1, int(p.atk * 0.5 * random.uniform(0.9, 1.1) - self.boss.def_stat * 0.35))
+                    p.is_taunting = True
+                    p.class_ability_cooldown = 3
+                    logs.append(f"🛡️ **{p.user.display_name}** usa **Provocación**.")
+                elif p.combat_class == 'Mago':
+                    # Daño mágico masivo
+                    damage = max(1, int(p.mag * 2.2 * random.uniform(0.85, 1.15) - self.boss.def_stat * 0.20))
+                    is_magic = True
+                    p.class_ability_cooldown = 3
+                    logs.append(f"🔮 **{p.user.display_name}** usa **Explosión Arcana**.")
+                elif p.combat_class == 'Pícaro':
+                    # Daño físico y veneno al jefe
+                    damage = max(1, int(p.atk * 1.5 * random.uniform(0.9, 1.1) - self.boss.def_stat * 0.35))
+                    self.boss_poison_turns = 3
+                    self.boss_poison_damage = 20
+                    p.class_ability_cooldown = 3
+                    logs.append(f"🗡️ **{p.user.display_name}** usa **Emboscada** e inflige veneno.")
+                elif p.combat_class == 'Clérigo':
+                    # Curación grupal (mágica)
+                    heal = int(p.mag * 1.0)
+                    for target_p in self.players:
+                        if not target_p.is_dead:
+                            target_p.hp = min(target_p.max_hp, target_p.hp + heal)
+                    p.class_ability_cooldown = 4
+                    logs.append(f"💚 **{p.user.display_name}** usa **Plegaria Celestial** y cura **{heal}** HP a todo el grupo.")
+                elif p.combat_class == 'Paladín':
+                    # Escuda al aliado con menor porcentaje de HP
+                    target_p = min([target for target in self.players if not target.is_dead], key=lambda x: x.hp / x.max_hp)
+                    shield_val = int(p.max_hp * 0.2)
+                    target_p.shield = shield_val
+                    p.class_ability_cooldown = 4
+                    logs.append(f"✨ **{p.user.display_name}** usa **Baluarte Sagrado** escudando a {target_p.user.display_name} por **{shield_val}**.")
 
             elif action == 'defend':
                 p.is_defending = True
@@ -436,10 +579,36 @@ class RaidCombatView(discord.ui.View):
             elif action == 'timeout':
                 logs.append(f"⏰ {p.user.display_name} no respondió a tiempo.")
 
-        # Aplicar daño al boss
-        self.boss.hp = max(0, self.boss.hp - total_damage_to_boss)
+            # Aplicar modificadores de afijo "Inestabilidad Mágica"
+            if damage > 0:
+                if is_magic:
+                    if self.affix == "Inestabilidad Mágica":
+                        damage = int(damage * 1.4)
+                        logs.append("🌀 **Inestabilidad Mágica:** Daño mágico aumentado un 40%.")
+                else:
+                    if self.affix == "Inestabilidad Mágica":
+                        damage = int(damage * 0.7)
+                        logs.append("🌀 **Inestabilidad Mágica:** Daño físico reducido un 30%.")
 
-        # 3. ¿Boss derrotado?
+                # Redirigir a esbirros si están activos
+                alive_minions = [m for m in self.minions if m["hp"] > 0]
+                if alive_minions:
+                    target_minion = alive_minions[0]
+                    target_minion["hp"] = max(0, target_minion["hp"] - damage)
+                    logs.append(f"   → Daño redirigido a {target_minion['name']}: **{damage}** daño.")
+                    if target_minion["hp"] <= 0:
+                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido!")
+                else:
+                    # Daño al jefe
+                    self.boss.hp = max(0, self.boss.hp - damage)
+                    total_damage_dealt_this_turn += damage
+                    # Acumular daño para la verificación de canalización
+                    if self.boss_channeling:
+                        self.boss_channeled_damage += damage
+                    crit_text = " **¡CRÍTICO!**" if crit else ""
+                    logs.append(f"   → Daño al jefe: **{damage}** daño{crit_text}.")
+
+        # 5. ¿Boss derrotado?
         if self.boss.hp <= 0:
             self.game_over = True
             logs.append(f"🎉 **¡{self.boss.name} ha sido derrotado!**")
@@ -449,45 +618,83 @@ class RaidCombatView(discord.ui.View):
             await self._finish_raid(interaction, victory=True)
             return
 
-        # 4. Ataque del Boss
+        # 6. Turno del Boss: Ataques y mecánicas
         alive = self._alive_players()
         if not alive:
             self.game_over = True
             logs.append(f"💀 **Todos los jugadores han caído. {self.boss.name} es victorioso.**")
             self.action_log.extend(logs)
-            if len(self.action_log) > 8:
-                self.action_log = self.action_log[-8:]
             await self._finish_raid(interaction, victory=False)
             return
 
-        # Ataque normal del boss a un jugador aleatorio
-        target = random.choice(alive)
-        boss_dmg = int(self.boss.atk * random.uniform(0.85, 1.15))
-        if target.is_defending:
-            boss_dmg = max(1, int(boss_dmg * 0.4))
-            logs.append(
-                f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name} → "
-                f"**{boss_dmg}** daño *(bloqueado parcialmente)*"
-            )
-        else:
-            logs.append(
-                f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name} → "
-                f"**{boss_dmg}** daño"
-            )
-        target.hp = max(0, target.hp - boss_dmg)
-        if target.hp <= 0:
-            target.is_dead = True
-            logs.append(f"💀 **{target.user.display_name}** ha caído!")
+        boss_attacked = False
 
-        # 5. Habilidad especial del boss (cada N turnos)
-        if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0:
-            special_logs = self._execute_boss_ability()
-            logs.extend(special_logs)
+        # Si el boss estaba canalizando su Ultimate, resolver la canalización
+        if self.boss_channeling:
+            self.boss_channeling = False
+            # Registrar daño acumulado
+            if self.boss_channeled_damage >= self.boss_channeling_threshold:
+                logs.append(f"✨ **¡INTERRUMPIDO!** El grupo infligió {self.boss_channeled_damage} daño, aturdiendo a {self.boss.name} y cancelando su ataque definitivo.")
+            else:
+                logs.append(f"💥 **¡FALLIDO!** El grupo solo infligió {self.boss_channeled_damage}/{self.boss_channeling_threshold} daño. {self.boss.name} desata su golpe definitivo!")
+                ult_dmg = int(self.boss.atk * 2.5)
+                # Daño en área masivo a todos los jugadores
+                for target_p in alive:
+                    apply_damage_to_player(target_p, ult_dmg)
+            boss_attacked = True
 
-        # 6. Limpiar estados
+        # Si no atacó con su Ultimate, realizar su ataque normal / especial
+        if not boss_attacked:
+            # Comprobar provocación (taunt)
+            taunters = [p for p in alive if p.is_taunting]
+            if taunters:
+                target = random.choice(taunters)
+            else:
+                target = random.choice(alive)
+
+            # Modificador del afijo "Enfurecido"
+            boss_atk_val = self.boss.atk
+            if self.affix == "Enfurecido" and (self.boss.hp / self.boss.max_hp) < 0.35:
+                boss_atk_val = int(boss_atk_val * 1.30)
+                logs.append(f"⚡ **Enfurecido:** ¡{self.boss.name} ruge con furia, aumentando su ATK!")
+
+            boss_dmg = int(boss_atk_val * random.uniform(0.85, 1.15))
+            logs.append(f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name}:")
+            apply_damage_to_player(target, boss_dmg)
+
+            # Habilidad especial del boss (cada 3 turnos, si no está aturdido)
+            if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0:
+                special_logs = self._execute_boss_ability()
+                logs.extend(special_logs)
+
+        # 7. Aplicar veneno de Rogue (Pícaro) al jefe
+        if self.boss_poison_turns > 0:
+            self.boss.hp = max(0, self.boss.hp - self.boss_poison_damage)
+            self.boss_poison_turns -= 1
+            logs.append(f"🧪 **Veneno del Pícaro:** {self.boss.name} sufre **{self.boss_poison_damage}** daño por veneno.")
+            if self.boss.hp <= 0:
+                self.game_over = True
+                logs.append(f"🎉 **¡{self.boss.name} ha caído por el veneno del Pícaro!**")
+                self.action_log.extend(logs)
+                if len(self.action_log) > 8:
+                    self.action_log = self.action_log[-8:]
+                await self._finish_raid(interaction, victory=True)
+                return
+
+        # 8. Limpiar estados de ronda y reducir cooldowns
         for p in self.players:
             p.is_defending = False
+            p.is_taunting = False
+            if p.class_ability_cooldown > 0:
+                p.class_ability_cooldown -= 1
         self.actions.clear()
+
+        # Comprobar si el próximo turno es de canalización (rondas 5, 10, 15...)
+        if (self.turn_count + 2) % 5 == 0:
+            self.boss_channeling = True
+            self.boss_channeled_damage = 0
+            self.boss_channeling_threshold = 30 * len(self.players)
+            logs.append(f"\n⚠️ **¡{self.boss.name} empieza a canalizar un ataque definitivo!** ¡Inflige al menos **{self.boss_channeling_threshold}** de daño en la siguiente ronda para interrumpirlo!")
 
         self.turn_count += 1
 
@@ -517,10 +724,17 @@ class RaidCombatView(discord.ui.View):
 
         if interaction is None:
             # Timeout — recrear vista
-            new_view = RaidCombatView(self.players, self.boss, self.cog)
+            new_view = RaidCombatView(self.players, self.boss, self.cog, self.affix)
             new_view.turn_count = self.turn_count
             new_view.action_log = self.action_log
             new_view.interaction_msg = self.interaction_msg
+            new_view.minions = self.minions
+            new_view.minions_summoned = self.minions_summoned
+            new_view.boss_channeling = self.boss_channeling
+            new_view.boss_channeled_damage = self.boss_channeled_damage
+            new_view.boss_channeling_threshold = self.boss_channeling_threshold
+            new_view.boss_poison_turns = self.boss_poison_turns
+            new_view.boss_poison_damage = self.boss_poison_damage
             try:
                 if self.interaction_msg:
                     await self.interaction_msg.edit(embed=embed, view=new_view)
@@ -808,14 +1022,32 @@ class RaidCombatView(discord.ui.View):
                     )
                     continue
 
-                view = RaidLootView(p.user, loot, current_piece)
-                loot_embed = view.build_embed()
-                msg = await effective_channel.send(
-                    content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
-                    embed=loot_embed,
-                    view=view,
-                )
-                view.message = msg
+                # Épico / Legendario → Sistema de Loot Roll grupal
+                if loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
+                    alive_players = [pl for pl in self.players if not pl.is_dead]
+                    eligible = alive_players if alive_players else self.players
+                    roll_view = RaidLootRollView(loot, eligible, effective_channel)
+                    roll_embed = roll_view.build_embed()
+                    msg = await effective_channel.send(
+                        content=(
+                            f"🎲 **¡Drop {loot['rarity']}!** "
+                            f"{loot['rarity_color']} **{loot['name']}** — "
+                            f"¡Todos los sobrevivientes pueden tirar los dados!"
+                        ),
+                        embed=roll_embed,
+                        view=roll_view,
+                    )
+                    roll_view.message = msg
+                else:
+                    # Drop individual normal
+                    view = RaidLootView(p.user, loot, current_piece)
+                    loot_embed = view.build_embed()
+                    msg = await effective_channel.send(
+                        content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
+                        embed=loot_embed,
+                        view=view,
+                    )
+                    view.message = msg
 
 
 # ══════════════════════════════════════════════
@@ -1002,6 +1234,224 @@ class RaidLootView(discord.ui.View):
             await self._sell()
 
 
+# ══════════════════════════════════════════════
+# VISTA: LOOT ROLL GRUPAL (Need/Greed/Pass)
+# ══════════════════════════════════════════════
+
+LOOT_ROLL_TIMEOUT = 45  # Segundos para decidir
+
+
+class RaidLootRollView(discord.ui.View):
+    """Vista de tirada de dados grupal para drops Épico/Legendario.
+
+    Cada jugador elegible puede:
+      🎯 Need  – Necesito este objeto (tira 1-100, +20 bonus).
+      💰 Greed – Lo quiero para vender (tira 1-100).
+      ❌ Pass  – No lo quiero.
+
+    Al finalizar, el jugador con la tirada más alta gana el item.
+    Si nadie tira, se vende y el oro se reparte.
+    """
+
+    def __init__(self, loot: dict, eligible_players: list['RaidCombatant'], channel):
+        super().__init__(timeout=LOOT_ROLL_TIMEOUT)
+        self.loot = loot
+        self.eligible_players = eligible_players
+        self.eligible_ids = {p.user.id for p in eligible_players}
+        self.channel = channel
+        self.message = None
+        self.resolved = False
+
+        # Almacenar decisiones: user_id -> {"choice": "need"/"greed"/"pass", "roll": int}
+        self.rolls: dict[int, dict] = {}
+
+    def build_embed(self) -> discord.Embed:
+        loot = self.loot
+        embed = discord.Embed(
+            title=f"🎲 ¡Loot Roll! — {loot['rarity_color']} {loot['name']}",
+            description=(
+                f"**{loot['rarity']}** · Nivel {loot['item_level']} · "
+                f"{SLOT_EMOJIS.get(loot['slot'], '🔹')} {loot['slot']}\n\n"
+                f"Elige tu opción:\n"
+                f"🎯 **Need** — Lo necesito (+20 bonus a la tirada)\n"
+                f"💰 **Greed** — Lo quiero para vender\n"
+                f"❌ **Pass** — No lo quiero\n"
+            ),
+            color=loot['rarity_hex']
+        )
+
+        new_stats_text = format_item_stats_display(loot)
+        embed.add_field(name="📊 Stats", value=new_stats_text, inline=False)
+
+        # Mostrar quiénes ya tiraron
+        status_lines = []
+        for p in self.eligible_players:
+            if p.user.id in self.rolls:
+                r = self.rolls[p.user.id]
+                choice_emoji = {"need": "🎯", "greed": "💰", "pass": "❌"}
+                status_lines.append(
+                    f"{choice_emoji.get(r['choice'], '❓')} **{p.user.display_name}** — "
+                    f"{r['choice'].capitalize()}"
+                    + (f" (🎲 {r['roll']})" if r['choice'] != 'pass' else "")
+                )
+            else:
+                status_lines.append(f"⏳ **{p.user.display_name}** — Decidiendo...")
+
+        embed.add_field(name="🎲 Tiradas", value="\n".join(status_lines) or "—", inline=False)
+        embed.set_footer(text=f"Tiempo: {LOOT_ROLL_TIMEOUT}s · Si nadie tira, se vende y se reparte el oro.")
+        return embed
+
+    async def _check_all_rolled(self, interaction: discord.Interaction):
+        """Verifica si todos ya tiraron y resuelve si es así."""
+        if len(self.rolls) >= len(self.eligible_players):
+            await self._resolve(interaction)
+
+    @discord.ui.button(label="🎯 Need", style=discord.ButtonStyle.success, row=0)
+    async def need_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_roll(interaction, "need")
+
+    @discord.ui.button(label="💰 Greed", style=discord.ButtonStyle.primary, row=0)
+    async def greed_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_roll(interaction, "greed")
+
+    @discord.ui.button(label="❌ Pass", style=discord.ButtonStyle.secondary, row=0)
+    async def pass_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_roll(interaction, "pass")
+
+    async def _handle_roll(self, interaction: discord.Interaction, choice: str):
+        user_id = interaction.user.id
+
+        if user_id not in self.eligible_ids:
+            await interaction.response.send_message("❌ No participaste en esta raid.", ephemeral=True)
+            return
+
+        if user_id in self.rolls:
+            await interaction.response.send_message("❌ Ya elegiste tu opción.", ephemeral=True)
+            return
+
+        if self.resolved:
+            await interaction.response.send_message("❌ Este loot roll ya terminó.", ephemeral=True)
+            return
+
+        if choice == "pass":
+            roll_val = 0
+        elif choice == "need":
+            roll_val = random.randint(1, 100) + 20  # Bonus de +20
+        else:  # greed
+            roll_val = random.randint(1, 100)
+
+        self.rolls[user_id] = {"choice": choice, "roll": roll_val}
+
+        # Actualizar el embed
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        # Verificar si todos votaron
+        await self._check_all_rolled(interaction)
+
+    async def _resolve(self, interaction: discord.Interaction = None):
+        if self.resolved:
+            return
+        self.resolved = True
+
+        loot = self.loot
+
+        # Filtrar los que NO hicieron pass
+        active_rolls = {
+            uid: data for uid, data in self.rolls.items()
+            if data["choice"] != "pass"
+        }
+
+        # Desactivar botones
+        for item in self.children:
+            item.disabled = True
+
+        if not active_rolls:
+            # Nadie quiso el item → vender y repartir
+            sell_price = loot['sell_price']
+            share = sell_price // len(self.eligible_players)
+            for p in self.eligible_players:
+                await asyncio.to_thread(add_balance, p.user.id, share)
+                await asyncio.to_thread(registrar_transaccion, p.user.id, share,
+                                        f"Venta grupal raid: {loot['name']}")
+
+            embed = discord.Embed(
+                title="💰 Nadie reclamó el loot",
+                description=(
+                    f"**{loot['rarity_color']} {loot['name']}** se vendió automáticamente por "
+                    f"**{sell_price:,}** monedas.\n"
+                    f"Cada jugador recibió **{share:,}** monedas."
+                ),
+                color=discord.Color.light_grey()
+            )
+        else:
+            # El de mayor tirada gana
+            winner_id = max(active_rolls, key=lambda uid: active_rolls[uid]["roll"])
+            winner_data = active_rolls[winner_id]
+            winner_player = next(p for p in self.eligible_players if p.user.id == winner_id)
+
+            # Equipar o dar el item al ganador
+            equipment = await asyncio.to_thread(get_user_equipment, winner_id)
+            current_piece = equipment.get(loot["slot"])
+
+            # Enviar vista individual al ganador para decidir equipar/vender
+            try:
+                loot_view = RaidLootView(winner_player.user, loot, current_piece)
+                loot_embed = loot_view.build_embed()
+                await self.channel.send(
+                    content=f"🎁 {winner_player.user.mention} — ¡Ganaste la tirada! Decide qué hacer:",
+                    embed=loot_embed,
+                    view=loot_view,
+                )
+            except Exception as exc:
+                logger.warning("Error al enviar loot al ganador del roll: %r", exc)
+
+            # Construir resultado
+            result_lines = []
+            for p in self.eligible_players:
+                if p.user.id in self.rolls:
+                    r = self.rolls[p.user.id]
+                    choice_emoji = {"need": "🎯", "greed": "💰", "pass": "❌"}
+                    is_winner = " 👑" if p.user.id == winner_id else ""
+                    result_lines.append(
+                        f"{choice_emoji.get(r['choice'], '❓')} **{p.user.display_name}** — "
+                        f"{r['choice'].capitalize()}"
+                        + (f" (🎲 {r['roll']})" if r['choice'] != 'pass' else "")
+                        + is_winner
+                    )
+                else:
+                    result_lines.append(f"❌ **{p.user.display_name}** — No respondió (Pass)")
+
+            embed = discord.Embed(
+                title=f"🎲 Loot Roll — Resultado",
+                description=(
+                    f"**{loot['rarity_color']} {loot['name']}**\n\n"
+                    f"🏆 **¡{winner_player.user.display_name}** gana con una tirada de "
+                    f"**{winner_data['roll']}** ({winner_data['choice'].capitalize()})!\n\n"
+                    + "\n".join(result_lines)
+                ),
+                color=loot['rarity_hex']
+            )
+
+        if self.message:
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
+        self.stop()
+
+    async def on_timeout(self):
+        """Cuando expira el tiempo, los que no votaron se marcan como Pass."""
+        if self.resolved:
+            return
+
+        # Marcar como Pass a los que no votaron
+        for p in self.eligible_players:
+            if p.user.id not in self.rolls:
+                self.rolls[p.user.id] = {"choice": "pass", "roll": 0}
+
+        await self._resolve()
+
 
 def log_raid(boss_name: str, participants: list, result: str, turns: int, total_level: int):
     """Registra una raid completada en la base de datos."""
@@ -1105,8 +1555,11 @@ class RaidsCog(commands.Cog):
         total_level = sum(c.level for c in combatants)
         boss = RaidBoss(boss_config, total_level)
 
-        # Crear vista de combate
-        combat_view = RaidCombatView(combatants, boss, self)
+        # Seleccionar afijo aleatorio de la arena
+        affix_name = random.choice(list(RAID_AFFIXES.keys()))
+
+        # Crear vista de combate con afijo
+        combat_view = RaidCombatView(combatants, boss, self, affix=affix_name)
         combat_embed = combat_view._build_embed()
 
         combat_msg = await interaction.followup.send(embed=combat_embed, view=combat_view)

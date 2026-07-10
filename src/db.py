@@ -1878,6 +1878,19 @@ def init_db():
                     AddedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Tabla: RaidLog (Sistema de Raids)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS RaidLog (
+                    ID SERIAL PRIMARY KEY,
+                    BossName VARCHAR(50),
+                    Participants JSONB,
+                    Result VARCHAR(10),
+                    Turns INT,
+                    TotalLevel INT,
+                    Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             # ─── FIN TABLAS DUELOS PVP ───
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")

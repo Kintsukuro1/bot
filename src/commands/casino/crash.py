@@ -103,7 +103,7 @@ class Crash(commands.Cog):
         msg_cooldown_ticket = ""
         if apuesta <= CRASH_TICKET_MAX_BET:
             if await asyncio.to_thread(usuario_tiene_item, user_id, CRASH_TICKET_ITEM_ID):
-                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id, CRASH_TICKET_ITEM_ID)
+                status, time_remaining = await asyncio.to_thread(check_and_register_shield_use, user_id)
                 if status == 'ok' or status == 'blocked_start':
                     ticket_activo = await asyncio.to_thread(usar_item_usuario, user_id, CRASH_TICKET_ITEM_ID)
                     if not ticket_activo:
@@ -242,8 +242,6 @@ class CrashView(discord.ui.View):
                 # ----------------------------
                 
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
-                if self.ticket_activo:
-                    ganancia_total = int(ganancia_total * 0.65)
                 ganancia_neta = ganancia_total - self.apuesta
                 
                 # Actualizar balance y estadísticas atómicamente
@@ -276,7 +274,6 @@ class CrashView(discord.ui.View):
                     color = discord.Color.yellow()
                     resultado = f"🟰 **Empate** (sin ganancias ni pérdidas)"
                 
-                debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
                 resultado_embed = discord.Embed(
                     title="💥 Crash Casino - Te retiraste",
                     description=(
@@ -284,7 +281,7 @@ class CrashView(discord.ui.View):
                         f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
                         f"💵 **Total recibido:** {ganancia_total} monedas\n"
                         f"{resultado}\n"
-                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n"
                         f"{self._progress_bar_blocks(min(15, self.progress_steps), 15, explosion=False)}"
                     ),
                     color=color
@@ -363,8 +360,6 @@ class CrashView(discord.ui.View):
                 # ----------------------------
                 
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
-                if self.ticket_activo:
-                    ganancia_total = int(ganancia_total * 0.65)
                 ganancia_neta = ganancia_total - self.apuesta
                 
                 nuevo_saldo = self.saldo_post_apuesta + ganancia_total
@@ -386,7 +381,6 @@ class CrashView(discord.ui.View):
                 
                 # Barra completa para victoria
                 bar = self._progress_bar_blocks(15, 15, explosion=False)
-                debuff_msg = "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**" if self.ticket_activo else ""
                 resultado_embed = discord.Embed(
                     title="🎉 Crash Casino - ¡Victoria!",
                     description=(
@@ -394,7 +388,7 @@ class CrashView(discord.ui.View):
                         f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"
                         f"✅ **¡GANASTE!** +{ganancia_neta:,} monedas\n"
                         f"💰 **Total recibido:** {ganancia_total:,} monedas\n"
-                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas{debuff_msg}\n\n{bar}"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
                     ),
                     color=discord.Color.gold()
                 )
