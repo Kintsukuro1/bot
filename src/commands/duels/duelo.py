@@ -20,6 +20,7 @@ from src.db import (
     registrar_transaccion, transfer_balance, db_cursor,
     get_combat_stats, update_combat_stats_after_duel,
     log_duel, get_user_equipment, equip_item, get_duel_leaderboard,
+    update_user_class,
 )
 from src.utils.combat_progression import (
     calc_base_stats, calc_duel_xp, get_duel_cooldown_minutes,
@@ -209,12 +210,20 @@ class DuelView(discord.ui.View):
         status_p1 = "🟢 ¡Listo!" if self.p1_action else "🔴 Eligiendo..."
         status_p2 = "🟢 ¡Listo!" if self.p2_action else "🔴 Eligiendo..."
 
+        is_sudden_death = (self.turn_count + 1) >= 50
+        title_text = "⚔️ Duelo PvP Simultáneo (¡MUERTE SÚBITA!)" if is_sudden_death else "⚔️ Duelo PvP Simultáneo"
+        embed_color = discord.Color.red() if is_sudden_death else discord.Color.dark_gold()
+
+        desc_lines = [f"**Ronda {self.turn_count + 1}**"]
+        if is_sudden_death:
+            desc_lines.append("⚠️ **¡MUERTE SÚBITA ACTIVA! Daño aumentado +100%** ⚠️\n")
+        desc_lines.append(f"{self.p1.user.mention}: {status_p1}")
+        desc_lines.append(f"{self.p2.user.mention}: {status_p2}")
+
         embed = discord.Embed(
-            title="⚔️ Duelo PvP Simultáneo",
-            description=f"**Ronda {self.turn_count + 1}**\n"
-                        f"{self.p1.user.mention}: {status_p1}\n"
-                        f"{self.p2.user.mention}: {status_p2}",
-            color=discord.Color.dark_gold()
+            title=title_text,
+            description="\n".join(desc_lines),
+            color=embed_color
         )
 
         # Barras de HP
@@ -264,7 +273,10 @@ class DuelView(discord.ui.View):
 
         # Indicar acciones disponibles
         actions = ["⚔️ Atacar", "🛡️ Defender", "👁️ Tierra a los ojos"]
-        embed.set_footer(text=f"Acciones: {' · '.join(actions)} · Tiempo por ronda: {TURN_TIMEOUT_SECONDS}s")
+        footer_text = f"Acciones: {' · '.join(actions)} · Tiempo por ronda: {TURN_TIMEOUT_SECONDS}s"
+        if is_sudden_death:
+            footer_text += " · ⚠️ Daño aumentado un 100%"
+        embed.set_footer(text=footer_text)
 
         return embed
 
@@ -450,7 +462,19 @@ class DuelView(discord.ui.View):
                 p.hp = min(p.max_hp, p.hp + heal)
                 logs.append(f"💚 **Regen:** {p.user.display_name} se cura **{heal}** HP.")
 
-        # 1.5 Aplicar DOTs de clases (Quemadura, Veneno)
+        # 1.5 Aplicar Fatiga si es el turno 50 en adelante
+        is_sudden_death = (self.turn_count + 1) >= 50
+        if is_sudden_death:
+            fatigue_level = (self.turn_count + 1) - 50 + 1
+            fatigue_pct = 0.05 * fatigue_level
+            for defender in (self.p1, self.p2):
+                if defender.hp <= 0:
+                    continue
+                fatigue_dmg = min(defender.hp, max(1, int(defender.max_hp * fatigue_pct)))
+                defender.hp = max(0, defender.hp - fatigue_dmg)
+                logs.append(f"💀 **Fatiga:** {defender.user.display_name} sufre **{fatigue_dmg}** HP de daño por fatiga ({int(fatigue_pct*100)}%).")
+
+        # 1.6 Aplicar DOTs de clases (Quemadura, Veneno)
         for defender in (self.p1, self.p2):
             if defender.hp <= 0:
                 continue
@@ -458,17 +482,24 @@ class DuelView(discord.ui.View):
             p_turns = self.p1_poison_turns if defender == self.p1 else self.p2_poison_turns
             b_turns = self.p1_burn_turns if defender == self.p1 else self.p2_burn_turns
             
+            sudden_death_tag = " ⚠️*(Muerte Súbita)*" if is_sudden_death else ""
+            
             if p_turns > 0:
                 dot_val = SKILLS_CONFIG["veneno"]["dot_damage"]
+                if is_sudden_death:
+                    dot_val = dot_val * 2
                 p_dmg = min(defender.hp, dot_val)
                 defender.hp = max(0, defender.hp - p_dmg)
-                logs.append(f"🧪 **Veneno:** {defender.user.display_name} sufre **{p_dmg}** HP de daño por veneno.")
+                logs.append(f"🧪 **Veneno:** {defender.user.display_name} sufre **{p_dmg}** HP de daño por veneno.{sudden_death_tag}")
                 
             if b_turns > 0:
                 dot_pct = SKILLS_CONFIG["quemadura"]["dot_max_hp_pct"]
-                b_dmg = min(defender.hp, max(1, int(defender.max_hp * dot_pct)))
+                b_dmg_base = max(1, int(defender.max_hp * dot_pct))
+                if is_sudden_death:
+                    b_dmg_base = b_dmg_base * 2
+                b_dmg = min(defender.hp, b_dmg_base)
                 defender.hp = max(0, defender.hp - b_dmg)
-                logs.append(f"🔥 **Quemadura:** {defender.user.display_name} sufre **{b_dmg}** HP de daño por quemadura.")
+                logs.append(f"🔥 **Quemadura:** {defender.user.display_name} sufre **{b_dmg}** HP de daño por quemadura.{sudden_death_tag}")
 
         # 2. Aplicar curación/defensa activa si eligieron Defender
         if self.p1.is_defending:
@@ -514,7 +545,11 @@ class DuelView(discord.ui.View):
                         self.p2_retribution_active = True
                     logs.append(f"🛡️ **Postura de Represalia:** {caster.user.display_name} prepara un contraataque total para esta ronda!")
                 elif special_id == "drenaje":
-                    steal_amt = max(1, int(target.hp * 0.15))
+                    drain_pct = 0.15
+                    is_sudden_death = (self.turn_count + 1) >= 50
+                    if is_sudden_death:
+                        drain_pct = 0.30
+                    steal_amt = max(1, int(target.hp * drain_pct))
                     target.hp = max(0, target.hp - steal_amt)
                     caster.hp = min(caster.max_hp, caster.hp + steal_amt)
                     # Limpiar debuffs propios
@@ -526,7 +561,8 @@ class DuelView(discord.ui.View):
                         self.p2_blinded_turns = 0
                         self.p2_poison_turns = 0
                         self.p2_burn_turns = 0
-                    logs.append(f"⚕️ **Drenaje Sagrado:** {caster.user.display_name} roba **{steal_amt}** HP a {target.user.display_name} y purifica todas sus condiciones!")
+                    sudden_death_tag = " ⚠️*(Muerte Súbita)*" if is_sudden_death else ""
+                    logs.append(f"⚕️ **Drenaje Sagrado:** {caster.user.display_name} roba **{steal_amt}** HP a {target.user.display_name} y purifica todas sus condiciones!{sudden_death_tag}")
 
         # 3. Calcular ataque de P1 a P2
         p1_dmg = 0
@@ -736,9 +772,15 @@ class DuelView(discord.ui.View):
                 defender.arcane_shield_active = False
                 shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
+            # Muerte súbita (turno 50+)
+            sudden_death_log = ""
+            if (self.turn_count + 1) >= 50:
+                damage = damage * 2
+                sudden_death_log = " ⚠️*(Muerte Súbita)*"
+
             crit_text = " **¡CRÍTICO!**" if crit else ""
             defend_text = " *(bloqueado parcialmente)*" if is_defending_for_damage else ""
-            log_line = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}"
+            log_line = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}{sudden_death_log}"
             
             # Pasivo: Vampirismo
             if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
@@ -794,7 +836,13 @@ class DuelView(discord.ui.View):
                     defender.arcane_shield_active = False
                     shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
-                log_line = f"{cfg['emoji']} {attacker.user.display_name} usa **{cfg['name']}** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}"
+                # Muerte súbita (turno 50+)
+                sudden_death_log = ""
+                if (self.turn_count + 1) >= 50:
+                    damage = damage * 2
+                    sudden_death_log = " ⚠️*(Muerte Súbita)*"
+
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} usa **{cfg['name']}** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}{sudden_death_log}"
                 return damage, log_line
                 
             elif special_id == "quemadura":
@@ -823,7 +871,13 @@ class DuelView(discord.ui.View):
                     defender.arcane_shield_active = False
                     shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
-                log_line = f"{cfg['emoji']} {attacker.user.display_name} lanza **{cfg['name']}** → **{damage}** daño mágico y quema a {defender.user.display_name}!{shield_log}"
+                # Muerte súbita (turno 50+)
+                sudden_death_log = ""
+                if (self.turn_count + 1) >= 50:
+                    damage = damage * 2
+                    sudden_death_log = " ⚠️*(Muerte Súbita)*"
+
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} lanza **{cfg['name']}** → **{damage}** daño mágico y quema a {defender.user.display_name}!{shield_log}{sudden_death_log}"
                 return damage, log_line
 
         return 0, ""
