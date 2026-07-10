@@ -35,6 +35,7 @@ from src.utils.combat_progression import (
     DROP_RATE_WINNER, DROP_RATE_LOSER,
     ALL_STATS, format_item_stats_display,
 )
+from src.utils.combat_config import SKILLS_CONFIG
 
 
 # ══════════════════════════════════════════════
@@ -329,12 +330,12 @@ class DuelView(discord.ui.View):
         max_values=1,
         row=1,
         options=[
-            discord.SelectOption(label="Tierra a los ojos (Nvl. 1)", value="ceguera", emoji="👁️", description="Reduce precisión del rival por 3 turnos."),
-            discord.SelectOption(label="Frenesí de Batalla (Guerrero Nvl. 5)", value="frenesi", emoji="⚔️", description="Guerrero: +ATK, +daño recibido."),
-            discord.SelectOption(label="Postura de Represalia (Paladín Nvl. 5)", value="represalia", emoji="🛡️", description="Paladín: Mitiga y refleja daño."),
-            discord.SelectOption(label="Daga Envenenada (Pícaro Nvl. 5)", value="veneno", emoji="🥷", description="Pícaro: Daño físico y veneno continuo."),
-            discord.SelectOption(label="Tormenta de Fuego (Mago Nvl. 5)", value="quemadura", emoji="🔥", description="Mago: Daño mágico y quemadura continua."),
-            discord.SelectOption(label="Drenaje Sagrado (Clérigo Nvl. 5)", value="drenaje", emoji="⚕️", description="Clérigo: Roba vida y limpia debuffs.")
+            discord.SelectOption(
+                label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                value=skill_id,
+                emoji=skill['emoji'],
+                description=skill['desc'][:100]
+            ) for skill_id, skill in SKILLS_CONFIG.items()
         ]
     )
     async def select_special(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -364,16 +365,7 @@ class DuelView(discord.ui.View):
         selected_value = select.values[0]
         
         # Validar si el especial seleccionado corresponde a su clase y nivel
-        skills_requirements = {
-            "ceguera": {"class": None, "min_level": 1, "name": "Tierra a los ojos", "emoji": "👁️"},
-            "frenesi": {"class": "Guerrero", "min_level": 5, "name": "Frenesí de Batalla", "emoji": "⚔️"},
-            "represalia": {"class": "Paladín", "min_level": 5, "name": "Postura de Represalia", "emoji": "🛡️"},
-            "veneno": {"class": "Pícaro", "min_level": 5, "name": "Daga Envenenada", "emoji": "🥷"},
-            "quemadura": {"class": "Mago", "min_level": 5, "name": "Tormenta de Fuego", "emoji": "🔥"},
-            "drenaje": {"class": "Clérigo", "min_level": 5, "name": "Drenaje Sagrado", "emoji": "⚕️"},
-        }
-        
-        req = skills_requirements.get(selected_value)
+        req = SKILLS_CONFIG.get(selected_value)
         if not req:
             await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
             return
@@ -472,12 +464,14 @@ class DuelView(discord.ui.View):
             b_turns = self.p1_burn_turns if defender == self.p1 else self.p2_burn_turns
             
             if p_turns > 0:
-                p_dmg = min(defender.hp, 10)
+                dot_val = SKILLS_CONFIG["veneno"]["dot_damage"]
+                p_dmg = min(defender.hp, dot_val)
                 defender.hp = max(0, defender.hp - p_dmg)
                 logs.append(f"🧪 **Veneno:** {defender.user.display_name} sufre **{p_dmg}** HP de daño por veneno.")
                 
             if b_turns > 0:
-                b_dmg = min(defender.hp, max(1, int(defender.max_hp * 0.05)))
+                dot_pct = SKILLS_CONFIG["quemadura"]["dot_max_hp_pct"]
+                b_dmg = min(defender.hp, max(1, int(defender.max_hp * dot_pct)))
                 defender.hp = max(0, defender.hp - b_dmg)
                 logs.append(f"🔥 **Quemadura:** {defender.user.display_name} sufre **{b_dmg}** HP de daño por quemadura.")
 
@@ -555,10 +549,12 @@ class DuelView(discord.ui.View):
         # P1 a P2
         if p1_dmg > 0:
             if self.p2_retribution_active:
-                mitigated = max(1, int(p1_dmg * 0.5))
+                cfg_rep = SKILLS_CONFIG["represalia"]
+                mitigated = max(1, int(p1_dmg * cfg_rep["mitigation"]))
+                reflect_dmg = int(p1_dmg * cfg_rep["reflect"])
                 self.p2.hp = max(0, self.p2.hp - mitigated)
-                self.p1.hp = max(0, self.p1.hp - p1_dmg) # Reflejo
-                logs.append(f"🛡️ **Represalia:** {self.p2.user.display_name} mitiga la mitad del golpe ({mitigated}) y refleja **{p1_dmg}** de daño a {self.p1.user.display_name}!")
+                self.p1.hp = max(0, self.p1.hp - reflect_dmg) # Reflejo
+                logs.append(f"🛡️ **Represalia:** {self.p2.user.display_name} mitiga una parte del golpe ({mitigated}) y refleja **{reflect_dmg}** de daño a {self.p1.user.display_name}!")
             elif self.p2.is_defending and p2_has_parry:
                 self.p2.hp = max(0, self.p2.hp - p1_dmg)
                 parry_dmg = int(p1_dmg * 0.75)
@@ -574,10 +570,12 @@ class DuelView(discord.ui.View):
         # P2 a P1
         if p2_dmg > 0:
             if self.p1_retribution_active:
-                mitigated = max(1, int(p2_dmg * 0.5))
+                cfg_rep = SKILLS_CONFIG["represalia"]
+                mitigated = max(1, int(p2_dmg * cfg_rep["mitigation"]))
+                reflect_dmg = int(p2_dmg * cfg_rep["reflect"])
                 self.p1.hp = max(0, self.p1.hp - mitigated)
-                self.p2.hp = max(0, self.p2.hp - p2_dmg) # Reflejo
-                logs.append(f"🛡️ **Represalia:** {self.p1.user.display_name} mitiga la mitad del golpe ({mitigated}) y refleja **{p2_dmg}** de daño a {self.p2.user.display_name}!")
+                self.p2.hp = max(0, self.p2.hp - reflect_dmg) # Reflejo
+                logs.append(f"🛡️ **Represalia:** {self.p1.user.display_name} mitiga una parte del golpe ({mitigated}) y refleja **{reflect_dmg}** de daño a {self.p2.user.display_name}!")
             elif self.p1.is_defending and p1_has_parry:
                 self.p1.hp = max(0, self.p1.hp - p2_dmg)
                 parry_dmg = int(p2_dmg * 0.75)
@@ -701,14 +699,15 @@ class DuelView(discord.ui.View):
 
         # Verificar si el atacante está cegado
         blind_turns = self.p1_blinded_turns if attacker == self.p1 else self.p2_blinded_turns
-        if blind_turns > 0 and random.random() < 0.65:
+        if blind_turns > 0 and random.random() < SKILLS_CONFIG["ceguera"]["fail_chance"]:
             log_line = f"💨 {attacker.user.display_name} tiene los ojos llenos de tierra y **FALLÓ** su ataque!"
             return 0, log_line
 
         # Si el atacante tiene Frenesí activo: +35% ATK
         atk_val = attacker.atk
         if (self.p1_frenzy_turns > 0 and attacker == self.p1) or (self.p2_frenzy_turns > 0 and attacker == self.p2):
-            atk_val = int(atk_val * 1.35)
+            atk_boost = SKILLS_CONFIG["frenesi"]["atk_boost"]
+            atk_val = int(atk_val * (1.0 + atk_boost))
 
         # Si tiene pasiva de parry, no recibe reducción de daño de defender (pero sí cuenta para contraataque en el loop principal)
         defender_has_parry = any(p['id'] == 'parry' for p in defender.passives)
@@ -732,7 +731,8 @@ class DuelView(discord.ui.View):
             
             # Si el defensor tiene Frenesí activo: recibe +15% de daño
             if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                damage = int(damage * 1.15)
+                def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+                damage = int(damage * (1.0 + def_boost))
             
             # Pasivo: Escudo arcano
             shield_log = ""
@@ -755,44 +755,42 @@ class DuelView(discord.ui.View):
 
         elif action_type == 'special':
             special_id = self.p1_special_id if attacker == self.p1 else self.p2_special_id
+            cfg = SKILLS_CONFIG.get(special_id) if special_id else SKILLS_CONFIG["ceguera"]
             
             if not special_id or special_id == "ceguera":
-                # Básico: Tierra a los ojos
-                log_line = f"👁️ {attacker.user.display_name} lanzó tierra en los ojos de {defender.user.display_name}."
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} lanzó **{cfg['name']}** a {defender.user.display_name}."
                 return 0, log_line
             
             elif special_id == "frenesi":
-                # Frenesí de Batalla (ya manejado en buffs/debuffs)
-                log_line = f"⚔️ {attacker.user.display_name} activa Frenesí de Batalla."
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} activa **{cfg['name']}**."
                 return 0, log_line
                 
             elif special_id == "represalia":
-                # Postura de Represalia (ya manejado en buffs/debuffs)
-                log_line = f"🛡️ {attacker.user.display_name} adopta la Postura de Represalia."
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} adopta la **{cfg['name']}**."
                 return 0, log_line
                 
             elif special_id == "drenaje":
-                # Drenaje Sagrado (ya manejado en buffs/debuffs)
-                log_line = f"⚕️ {attacker.user.display_name} usa Drenaje Sagrado."
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} usa **{cfg['name']}**."
                 return 0, log_line
                 
             elif special_id == "veneno":
-                # Daga Envenenada: daño físico y aplica envenenamiento
+                turns = cfg["turns"] + 1
                 if defender == self.p1:
-                    self.p1_poison_turns = 4
+                    self.p1_poison_turns = turns
                 else:
-                    self.p2_poison_turns = 4
+                    self.p2_poison_turns = turns
                 
-                raw_dmg = int(atk_val * 1.4)
-                def_mitig = int(defender.def_stat * 0.3)
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"])
                 if is_defending_for_damage:
-                    def_mitig = int(defender.def_stat * 0.3 * 2.5)
+                    def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
                 
                 # Si el defensor tiene Frenesí activo: recibe +15% de daño
                 if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                    damage = int(damage * 1.15)
+                    def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+                    damage = int(damage * (1.0 + def_boost))
                 
                 # Pasivo: Escudo arcano
                 shield_log = ""
@@ -801,26 +799,27 @@ class DuelView(discord.ui.View):
                     defender.arcane_shield_active = False
                     shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
-                log_line = f"🥷 {attacker.user.display_name} usa **Daga Envenenada** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}"
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} usa **{cfg['name']}** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}"
                 return damage, log_line
                 
             elif special_id == "quemadura":
-                # Tormenta de Fuego: daño mágico y aplica quemadura
+                turns = cfg["turns"] + 1
                 if defender == self.p1:
-                    self.p1_burn_turns = 4
+                    self.p1_burn_turns = turns
                 else:
-                    self.p2_burn_turns = 4
+                    self.p2_burn_turns = turns
                 
-                raw_dmg = int(attacker.mag * 2.2)
-                def_mitig = int(defender.def_stat * 0.2)
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"])
                 if is_defending_for_damage:
-                    def_mitig = int(defender.def_stat * 0.2 * 2.5)
+                    def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
                 
                 # Si el defensor tiene Frenesí activo: recibe +15% de daño
                 if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                    damage = int(damage * 1.15)
+                    def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+                    damage = int(damage * (1.0 + def_boost))
                 
                 # Pasivo: Escudo arcano
                 shield_log = ""
@@ -829,7 +828,7 @@ class DuelView(discord.ui.View):
                     defender.arcane_shield_active = False
                     shield_log = " 🔮*(Escudo arcano reduce daño)*"
                 
-                log_line = f"🔥 {attacker.user.display_name} lanza **Tormenta de Fuego** → **{damage}** daño mágico y quema a {defender.user.display_name}!{shield_log}"
+                log_line = f"{cfg['emoji']} {attacker.user.display_name} lanza **{cfg['name']}** → **{damage}** daño mágico y quema a {defender.user.display_name}!{shield_log}"
                 return damage, log_line
 
         return 0, ""
