@@ -40,57 +40,57 @@ RAID_RARITY_MALUS_DEFEAT = -0.10       # -10% shift (más comunes)
 BOSS_SPECIAL_INTERVAL = 3  # Cada 3 turnos
 
 BOSS_ABILITIES = {
-    "terremoto": {
-        "name": "Terremoto",
-        "emoji": "🌍",
-        "desc": "Sacude la tierra, causando daño a TODOS los jugadores.",
-        "type": "aoe_damage",          # Daño a todos
-        "damage_mult": 1.5,            # Multiplicador sobre ATK del boss
-    },
-    "mordisco_toxico": {
-        "name": "Mordisco Tóxico",
-        "emoji": "🧪",
-        "desc": "Muerde al jugador con más HP y lo envenena.",
+    "raices_estranguladoras": {
+        "name": "Raíces Estranguladoras",
+        "emoji": "🌿",
+        "desc": "Usa raíces venenosas para estrangular al jugador con más HP y envenenarlo.",
         "type": "single_target_dot",   # Daño + veneno al de mayor HP
         "damage_mult": 1.8,
         "dot_damage": 15,              # Daño por turno de veneno
         "dot_turns": 3,
     },
-    "nova_fuego": {
-        "name": "Nova de Fuego",
-        "emoji": "🔥",
-        "desc": "Explota en llamas, quemando a todos y regenerándose.",
+    "erupcion_volcanica": {
+        "name": "Erupción Volcánica",
+        "emoji": "🌋",
+        "desc": "Explota en magma incandescente, quemando a todos los jugadores y regenerándose.",
         "type": "aoe_damage_heal",     # Daño AoE + se cura el boss
         "damage_mult": 1.3,
         "heal_pct": 0.05,              # Se cura 5% de su HP máximo
     },
-    "drenar_vida": {
-        "name": "Drenar Vida",
-        "emoji": "💜",
-        "desc": "Absorbe la fuerza vital del grupo para curarse.",
+    "tempestad_relampago": {
+        "name": "Tempestad de Relámpagos",
+        "emoji": "⚡",
+        "desc": "Lanza un rayo devastador y concentrado a un jugador aleatorio.",
+        "type": "single_nuke",         # Daño masivo a 1
+        "damage_mult": 3.0,
+    },
+    "guadaña_vacio": {
+        "name": "Guadaña del Vacío",
+        "emoji": "💀",
+        "desc": "Absorbe la fuerza vital de todos los jugadores para curarse.",
         "type": "aoe_drain",           # Roba HP de todos
         "drain_pct": 0.10,             # Roba 10% del HP actual de cada jugador
     },
-    "aliento_helado": {
-        "name": "Aliento Helado",
+    "ventisca_glacial": {
+        "name": "Ventisca Glacial",
         "emoji": "❄️",
-        "desc": "Sopla hielo que reduce el ATK de todos los jugadores.",
+        "desc": "Sopla una tormenta helada que reduce el ATK de todos los jugadores.",
         "type": "aoe_debuff",          # Reduce ATK de todos
         "damage_mult": 1.0,
         "atk_reduction_pct": 0.20,     # -20% ATK por 2 turnos
         "debuff_turns": 2,
     },
-    "rayo_devastador": {
-        "name": "Rayo Devastador",
-        "emoji": "⚡",
-        "desc": "Lanza un rayo devastador a un jugador aleatorio.",
-        "type": "single_nuke",         # Daño masivo a 1
-        "damage_mult": 3.0,
+    "juicio_sagrado": {
+        "name": "Juicio Sagrado",
+        "emoji": "👼",
+        "desc": "Sacude la arena con luz celestial divina, causando daño a TODOS los jugadores.",
+        "type": "aoe_damage",          # Daño a todos
+        "damage_mult": 1.5,            # Multiplicador sobre ATK del boss
     },
-    "mutacion": {
-        "name": "Mutación Caótica",
+    "colapso_gravedad": {
+        "name": "Colapso de Gravedad",
         "emoji": "🌀",
-        "desc": "El boss muta, cambiando sus stats aleatoriamente.",
+        "desc": "El devorador estelar altera el espacio, cambiando sus estadísticas de ataque y defensa.",
         "type": "self_buff",           # Cambia stats del boss
         "stat_shuffle_range": (0.8, 1.3),  # Rango de multiplicador aleatorio
     },
@@ -103,81 +103,81 @@ BOSS_ABILITIES = {
 
 RAID_BOSSES = {
     0: {  # Lunes
-        "name": "Golem de Piedra",
-        "emoji": "🪨",
-        "element": "Tierra",
-        "color": 0x8B7355,
+        "name": "Yggdrasil Corrupto",
+        "emoji": "🌲",
+        "element": "Tierra/Planta",
+        "color": 0x2E8B57,
         "base_hp": 400,
         "base_atk": 25,
         "base_def": 18,
-        "ability": "terremoto",
-        "lore": "Un coloso de roca antigua que despierta cada semana para proteger las minas.",
+        "ability": "raices_estranguladoras",
+        "lore": "El ancestral brote del árbol del mundo ha sido infectado por parásitos del abismo, volviéndolo hostil.",
     },
     1: {  # Martes
-        "name": "Hidra Venenosa",
-        "emoji": "🐍",
-        "element": "Veneno",
-        "color": 0x00CC66,
-        "base_hp": 350,
-        "base_atk": 28,
-        "base_def": 12,
-        "ability": "mordisco_toxico",
-        "lore": "Una serpiente de tres cabezas que infesta los pantanos con su veneno mortal.",
-    },
-    2: {  # Miércoles
-        "name": "Fénix Infernal",
-        "emoji": "🔥",
+        "name": "Ignis, el Coloso de Magma",
+        "emoji": "🌋",
         "element": "Fuego",
         "color": 0xFF4500,
         "base_hp": 380,
         "base_atk": 30,
         "base_def": 10,
-        "ability": "nova_fuego",
-        "lore": "Un ave de fuego eterno que renace de sus cenizas, más fuerte cada vez.",
+        "ability": "erupcion_volcanica",
+        "lore": "Un gigante durmiente que emerge del núcleo terrestre cuando la presión volcánica se descontrola.",
+    },
+    2: {  # Miércoles
+        "name": "Caelum, la Tempestad Viviente",
+        "emoji": "🌪️",
+        "element": "Rayo",
+        "color": 0x00FFFF,
+        "base_hp": 500,
+        "base_atk": 32,
+        "base_def": 14,
+        "ability": "tempestad_relampago",
+        "lore": "Un elemental de viento gigante atrapado en el ojo de un huracán eterno cargado de electricidad.",
     },
     3: {  # Jueves
-        "name": "Liche Sombrío",
+        "name": "Thanatos, el Segador de Almas",
         "emoji": "💀",
         "element": "Oscuridad",
         "color": 0x4B0082,
         "base_hp": 320,
         "base_atk": 22,
         "base_def": 15,
-        "ability": "drenar_vida",
-        "lore": "Un hechicero no-muerto que se alimenta de las almas de los vivos.",
+        "ability": "guadaña_vacio",
+        "lore": "El guardián espectral del inframundo que busca arrastrar a los intrusos hacia las sombras eternas.",
     },
     4: {  # Viernes
-        "name": "Dragón Glacial",
-        "emoji": "🐉",
+        "name": "Leviathán de la Fosa Glacial",
+        "emoji": "🌊",
         "element": "Hielo",
-        "color": 0x00BFFF,
+        "color": 0x1E90FF,
         "base_hp": 450,
         "base_atk": 26,
         "base_def": 16,
-        "ability": "aliento_helado",
-        "lore": "Un dragón ancestral que habita las montañas heladas del norte.",
+        "ability": "ventisca_glacial",
+        "lore": "Una colosal serpiente marina que acecha bajo los glaciares eternos del norte.",
     },
     5: {  # Sábado
-        "name": "Titán Ancestral",
-        "emoji": "⚡",
-        "element": "Rayo",
+        "name": "Aurelius, el Arcángel Caído",
+        "emoji": "👼",
+        "element": "Luz",
         "color": 0xFFD700,
-        "base_hp": 500,
-        "base_atk": 32,
-        "base_def": 14,
-        "ability": "rayo_devastador",
-        "lore": "Un gigante milenario que controla las tormentas con sus puños.",
+        "base_hp": 350,
+        "base_atk": 28,
+        "base_def": 12,
+        "ability": "juicio_sagrado",
+        "lore": "Un antiguo protector celestial que fue desterrado por su soberbia y ahora juzga a los mortales con ira divina.",
     },
     6: {  # Domingo
-        "name": "Quimera Caótica",
-        "emoji": "👹",
+        "name": "Abyssus, el Devorador Estelar",
+        "emoji": "👾",
         "element": "Caos",
         "color": 0x9400D3,
         "base_hp": 420,
         "base_atk": 27,
         "base_def": 13,
-        "ability": "mutacion",
-        "lore": "Una criatura imposible, fusión de bestias que muta sin cesar.",
+        "ability": "colapso_gravedad",
+        "lore": "Un ente cósmico amorfo hecho de materia oscura que colapsa la física a su paso.",
     },
 }
 
@@ -269,3 +269,31 @@ def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0):
         # Restaurar siempre las probabilidades originales
         for i, r in enumerate(RARITIES):
             r["prob"] = original_probs[i]
+
+
+# ──────────────────────────────────────────────
+# AFIJOS DE RAID
+# ──────────────────────────────────────────────
+
+RAID_AFFIXES = {
+    "Sangriento": {
+        "name": "Sangriento",
+        "emoji": "🩸",
+        "desc": "Si un jugador cae en combate, el jefe se cura el 15% de su HP máximo.",
+    },
+    "Inestabilidad Mágica": {
+        "name": "Inestabilidad Mágica",
+        "emoji": "🌀",
+        "desc": "El daño de ataques físicos se reduce un 30%, pero el de habilidades mágicas aumenta un 40%.",
+    },
+    "Enfurecido": {
+        "name": "Enfurecido",
+        "emoji": "⚡",
+        "desc": "Cuando el jefe tiene menos del 35% de vida, su daño aumenta un 30%.",
+    },
+    "Niebla Venenosa": {
+        "name": "Niebla Venenosa",
+        "emoji": "🧪",
+        "desc": "Todos los jugadores reciben 5 de daño al inicio de cada ronda.",
+    },
+}
