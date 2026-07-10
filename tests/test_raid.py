@@ -227,5 +227,63 @@ class TestChannelingMechanics(unittest.TestCase):
         self.assertEqual(channeling_turns, [3, 8, 13, 18])
 
 
+class TestRaidImprovements(unittest.TestCase):
+    """Tests para verificar las nuevas mejoras de las raids."""
+
+    def test_boss_scaling_sqrt(self):
+        # Yggdrasil Corrupto: base_hp = 400, base_atk = 25, base_def = 18
+        boss_config = {
+            "base_hp": 400,
+            "base_atk": 25,
+            "base_def": 18
+        }
+        # Con total_level = 2, debe dar el base
+        stats_base = calc_boss_stats(boss_config, total_level=2)
+        self.assertEqual(stats_base["hp"], 400)
+        self.assertEqual(stats_base["atk"], 25)
+        self.assertEqual(stats_base["def_stat"], 18)
+
+        # Con total_level = 82 (e.g. 4 jugadores de nivel 20)
+        # scale_factor = 80 -> sqrt(80) = ~8.944
+        # HP: 400 * (1 + 0.45 * 8.944) = 400 * 5.0249 = ~2009
+        stats_high = calc_boss_stats(boss_config, total_level=82)
+        self.assertLess(stats_high["hp"], 2500) # Debería ser mucho menor que el lineal antiguo (5080)
+        self.assertGreater(stats_high["hp"], 1000)
+
+    def test_raid_combatant_passives(self):
+        from src.commands.duels.raid import RaidCombatant
+        mock_user = MagicMock()
+        mock_user.id = 99999
+        mock_user.display_name = "Hero"
+
+        # Simular equipo con pasivos
+        equipment = {
+            "Arma": {
+                "primary_stat": "atk",
+                "primary_value": 10,
+                "secondaries": [],
+                "passive": {"id": "vampirism", "name": "Vampirismo"}
+            },
+            "Pecho": {
+                "primary_stat": "hp",
+                "primary_value": 20,
+                "secondaries": [],
+                "passive": {"id": "regen", "name": "Regeneración"}
+            }
+        }
+        combatant = RaidCombatant(mock_user, 10, equipment)
+        self.assertTrue(combatant.has_vampirism)
+        self.assertTrue(combatant.has_regen)
+        self.assertFalse(combatant.has_dodge)
+        self.assertEqual(len(combatant.passives), 2)
+
+    def test_xp_constants_exist(self):
+        import src.utils.raid_config as rc
+        self.assertTrue(hasattr(rc, "RAID_XP_BASE_VICTORY"))
+        self.assertTrue(hasattr(rc, "RAID_XP_BASE_DEFEAT"))
+        self.assertTrue(hasattr(rc, "RAID_XP_PER_TURN"))
+        self.assertTrue(hasattr(rc, "RAID_XP_ALIVE_BONUS"))
+
+
 if __name__ == '__main__':
     unittest.main()

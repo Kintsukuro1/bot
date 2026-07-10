@@ -35,10 +35,13 @@ from src.utils.raid_config import (
     RAID_DROP_RATE_VICTORY_ALIVE, RAID_DROP_RATE_VICTORY_DEAD,
     RAID_DROP_RATE_DEFEAT,
     RAID_RARITY_BONUS_VICTORY, RAID_RARITY_MALUS_DEFEAT,
+    RAID_XP_BASE_VICTORY, RAID_XP_BASE_DEFEAT,
+    RAID_XP_PER_TURN, RAID_XP_ALIVE_BONUS,
     BOSS_SPECIAL_INTERVAL, BOSS_ABILITIES,
     RAID_BOSSES, RAID_AFFIXES,
     get_today_boss, calc_boss_stats, generate_raid_loot,
 )
+from src.db import update_combat_stats_after_duel
 
 
 # ══════════════════════════════════════════════
@@ -93,6 +96,17 @@ class RaidCombatant:
         self.mag = base["mag"] + effective.get("mag", 0)
         self.def_stat = base["def"] + effective.get("def", 0)
 
+        # Pasivos de equipo (Legendario)
+        self.passives = passives
+        self.used_second_wind = False
+        self.arcane_shield_active = any(p['id'] == 'arcane_shield' for p in passives)
+        self.has_crit_boost = any(p['id'] == 'crit_boost' for p in passives)
+        self.has_vampirism = any(p['id'] == 'vampirism' for p in passives)
+        self.has_regen = any(p['id'] == 'regen' for p in passives)
+        self.has_fury = any(p['id'] == 'fury' for p in passives)
+        self.has_dodge = any(p['id'] == 'dodge' for p in passives)
+        self.has_parry = any(p['id'] == 'parry' for p in passives)
+
         # Estado de combate
         self.is_defending = False
         self.is_dead = False
@@ -105,6 +119,7 @@ class RaidCombatant:
         self.shield = 0            # Escudo de absorción (Paladín)
         self.is_taunting = False   # Provocación activa (Guerrero)
         self.class_ability_cooldown = 0 # Enfriamiento de habilidad de clase
+        self.turns_survived = 0    # Turnos sobrevividos (para XP)
 
 
 # ══════════════════════════════════════════════
@@ -438,9 +453,13 @@ class RaidCombatView(discord.ui.View):
         logs = [f"🏁 **Ronda {self.turn_count + 1}:**"]
         alive = self._alive_players()
 
-        # Helper para aplicar daño a jugadores
-        def apply_damage_to_player(target, raw_dmg):
+        # Helper para aplicar daño a jugadores (con pasivos)
+        def apply_damage_to_player(target, raw_dmg, is_boss_attack=False):
             if target.is_dead:
+                return
+            # Pasivo: Esquiva mejorada (5% chance, solo de ataques del boss)
+            if is_boss_attack and target.has_dodge and random.random() < 0.05:
+                logs.append(f"💨 **Esquiva:** {target.user.display_name} **ESQUIVÓ** el ataque!")
                 return
             absorbed = 0
             if target.shield > 0:
@@ -448,11 +467,44 @@ class RaidCombatView(discord.ui.View):
                 raw_dmg -= absorbed
                 target.shield -= absorbed
                 logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
-            if target.is_defending:
-                raw_dmg = max(1, int(raw_dmg * 0.4))
-            target.hp = max(0, target.hp - raw_dmg)
-            logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
+            # Pasivo: Escudo arcano (primer golpe recibido se reduce a la mitad)
+            if is_boss_attack and target.arcane_shield_active:
+                raw_dmg = max(1, int(raw_dmg / 2))
+                target.arcane_shield_active = False
+                logs.append(f"🔮 **Escudo Arcano:** Se redujo el daño a la mitad para {target.user.display_name}.")
+            
+            if target.is_defending and target.has_parry:
+                # No se reduce el daño recibido, pero se cura un 30% del mismo
+                parry_heal = max(1, int(raw_dmg * 0.30))
+                final_dmg = max(0, raw_dmg - parry_heal)
+                target.hp = max(0, target.hp - final_dmg)
+                logs.append(f"💥 {target.user.display_name} recibe **{final_dmg}** daño (tras curarse **{parry_heal}** por Parada). ({target.hp}/{target.max_hp} HP)")
+                
+                # Contraatacar al boss o esbirro
+                counter_dmg = max(1, int(raw_dmg * 0.75))
+                alive_minions = [m for m in self.minions if m["hp"] > 0]
+                if alive_minions:
+                    target_minion = alive_minions[0]
+                    target_minion["hp"] = max(0, target_minion["hp"] - counter_dmg)
+                    logs.append(f"⚔️ **Parada:** Contraataca a {target_minion['name']} por **{counter_dmg}** daño.")
+                    if target_minion["hp"] <= 0:
+                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido!")
+                else:
+                    self.boss.hp = max(0, self.boss.hp - counter_dmg)
+                    logs.append(f"⚔️ **Parada:** Contraataca a {self.boss.name} por **{counter_dmg}** daño.")
+            else:
+                if target.is_defending:
+                    raw_dmg = max(1, int(raw_dmg * 0.4))
+                target.hp = max(0, target.hp - raw_dmg)
+                logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
+
             if target.hp <= 0:
+                # Pasivo: Segundo aliento (sobrevive con 1 HP una vez)
+                if not target.used_second_wind and any(p['id'] == 'second_wind' for p in target.passives):
+                    target.hp = 1
+                    target.used_second_wind = True
+                    logs.append(f"💫 **Segundo Aliento:** {target.user.display_name} sobrevive con **1 HP**!")
+                    return
                 target.is_dead = True
                 logs.append(f"💀 **{target.user.display_name}** ha caído en combate!")
                 if self.affix == "Sangriento":
@@ -500,6 +552,13 @@ class RaidCombatView(discord.ui.View):
                     p.atk = p.base_atk  # Restaurar ATK
                     logs.append(f"❄️ El debuff de ATK de {p.user.display_name} ha terminado.")
 
+        # 2.5. Pasivo: Regeneración (+3% HP máximo al inicio de ronda)
+        for p in alive:
+            if p.has_regen:
+                regen_heal = max(1, int(p.max_hp * 0.03))
+                p.hp = min(p.max_hp, p.hp + regen_heal)
+                logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
+
         # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
         if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:
             self.minions_summoned = True
@@ -528,8 +587,9 @@ class RaidCombatView(discord.ui.View):
                 reduction = self.boss.def_stat * 0.35
                 damage = max(1, int(base_dmg - reduction))
 
-                # Crítico 10%
-                crit = random.random() < 0.10
+                # Crítico 10% (o 20% con crit_boost)
+                crit_chance = 0.20 if p.has_crit_boost else 0.10
+                crit = random.random() < crit_chance
                 if crit:
                     damage = int(damage * 1.5)
 
@@ -573,11 +633,20 @@ class RaidCombatView(discord.ui.View):
             elif action == 'defend':
                 p.is_defending = True
                 heal = calc_defend_heal(p.max_hp)
-                p.hp = min(p.max_hp, p.hp + heal)
-                logs.append(f"🛡️ {p.user.display_name} se defiende y recupera **{heal}** HP.")
+                # Si tiene parry, no recibe la curación normal de defender
+                if not p.has_parry:
+                    p.hp = min(p.max_hp, p.hp + heal)
+                    logs.append(f"🛡️ {p.user.display_name} se defiende y recupera **{heal}** HP.")
+                else:
+                    logs.append(f"🛡️ {p.user.display_name} se prepara para parar y contraatacar.")
 
             elif action == 'timeout':
                 logs.append(f"⏰ {p.user.display_name} no respondió a tiempo.")
+
+            # Pasivo: Furia creciente (+10% daño cuando HP < 30%)
+            if p.has_fury and (p.hp / p.max_hp) < 0.30 and damage > 0:
+                damage = int(damage * 1.10)
+                logs.append(f"🔥 **Furia Creciente:** ¡{p.user.display_name} inflige un 10% más de daño!")
 
             # Aplicar modificadores de afijo "Inestabilidad Mágica"
             if damage > 0:
@@ -607,6 +676,12 @@ class RaidCombatView(discord.ui.View):
                         self.boss_channeled_damage += damage
                     crit_text = " **¡CRÍTICO!**" if crit else ""
                     logs.append(f"   → Daño al jefe: **{damage}** daño{crit_text}.")
+
+                # Pasivo: Vampirismo (cura 8% del daño infligido)
+                if p.has_vampirism:
+                    vamp_heal = max(1, int(damage * 0.08))
+                    p.hp = min(p.max_hp, p.hp + vamp_heal)
+                    logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
 
         # 5. ¿Boss derrotado?
         if self.boss.hp <= 0:
@@ -640,7 +715,7 @@ class RaidCombatView(discord.ui.View):
                 ult_dmg = int(self.boss.atk * 2.5)
                 # Daño en área masivo a todos los jugadores
                 for target_p in alive:
-                    apply_damage_to_player(target_p, ult_dmg)
+                    apply_damage_to_player(target_p, ult_dmg, is_boss_attack=True)
             boss_attacked = True
 
         # Si no atacó con su Ultimate, realizar su ataque normal / especial
@@ -660,7 +735,7 @@ class RaidCombatView(discord.ui.View):
 
             boss_dmg = int(boss_atk_val * random.uniform(0.85, 1.15))
             logs.append(f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name}:")
-            apply_damage_to_player(target, boss_dmg)
+            apply_damage_to_player(target, boss_dmg, is_boss_attack=True)
 
             # Habilidad especial del boss (cada 3 turnos, si no está aturdido)
             if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0:
@@ -687,6 +762,8 @@ class RaidCombatView(discord.ui.View):
             p.is_taunting = False
             if p.class_ability_cooldown > 0:
                 p.class_ability_cooldown -= 1
+            if not p.is_dead:
+                p.turns_survived += 1
         self.actions.clear()
 
         # Comprobar si el próximo turno es de canalización (rondas 5, 10, 15...)
@@ -919,13 +996,28 @@ class RaidCombatView(discord.ui.View):
             inline=False
         )
 
-        # Estado de cada jugador
+        # Estado de cada jugador y ganancia de XP
         for p in self.players:
             icon = "🟢" if not p.is_dead else "💀"
             hp_text = f"{p.hp}/{p.max_hp} HP" if not p.is_dead else "CAÍDO"
+            
+            # Calcular y aplicar XP
+            base_xp = RAID_XP_BASE_VICTORY if victory else RAID_XP_BASE_DEFEAT
+            turn_xp = p.turns_survived * RAID_XP_PER_TURN
+            alive_bonus = RAID_XP_ALIVE_BONUS if not p.is_dead else 0
+            xp_gained = base_xp + turn_xp + alive_bonus
+            
+            xp_res = await asyncio.to_thread(update_combat_stats_after_duel, p.user.id, xp_gained, victory, 0)
+            
+            xp_msg = f"+{xp_gained} XP"
+            if xp_res.get("leveled_up"):
+                xp_msg += f"\n🌟 **¡SUBE DE NIVEL! Nv. {xp_res['level']}**"
+            else:
+                xp_msg += f"\n({xp_res['xp']}/{xp_res['xp_for_next']} XP)"
+                
             embed.add_field(
                 name=f"{icon} {p.user.display_name}",
-                value=hp_text,
+                value=f"{hp_text}\n{xp_msg}",
                 inline=True
             )
 

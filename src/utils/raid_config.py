@@ -33,6 +33,15 @@ RAID_RARITY_BONUS_VICTORY = 0.15       # +15% shift hacia rarezas superiores
 RAID_RARITY_MALUS_DEFEAT = -0.10       # -10% shift (más comunes)
 
 # ──────────────────────────────────────────────
+# XP DE RAID
+# ──────────────────────────────────────────────
+
+RAID_XP_BASE_VICTORY = 80     # XP base por victoria
+RAID_XP_BASE_DEFEAT  = 30     # XP base por derrota (siempre se da)
+RAID_XP_PER_TURN     = 2      # Bonus XP por cada turno jugado
+RAID_XP_ALIVE_BONUS  = 20     # Bonus extra por sobrevivir la raid
+
+# ──────────────────────────────────────────────
 # HABILIDADES ESPECIALES DE BOSSES
 # ──────────────────────────────────────────────
 
@@ -196,6 +205,9 @@ def get_today_boss():
 def calc_boss_stats(boss_config: dict, total_level: int) -> dict:
     """Calcula los stats del boss escalados según la suma de niveles.
 
+    Usa escalado con raíz cuadrada para evitar stats desorbitadas
+    cuando se unen muchos jugadores de nivel alto.
+
     Args:
         boss_config: dict del boss desde RAID_BOSSES
         total_level: suma de niveles de combate de todos los participantes
@@ -203,13 +215,16 @@ def calc_boss_stats(boss_config: dict, total_level: int) -> dict:
     Returns:
         dict con hp, max_hp, atk, def_stat (escalados)
     """
+    import math
+
     # El escalado usa (total_level - 2) para que con 2 jugadores de nivel 1
-    # el boss tenga exactamente sus stats base
+    # el boss tenga exactamente sus stats base.
+    # Se usa sqrt para que la curva sea suave y no explote con 4 jugadores.
     scale_factor = max(0, total_level - 2)
 
-    hp = int(boss_config["base_hp"] * (1 + 0.15 * scale_factor))
-    atk = int(boss_config["base_atk"] * (1 + 0.10 * scale_factor))
-    def_stat = int(boss_config["base_def"] * (1 + 0.08 * scale_factor))
+    hp = int(boss_config["base_hp"] * (1 + 0.45 * math.sqrt(scale_factor)))
+    atk = int(boss_config["base_atk"] * (1 + 0.28 * math.sqrt(scale_factor)))
+    def_stat = int(boss_config["base_def"] * (1 + 0.22 * math.sqrt(scale_factor)))
 
     return {
         "hp": hp,
