@@ -293,7 +293,7 @@ async def global_interaction_check(interaction: discord.Interaction) -> bool:
         
     # Si no es el canal designado, bloquear sin excepciones
     if not interaction.channel or interaction.channel.id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>")
+        await interaction.response.send_message("Aweonao estas en otro canal que no es <#1519533661806923866>", ephemeral=True)
         return False
     return True
 
