@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import random
 import datetime
+import asyncio
 from src.db import usuario_tiene_item, usar_item_usuario
 
 LOG_CHANNEL_ID = 1361556360000573622
