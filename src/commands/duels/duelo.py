@@ -283,14 +283,12 @@ class DuelView(discord.ui.View):
                 return
             self.p1_action = 'attack'
             self.p1.consecutive_timeouts = 0
-            await interaction.response.send_message("⚔️ Has elegido **Atacar**.", ephemeral=True)
         elif user_id == self.p2.user.id:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'attack'
             self.p2.consecutive_timeouts = 0
-            await interaction.response.send_message("⚔️ Has elegido **Atacar**.", ephemeral=True)
         else:
             await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
@@ -310,14 +308,12 @@ class DuelView(discord.ui.View):
                 return
             self.p1_action = 'defend'
             self.p1.consecutive_timeouts = 0
-            await interaction.response.send_message("🛡️ Has elegido **Defender** (mitiga daño y cura HP).", ephemeral=True)
         elif user_id == self.p2.user.id:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'defend'
             self.p2.consecutive_timeouts = 0
-            await interaction.response.send_message("🛡️ Has elegido **Defender** (mitiga daño y cura HP).", ephemeral=True)
         else:
             await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
@@ -401,7 +397,6 @@ class DuelView(discord.ui.View):
             self.p1_action = 'special'
             self.p1_special_id = selected_value
             self.p1.consecutive_timeouts = 0
-            await interaction.response.send_message(f"{req['emoji']} Has elegido lanzar **{req['name']}**.", ephemeral=True)
         else:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
@@ -409,18 +404,18 @@ class DuelView(discord.ui.View):
             self.p2_action = 'special'
             self.p2_special_id = selected_value
             self.p2.consecutive_timeouts = 0
-            await interaction.response.send_message(f"{req['emoji']} Has elegido lanzar **{req['name']}**.", ephemeral=True)
 
         await self._check_and_resolve(interaction)
 
     async def _check_and_resolve(self, interaction: discord.Interaction):
         """Verifica si ambos jugadores han votado y resuelve el turno."""
         if self.p1_action is not None and self.p2_action is not None:
+            await interaction.response.defer()
             await self._resolve_round(interaction)
         else:
             # Actualizar embed de forma silenciosa para mostrar quién está listo
             embed = self._build_embed()
-            await interaction.message.edit(embed=embed, view=self)
+            await interaction.response.edit_message(embed=embed, view=self)
 
     # ──────────────────── RESOLUCIÓN SIMULTÁNEA ────────────────────
 
