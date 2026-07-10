@@ -211,7 +211,7 @@ class DuelView(discord.ui.View):
 
         embed = discord.Embed(
             title="⚔️ Duelo PvP Simultáneo",
-            description=f"**Ronda {self.turn_count + 1}/{MAX_TURNS}**\n"
+            description=f"**Ronda {self.turn_count + 1}**\n"
                         f"{self.p1.user.mention}: {status_p1}\n"
                         f"{self.p2.user.mention}: {status_p2}",
             color=discord.Color.dark_gold()
@@ -640,7 +640,7 @@ class DuelView(discord.ui.View):
             self.action_log = self.action_log[-6:]
 
         # Comprobar si el juego ha terminado
-        if self.p1.hp <= 0 or self.p2.hp <= 0 or self.turn_count >= MAX_TURNS:
+        if self.p1.hp <= 0 or self.p2.hp <= 0:
             self.game_over = True
             if self.p1.hp <= 0 and self.p2.hp <= 0:
                 self.action_log.append("💥 ¡Doble K.O.! Ambos guerreros han caído.")
@@ -931,14 +931,6 @@ class DuelView(discord.ui.View):
             winner, loser = self.p2, self.p1
         elif self.p2.hp <= 0:
             winner, loser = self.p1, self.p2
-        elif self.turn_count >= MAX_TURNS:
-            # Límite de turnos: gana el que tiene más % de HP
-            p1_pct = self.p1.hp / self.p1.max_hp
-            p2_pct = self.p2.hp / self.p2.max_hp
-            if p1_pct >= p2_pct:
-                winner, loser = self.p1, self.p2
-            else:
-                winner, loser = self.p2, self.p1
         else:
             winner, loser = self.p1, self.p2
 
@@ -968,13 +960,9 @@ class DuelView(discord.ui.View):
             logger.error(f"Error al registrar log de duelo en DB: {e}", exc_info=True)
 
         # ── Construir embed de resultado ──
-        reason = ""
-        if self.turn_count >= MAX_TURNS:
-            reason = f" *(por HP restante tras {MAX_TURNS} turnos)*"
-
         embed = discord.Embed(
             title="⚔️ Duelo PvP — Resultado Final",
-            description=f"🏆 **{winner.user.display_name}** vence a **{loser.user.display_name}**!{reason}",
+            description=f"🏆 **{winner.user.display_name}** vence a **{loser.user.display_name}**!",
             color=discord.Color.gold()
         )
 
