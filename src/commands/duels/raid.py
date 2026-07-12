@@ -90,6 +90,11 @@ class RaidBoss:
         self.is_miniboss = is_miniboss
         self.minion_pool = boss_config.get("minion_pool")
 
+        # Progresión de fases
+        self.phase = 1
+        self.phase2_ability_id = boss_config.get("phase2_ability")
+        self.phase3_ability_id = boss_config.get("phase3_ability")
+
         # Stats base guardados para mutación
         self._base_atk = self.atk
         self._base_def = self.def_stat
@@ -629,7 +634,7 @@ class RaidCombatView(discord.ui.View):
             boss_status += f" 🧪(Veneno {self.boss_poison_turns}t)"
 
         embed.add_field(
-            name=f"{self.boss.emoji} {self.boss.name} — Nv. ∞{boss_status}",
+            name=f"{self.boss.emoji} {self.boss.name} (Fase {self.boss.phase}/3) — Nv. ∞{boss_status}",
             value=(
                 f"{boss_hp_bar}\n"
                 f"⚔️ {self.boss.atk} ATK · 🛡️ {self.boss.def_stat} DEF\n"
@@ -1077,6 +1082,22 @@ class RaidCombatView(discord.ui.View):
                     regen_heal = max(1, int(p.max_hp * 0.03))
                     p.hp = min(p.max_hp, p.hp + regen_heal)
                     logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
+
+        # 2.6. Progresión de Fases del Boss
+        hp_pct = self.boss.hp / self.boss.max_hp if self.boss.max_hp > 0 else 0
+        new_phase = 3 if hp_pct <= 0.33 else (2 if hp_pct <= 0.66 else 1)
+
+        if new_phase != self.boss.phase:
+            self.boss.phase = new_phase
+            if new_phase == 2 and self.boss.phase2_ability_id:
+                self.boss.ability_id = self.boss.phase2_ability_id
+                self.boss.ability = BOSS_ABILITIES[self.boss.ability_id]
+                logs.append(f"\n⚡ **¡{self.boss.name} entra en su segunda fase!** Su patrón de ataque cambia.")
+            elif new_phase == 3:
+                if self.boss.phase3_ability_id:
+                    self.boss.ability_id = self.boss.phase3_ability_id
+                    self.boss.ability = BOSS_ABILITIES[self.boss.ability_id]
+                logs.append(f"\n🔥 **¡{self.boss.name} entra en su fase final!**")
 
         # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
         if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:

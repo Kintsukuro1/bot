@@ -870,5 +870,92 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_view.difficulty, "mitica")
 
 
+    def test_boss_phases_init(self):
+        from src.commands.duels.raid import RaidBoss
+        
+        boss_config = {
+            "name": "Ignis", "emoji": "🌋", "element": "Fuego", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": "juicio_sagrado", "phase3_ability": "tempestad_relampago",
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.phase2_ability_id, "juicio_sagrado")
+        self.assertEqual(boss.phase3_ability_id, "tempestad_relampago")
+
+    async def test_boss_phase_transitions(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Ignis", "emoji": "🌋", "element": "Fuego", "color": 0x000,
+            "hp": 100, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": "juicio_sagrado", "phase3_ability": "tempestad_relampago",
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Fase 1: HP al 100% (100 HP)
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica")
+        
+        # Transición a Fase 2: Reducir HP a 60% (60 HP)
+        boss.hp = 60
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 2)
+        self.assertEqual(boss.ability_id, "juicio_sagrado")
+        
+        # Transición a Fase 3: Reducir HP a 30% (30 HP)
+        boss.hp = 30
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 3)
+        self.assertEqual(boss.ability_id, "tempestad_relampago")
+
+    async def test_boss_phases_retrocompatibility(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Normal Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 100, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": None, "phase3_ability": None,
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Fase 1
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica")
+        
+        # Reducir HP a 60%
+        boss.hp = 60
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 2)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica") # Mantiene la de Fase 1
+        
+        # Reducir HP a 30%
+        boss.hp = 30
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 3)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica") # Mantiene la de Fase 1
+
+
 if __name__ == '__main__':
     unittest.main()
