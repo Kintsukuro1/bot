@@ -239,6 +239,98 @@ def get_combatant_available_skills(combatant):
     return available
 
 
+class PersonalDuelSkillSelectView(discord.ui.View):
+    """Menú efímero de un solo select para que un jugador elija su habilidad especial en un duelo."""
+
+    def __init__(self, duel_view, player, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.duel_view = duel_view
+        self.player = player
+
+        select = discord.ui.Select(
+            placeholder="✨ Seleccionar Habilidad Especial...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+        await interaction.response.edit_message(view=self)
+
+        if self.duel_view.game_over:
+            await interaction.followup.send("❌ El duelo ya terminó.", ephemeral=True)
+            return
+
+        current_action = self.duel_view.p1_action if self.player == self.duel_view.p1 else self.duel_view.p2_action
+        if current_action is not None:
+            await interaction.followup.send("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+            return
+
+        selected_value = interaction.data["values"][0]
+
+        # Validaciones de defensa en profundidad
+        from src.utils.combat_config import SKILLS_CONFIG
+        req = SKILLS_CONFIG.get(selected_value)
+        if not req:
+            await interaction.followup.send("❌ Habilidad desconocida.", ephemeral=True)
+            return
+
+        if req.get("min_level") == 10:
+            cd = self.player.skill10_cooldown
+        elif req.get("min_level") == 15:
+            cd = self.player.skill15_cooldown
+        else:
+            cd = self.player.special_cooldown
+
+        if cd > 0:
+            await interaction.followup.send(
+                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
+                ephemeral=True
+            )
+            return
+
+        if req["class"] is not None:
+            if self.player.level < req["min_level"] or self.player.combat_class != req["class"]:
+                await interaction.followup.send(
+                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    ephemeral=True
+                )
+                return
+        else:
+            if self.player.level >= 5 and self.player.combat_class is not None:
+                await interaction.followup.send(
+                    "❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
+                    ephemeral=True
+                )
+                return
+
+        if req.get("subclass") is not None:
+            if self.player.combat_subclass != req["subclass"]:
+                await interaction.followup.send(
+                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
+                    ephemeral=True
+                )
+                return
+
+        # Registrar la acción
+        if self.player == self.duel_view.p1:
+            self.duel_view.p1_action = 'special'
+            self.duel_view.p1_special_id = selected_value
+            self.duel_view.p1.consecutive_timeouts = 0
+        else:
+            self.duel_view.p2_action = 'special'
+            self.duel_view.p2_special_id = selected_value
+            self.duel_view.p2.consecutive_timeouts = 0
+
+        await interaction.followup.send(f"✅ Habilidad especial registrada: **{req['name']}**", ephemeral=True)
+        await self.duel_view._check_and_resolve(interaction, is_ephemeral=True)
+
+
 class DuelView(discord.ui.View):
     """Vista principal del combate PvP por turnos simultáneos."""
 
@@ -248,42 +340,8 @@ class DuelView(discord.ui.View):
         self.p2 = p2
         self.bet = bet
         self.cog = cog
-        
-        # Obtener las habilidades disponibles para ambos jugadores
-        p1_skills = get_combatant_available_skills(p1)
-        p2_skills = get_combatant_available_skills(p2)
-        
-        # Combinar sin duplicados
-        combined_skills = {}
-        for skill_id, skill in p1_skills + p2_skills:
-            combined_skills[skill_id] = skill
-            
-        # Re-poblar las opciones del select_special
-        select_menu = None
-        for child in self.children:
-            if isinstance(child, discord.ui.Select):
-                select_menu = child
-                break
-                
-        if select_menu:
-            if combined_skills:
-                select_menu.options = [
-                    discord.SelectOption(
-                        label=f"{skill['name']} (Nvl. {skill['min_level']})",
-                        value=skill_id,
-                        emoji=skill['emoji'],
-                        description=skill['desc'][:100]
-                    ) for skill_id, skill in combined_skills.items()
-                ]
-            else:
-                select_menu.options = [
-                    discord.SelectOption(
-                        label="Sin habilidades disponibles",
-                        value="none",
-                        description="No tienes habilidades especiales disponibles."
-                    )
-                ]
-                select_menu.disabled = True
+
+        # Habilidades especiales se manejan de forma efímera por botón
 
         # Elecciones de acción de cada jugador en la ronda actual
         self.p1_action = None  # 'attack', 'defend', 'special', 'timeout' o None
@@ -484,138 +542,63 @@ class DuelView(discord.ui.View):
 
         await self._check_and_resolve(interaction)
 
-    @discord.ui.select(
-        placeholder="✨ Lanzar Habilidad Especial...",
-        min_values=1,
-        max_values=1,
-        row=1,
-        options=[
-            discord.SelectOption(
-                label=f"{skill['name']} (Nvl. {skill['min_level']})",
-                value=skill_id,
-                emoji=skill['emoji'],
-                description=skill['desc'][:100]
-            ) for skill_id, skill in SKILLS_CONFIG.items()
-        ]
-    )
-    async def select_special(self, interaction: discord.Interaction, select: discord.ui.Select):
+    @discord.ui.button(label="✨ Habilidad Especial", style=discord.ButtonStyle.secondary, row=1)
+    async def special_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.game_over:
             await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
             return
 
         user_id = interaction.user.id
         cp = self.p1 if user_id == self.p1.user.id else self.p2 if user_id == self.p2.user.id else None
-
         if cp is None:
             await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
 
         if cp.stun_turns > 0:
             await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
             return
 
         if cp.silence_turns > 0:
             await interaction.response.send_message("❌ Estás silenciado y no puedes usar habilidades especiales.", ephemeral=True)
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
             return
 
-        selected_value = select.values[0]
-        
-        # Validar si el especial seleccionado corresponde a su clase y nivel
-        req = SKILLS_CONFIG.get(selected_value)
-        if not req:
-            await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
+        current_action = self.p1_action if cp == self.p1 else self.p2_action
+        if current_action is not None:
+            await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
             return
 
-        # Verificar cooldown adecuado
-        if req.get("min_level") == 10:
-            cd = cp.skill10_cooldown
-        elif req.get("min_level") == 15:
-            cd = cp.skill15_cooldown
-        else:
-            cd = cp.special_cooldown
-
-        if cd > 0:
-            await interaction.response.send_message(
-                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
-                ephemeral=True
-            )
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
+        player_skills = get_combatant_available_skills(cp)
+        if not player_skills:
+            await interaction.response.send_message("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
             return
-            
-        if req["class"] is not None:
-            if cp.level < req["min_level"] or cp.combat_class != req["class"]:
-                await interaction.response.send_message(
-                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
-                    ephemeral=True
-                )
-                try:
-                    await interaction.message.edit(view=self)
-                except Exception:
-                    pass
-                return
-        else:
-            if cp.level >= 5 and cp.combat_class is not None:
-                await interaction.response.send_message(
-                    "❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
-                    ephemeral=True
-                )
-                try:
-                    await interaction.message.edit(view=self)
-                except Exception:
-                    pass
-                return
 
-        # Verificar subclase si aplica
-        if req.get("subclass") is not None:
-            if cp.combat_subclass != req["subclass"]:
-                await interaction.response.send_message(
-                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
-                    ephemeral=True
-                )
-                try:
-                    await interaction.message.edit(view=self)
-                except Exception:
-                    pass
-                return
+        options = [
+            discord.SelectOption(
+                label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                value=skill_id,
+                emoji=skill['emoji'],
+                description=skill['desc'][:100]
+            ) for skill_id, skill in player_skills
+        ]
 
-        # Registrar la acción
-        if user_id == self.p1.user.id:
-            if self.p1_action is not None:
-                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
-                return
-            self.p1_action = 'special'
-            self.p1_special_id = selected_value
-            self.p1.consecutive_timeouts = 0
-        else:
-            if self.p2_action is not None:
-                await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
-                return
-            self.p2_action = 'special'
-            self.p2_special_id = selected_value
-            self.p2.consecutive_timeouts = 0
+        view = PersonalDuelSkillSelectView(duel_view=self, player=cp, options=options)
+        await interaction.response.send_message("Elige tu habilidad especial:", view=view, ephemeral=True)
 
-        await self._check_and_resolve(interaction)
-
-    async def _check_and_resolve(self, interaction: discord.Interaction):
+    async def _check_and_resolve(self, interaction: discord.Interaction, is_ephemeral: bool = False):
         """Verifica si ambos jugadores han votado y resuelve el turno."""
         if self.p1_action is not None and self.p2_action is not None:
-            await interaction.response.defer()
-            await self._resolve_round(interaction)
+            if is_ephemeral:
+                await self._resolve_round(None)
+            else:
+                await interaction.response.defer()
+                await self._resolve_round(interaction)
         else:
-            # Actualizar embed de forma silenciosa para mostrar quién está listo
             embed = self._build_embed()
-            await interaction.response.edit_message(embed=embed, view=self)
+            if is_ephemeral:
+                if self.interaction_msg:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
 
     # ──────────────────── RESOLUCIÓN SIMULTÁNEA ────────────────────
 
@@ -1102,8 +1085,17 @@ class DuelView(discord.ui.View):
             self.stop()
             return
 
-        if interaction:
-            await interaction.message.edit(embed=embed, view=self)
+        try:
+            if interaction and getattr(interaction, "message", None):
+                await interaction.message.edit(embed=embed, view=self)
+            elif self.interaction_msg:
+                await self.interaction_msg.edit(embed=embed, view=self)
+        except Exception:
+            if self.interaction_msg:
+                try:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+                except Exception:
+                    pass
 
     def _calculate_action_result(self, attacker: Combatant, defender: Combatant, action_type: str) -> tuple[int, str]:
         """Calcula el daño y genera la línea de log para una acción ofensiva individual."""
@@ -1632,7 +1624,17 @@ class DuelView(discord.ui.View):
             if hasattr(item, 'disabled'):
                 item.disabled = True
 
-        await interaction.message.edit(embed=embed, view=self)
+        try:
+            if interaction and getattr(interaction, "message", None):
+                await interaction.message.edit(embed=embed, view=self)
+            elif self.interaction_msg:
+                await self.interaction_msg.edit(embed=embed, view=self)
+        except Exception:
+            if self.interaction_msg:
+                try:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+                except Exception:
+                    pass
         self.stop()
 
     async def _finish_duel_from_timeout(self):

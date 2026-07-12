@@ -773,6 +773,72 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         sent_content = view.interaction_msg.channel.send.call_args[1]["content"]
         self.assertIn("Has obtenido un Ítem Único de Raid", sent_content)
 
+    async def test_special_button_ephemeral_response(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        mock_user.display_name = "PlayerSpecial"
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Mago", combat_subclass="Arcanista")
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = 111
+        mock_interaction.response.send_message = AsyncMock()
+        
+        await view.special_button.callback(mock_interaction)
+        
+        # Verify that it sent an ephemeral message with a view containing options
+        mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_interaction.response.send_message.call_args
+        self.assertEqual(kwargs.get("ephemeral"), True)
+        sent_view = kwargs.get("view")
+        self.assertIsNotNone(sent_view)
+        # Check that options are available (e.g. Mago skill)
+        self.assertTrue(len(sent_view.children) > 0)
+
+    @patch('src.commands.duels.raid.RaidCombatView._register_action')
+    async def test_personal_skill_select_view_callback(self, mock_register):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView, PersonalSkillSelectView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Mago", combat_subclass="Arcanista")
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        
+        import discord
+        options = [discord.SelectOption(label="Tormenta de Fuego", value="quemadura")]
+        personal_view = PersonalSkillSelectView(raid_view=view, player=p, options=options)
+        
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = 111
+        mock_interaction.data = {"values": ["quemadura"]}
+        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.followup.send = AsyncMock()
+        
+        await personal_view.select_callback(mock_interaction)
+        
+        mock_interaction.response.edit_message.assert_called_once()
+        mock_interaction.followup.send.assert_called_once()
+        # Verify it calls _register_action with is_ephemeral=True
+        mock_register.assert_called_once_with(mock_interaction, "quemadura", is_ephemeral=True)
+
 
 if __name__ == '__main__':
     unittest.main()
