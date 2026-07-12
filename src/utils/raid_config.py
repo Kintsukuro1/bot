@@ -32,6 +32,13 @@ RAID_DROP_RATE_DEFEAT = 0.30           # Derrota total: 30%
 RAID_RARITY_BONUS_VICTORY = 0.15       # +15% shift hacia rarezas superiores
 RAID_RARITY_MALUS_DEFEAT = -0.10       # -10% shift (más comunes)
 
+# Configuración de Loot por Dificultad
+RAID_LOOT_DIFFICULTY_CONFIG = {
+    "normal":  {"ilvl_bonus": 0,  "rarity_floor_idx": 0, "rarity_bonus": 0.15, "unique_chance": 0.0},
+    "dificil": {"ilvl_bonus": 5,  "rarity_floor_idx": 1, "rarity_bonus": 0.30, "unique_chance": 0.0},
+    "mitica":  {"ilvl_bonus": 12, "rarity_floor_idx": 2, "rarity_bonus": 0.50, "unique_chance": 0.08},
+}
+
 # ──────────────────────────────────────────────
 # XP DE RAID
 # ──────────────────────────────────────────────
@@ -261,7 +268,7 @@ def calc_boss_stats(boss_config: dict, total_power: float = 0.0, difficulty: str
     }
 
 
-def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0):
+def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0, floor_idx: int = 0, ilvl_bonus: int = 0):
     """Genera loot de raid con modificador de rareza.
 
     Reutiliza generate_loot() de combat_progression pero modifica
@@ -271,6 +278,8 @@ def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0):
         player_level: nivel de combate del jugador
         rarity_bonus: float entre -1.0 y 1.0. Positivo = más chance
                       de rarezas altas.
+        floor_idx: índice mínimo de la rareza permitida
+        ilvl_bonus: bono al nivel de objeto
     """
     from src.utils.combat_progression import (
         generate_loot, RARITIES
@@ -278,7 +287,7 @@ def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0):
     import random
 
     if abs(rarity_bonus) < 0.001:
-        return generate_loot(player_level)
+        return generate_loot(player_level, ilvl=player_level + ilvl_bonus, floor_idx=floor_idx)
 
     # Guardar probabilidades originales
     original_probs = [r["prob"] for r in RARITIES]
@@ -306,7 +315,7 @@ def generate_raid_loot(player_level: int, rarity_bonus: float = 0.0):
         for r in RARITIES:
             r["prob"] /= total
 
-        return generate_loot(player_level)
+        return generate_loot(player_level, ilvl=player_level + ilvl_bonus, floor_idx=floor_idx)
     finally:
         # Restaurar siempre las probabilidades originales
         for i, r in enumerate(RARITIES):

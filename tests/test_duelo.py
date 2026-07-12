@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.commands.duels.duelo import Combatant, DuelView
 from src.utils.combat_config import SKILLS_CONFIG
 
-class TestDueloMuerteSubita(unittest.TestCase):
+class TestDueloMuerteSubita(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         # Mocks para usuarios
@@ -248,6 +248,65 @@ class TestDueloMuerteSubita(unittest.TestCase):
         amp_pct = 0.15 + 0.30 + 0.40
         amp_pct = min(0.75, amp_pct)
         self.assertEqual(amp_pct, 0.75)
+
+
+        # Frenzy (+15%) + Vulnerability (+30%) + afijo (+40%) = 0.85 -> capped at 0.75
+        amp_pct = 0.15 + 0.30 + 0.40
+        amp_pct = min(0.75, amp_pct)
+        self.assertEqual(amp_pct, 0.75)
+
+    async def test_duel_special_button_ephemeral_response(self):
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = self.mock_user1.id
+        mock_interaction.response.send_message = AsyncMock()
+        
+        await self.view.special_button.callback(mock_interaction)
+        
+        mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_interaction.response.send_message.call_args
+        self.assertEqual(kwargs.get("ephemeral"), True)
+        sent_view = kwargs.get("view")
+        self.assertIsNotNone(sent_view)
+        self.assertTrue(len(sent_view.children) > 0)
+
+    @patch('src.commands.duels.duelo.DuelView._check_and_resolve')
+    async def test_duel_personal_skill_select_view_callback(self, mock_check_resolve):
+        from src.commands.duels.duelo import PersonalDuelSkillSelectView
+        import discord
+        
+        options = [discord.SelectOption(label="Tormenta de Fuego", value="quemadura")]
+        personal_view = PersonalDuelSkillSelectView(duel_view=self.view, player=self.p1, options=options)
+        
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = self.mock_user1.id
+        mock_interaction.data = {"values": ["quemadura"]}
+        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.followup.send = AsyncMock()
+        
+        await personal_view.select_callback(mock_interaction)
+        
+        mock_interaction.response.edit_message.assert_called_once()
+        mock_interaction.followup.send.assert_called_once()
+        self.assertEqual(self.view.p1_action, "special")
+        self.assertEqual(self.view.p1_special_id, "quemadura")
+        mock_check_resolve.assert_called_once_with(mock_interaction, is_ephemeral=True)
+
+
+    async def test_estados_cmd(self):
+        from src.commands.duels.duelo import DuelsCog
+        
+        cog = DuelsCog(MagicMock())
+        mock_interaction = MagicMock()
+        mock_interaction.response.send_message = AsyncMock()
+        
+        await cog.estados_cmd.callback(cog, mock_interaction)
+        
+        mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_interaction.response.send_message.call_args
+        sent_embed = kwargs.get("embed")
+        self.assertIsNotNone(sent_embed)
+        self.assertEqual(sent_embed.title, "📖 Glosario de Estados de Combate")
+        self.assertTrue(len(sent_embed.fields) == 4)
 
 
 if __name__ == '__main__':

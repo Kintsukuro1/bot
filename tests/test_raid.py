@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, AsyncMock, patch
 # Asegurar que el directorio raíz está en el path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.db import init_db
+init_db()
+
 from src.utils.raid_config import (
     get_today_boss, calc_boss_stats, generate_raid_loot,
     RAID_BOSSES, BOSS_ABILITIES, RAID_AFFIXES,
@@ -673,7 +676,168 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         
         await view._finish_raid(mock_interaction, victory=True)
         
-        mock_gen_loot.assert_called_once_with(10, 0.10) # Level 10, MINIBOSS_LOOT_RARITY_BONUS = 0.10
+        # In our modified code, we pass floor_idx and ilvl_bonus!
+        # But wait! For cofre_mimetico, self.difficulty = 'normal' (the default)
+        # So diff_cfg has floor_idx = 0, ilvl_bonus = 0.
+        # final_rarity_bonus = MINIBOSS_LOOT_RARITY_BONUS (0.10) + diff_cfg["rarity_bonus"] (0.15) = 0.25
+        mock_gen_loot.assert_called_once_with(10, 0.25, floor_idx=0, ilvl_bonus=0)
+
+    def test_roll_rarity_floor(self):
+        from src.utils.combat_progression import _roll_rarity
+        # floor_idx = 2 (Raro) -> rolled rarity must be Raro, Épico, or Legendario
+        for _ in range(50):
+            rarity = _roll_rarity(floor_idx=2)
+            self.assertIn(rarity["name"], ("Raro", "Épico", "Legendario"))
+
+    def test_generate_raid_loot_difficulty_bounds(self):
+        from src.utils.raid_config import generate_raid_loot
+        # Difficulty "dificil": floor_idx = 1 (Poco Común), ilvl_bonus = 5
+        loot = generate_raid_loot(player_level=10, rarity_bonus=0.0, floor_idx=1, ilvl_bonus=5)
+        self.assertEqual(loot["item_level"], 15)
+        self.assertIn(loot["rarity"], ("Poco Común", "Raro", "Épico", "Legendario"))
+
+    @patch('src.commands.duels.raid.db_cursor')
+    def test_roll_unique_item(self, mock_db_cursor):
+        from src.commands.duels.raid import roll_unique_item
+        mock_cursor = MagicMock()
+        # ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, Lore
+        mock_cursor.fetchall.return_value = [
+            ("corona_yggdrasil", "Corona del Yggdrasil Corrupto", "Cabeza", "Legendario", "hp", 87, [{"stat": "def", "value": 34}], {"id": "regen_improved"}, "Lore text")
+        ]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        loot = roll_unique_item("Yggdrasil Corrupto")
+        self.assertIsNotNone(loot)
+        self.assertEqual(loot["slot"], "Cabeza")
+        self.assertEqual(loot["name"], "Corona del Yggdrasil Corrupto")
+        self.assertEqual(loot["item_level"], 35)
+        self.assertEqual(loot["primary_stat"], "hp")
+        self.assertEqual(loot["primary_value"], 87)
+        self.assertEqual(loot["stats_summary"]["hp"], 87)
+        self.assertEqual(loot["stats_summary"]["def"], 34)
+        self.assertEqual(loot["item_key"], "corona_yggdrasil")
+
+    @patch('src.commands.duels.raid.roll_unique_item')
+    @patch('src.commands.duels.raid.generate_raid_loot')
+    @patch('src.commands.duels.raid.get_user_equipment')
+    @patch('random.random')
+    async def test_resolve_drops_mitica_unique_item_roll(self, mock_random, mock_get_equip, mock_gen_loot, mock_roll_unique):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 999
+        mock_user.display_name = "MythicWinner"
+        mock_user.dm_channel = AsyncMock()
+        p = RaidCombatant(mock_user, 30, {})
+        p.is_dead = True
+        
+        boss_config = {
+            "name": "Dummy Mythic Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.difficulty = "mitica"
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.channel = AsyncMock()
+        
+        # Mock random.random() to:
+        # 1. 0.99 for player normal drop rate (normal drop fails)
+        # 2. 0.01 for unique drop roll (unique drop succeeds! unique_chance = 0.08)
+        mock_random.side_effect = [0.99, 0.01]
+        
+        mock_gen_loot.return_value = {
+            "name": "Espada de Madera", "slot": "arma", "rarity": "Común", "rarity_color": "Común", "rarity_hex": 0x7f8c8d, "item_level": 10,
+            "primary_stat": "atk", "primary_value": 5, "secondaries": [],
+            "stats_summary": {"atk": 5}, "sell_price": 50
+        }
+        mock_roll_unique.return_value = {
+            "slot": "Cabeza", "name": "Corona del Yggdrasil Corrupto", "rarity": "Legendario",
+            "rarity_color": "Orange", "rarity_hex": 0xff8800, "item_level": 35,
+            "primary_stat": "hp", "primary_value": 87, "secondaries": [], "stats_summary": {"hp": 87},
+            "passive": {"id": "regen_improved", "name": "Regeneración Mejorada", "desc": "Regenera 6% HP", "emoji": "💚"},
+            "sell_price": 500, "item_key": "corona_yggdrasil", "lore": "test"
+        }
+        mock_get_equip.return_value = {}
+        
+        # Resolve drops
+        await view._resolve_drops(victory=True)
+        
+        # Verify roll_unique_item was called
+        mock_roll_unique.assert_called_once_with("Dummy Mythic Boss")
+        
+        # Since only 1 player, it should call effective_channel.send with individual drop message
+        view.interaction_msg.channel.send.assert_called_once()
+        sent_content = view.interaction_msg.channel.send.call_args[1]["content"]
+        self.assertIn("Has obtenido un Ítem Único de Raid", sent_content)
+
+    async def test_special_button_ephemeral_response(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        mock_user.display_name = "PlayerSpecial"
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Mago", combat_subclass="Arcanista")
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = 111
+        mock_interaction.response.send_message = AsyncMock()
+        
+        await view.special_button.callback(mock_interaction)
+        
+        # Verify that it sent an ephemeral message with a view containing options
+        mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_interaction.response.send_message.call_args
+        self.assertEqual(kwargs.get("ephemeral"), True)
+        sent_view = kwargs.get("view")
+        self.assertIsNotNone(sent_view)
+        # Check that options are available (e.g. Mago skill)
+        self.assertTrue(len(sent_view.children) > 0)
+
+    @patch('src.commands.duels.raid.RaidCombatView._register_action')
+    async def test_personal_skill_select_view_callback(self, mock_register):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView, PersonalSkillSelectView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Mago", combat_subclass="Arcanista")
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        
+        import discord
+        options = [discord.SelectOption(label="Tormenta de Fuego", value="quemadura")]
+        personal_view = PersonalSkillSelectView(raid_view=view, player=p, options=options)
+        
+        mock_interaction = MagicMock()
+        mock_interaction.user.id = 111
+        mock_interaction.data = {"values": ["quemadura"]}
+        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.followup.send = AsyncMock()
+        
+        await personal_view.select_callback(mock_interaction)
+        
+        mock_interaction.response.edit_message.assert_called_once()
+        mock_interaction.followup.send.assert_called_once()
+        # Verify it calls _register_action with is_ephemeral=True
+        mock_register.assert_called_once_with(mock_interaction, "quemadura", is_ephemeral=True)
 
 
 if __name__ == '__main__':

@@ -466,6 +466,90 @@ def get_combatant_available_skills(combatant: RaidCombatant) -> list[tuple[str, 
     return available
 
 
+class PersonalSkillSelectView(discord.ui.View):
+    """Menú efímero de un solo select para que un jugador elija su habilidad especial en la raid."""
+
+    def __init__(self, raid_view, player, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.raid_view = raid_view
+        self.player = player
+
+        # Crear el select dinámicamente con las opciones del jugador
+        select = discord.ui.Select(
+            placeholder="✨ Seleccionar Habilidad Especial...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        # Deshabilitar para evitar dobles clics
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+        await interaction.response.edit_message(view=self)
+
+        # 1. Comprobar condiciones de nuevo (defensa en profundidad)
+        if self.raid_view.game_over:
+            await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
+            return
+
+        user_id = self.player.user.id
+        if user_id in self.raid_view.actions:
+            await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
+            return
+
+        selected_value = interaction.data["values"][0]
+        if selected_value == "none":
+            await interaction.followup.send("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            return
+
+        # 2. Validar cooldown, clase, nivel y subclase
+        from src.utils.combat_config import SKILLS_CONFIG
+        req = SKILLS_CONFIG.get(selected_value)
+        if not req:
+            await interaction.followup.send("❌ Habilidad desconocida.", ephemeral=True)
+            return
+
+        if req.get("min_level") == 10:
+            cd = self.player.skill10_cooldown
+        elif req.get("min_level") == 15:
+            cd = self.player.skill15_cooldown
+        else:
+            cd = self.player.special_cooldown
+
+        if cd > 0:
+            await interaction.followup.send(
+                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
+                ephemeral=True
+            )
+            return
+
+        if req["class"] is not None:
+            if self.player.level < req["min_level"] or self.player.combat_class != req["class"]:
+                await interaction.followup.send(
+                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    ephemeral=True
+                )
+                return
+
+        if req.get("subclass") is not None:
+            if self.player.combat_subclass != req["subclass"]:
+                await interaction.followup.send(
+                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
+                    ephemeral=True
+                )
+                return
+
+        # 3. Registrar la acción
+        # Mostramos mensaje efímero de confirmación al jugador
+        await interaction.followup.send(f"✅ Habilidad especial registrada: **{req['name']}**", ephemeral=True)
+        # Llamar a _register_action de la vista de la raid pasándole is_ephemeral=True
+        await self.raid_view._register_action(interaction, selected_value, is_ephemeral=True)
+
+
 # ══════════════════════════════════════════════
 # VISTA: COMBATE DE RAID
 # ══════════════════════════════════════════════
@@ -499,39 +583,7 @@ class RaidCombatView(discord.ui.View):
         self.boss_poison_turns = 0
         self.boss_poison_damage = 0
 
-        # Obtener las habilidades disponibles para todos los participantes
-        combined_skills = {}
-        for p in self.players:
-            p_skills = get_combatant_available_skills(p)
-            for skill_id, skill in p_skills:
-                combined_skills[skill_id] = skill
-                
-        # Re-poblar las opciones del select_special
-        select_menu = None
-        for child in self.children:
-            if isinstance(child, discord.ui.Select):
-                select_menu = child
-                break
-                
-        if select_menu:
-            if combined_skills:
-                select_menu.options = [
-                    discord.SelectOption(
-                        label=f"{skill['name']} (Nvl. {skill['min_level']})",
-                        value=skill_id,
-                        emoji=skill['emoji'],
-                        description=skill['desc'][:100]
-                    ) for skill_id, skill in combined_skills.items()
-                ]
-            else:
-                select_menu.options = [
-                    discord.SelectOption(
-                        label="Sin habilidades disponibles",
-                        value="none",
-                        description="No tienes habilidades especiales disponibles."
-                    )
-                ]
-                select_menu.disabled = True
+        # Habilidades especiales se manejan de forma efímera por botón
 
     def _alive_players(self) -> list[RaidCombatant]:
         """Retorna los jugadores que siguen vivos."""
@@ -695,19 +747,8 @@ class RaidCombatView(discord.ui.View):
     async def defend_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._register_action(interaction, 'defend')
 
-    @discord.ui.select(
-        placeholder="✨ Lanzar Habilidad Especial...",
-        min_values=1,
-        max_values=1,
-        row=1,
-        options=[
-            discord.SelectOption(
-                label="Sin habilidades disponibles",
-                value="none"
-            )
-        ]
-    )
-    async def select_special(self, interaction: discord.Interaction, select: discord.ui.Select):
+    @discord.ui.button(label="✨ Habilidad Especial", style=discord.ButtonStyle.secondary, row=1)
+    async def special_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.game_over:
             await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
             return
@@ -717,91 +758,46 @@ class RaidCombatView(discord.ui.View):
         if player is None:
             await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
             return
+
         if player.is_dead:
             await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
             return
+
         if player.stun_turns > 0:
             await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
             return
 
         if player.silence_turns > 0:
             await interaction.response.send_message("❌ Estás silenciado y no puedes usar habilidades especiales.", ephemeral=True)
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
             return
 
-        selected_value = select.values[0]
-        if selected_value == "none":
-            await interaction.response.send_message("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
-            return
-
-        # Validar si el especial seleccionado corresponde a su clase y nivel
-        req = SKILLS_CONFIG.get(selected_value)
-        if not req:
-            await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
-            return
-
-        # Verificar cooldown adecuado
-        if req.get("min_level") == 10:
-            cd = player.skill10_cooldown
-        elif req.get("min_level") == 15:
-            cd = player.skill15_cooldown
-        else:
-            cd = player.special_cooldown
-
-        if cd > 0:
-            await interaction.response.send_message(
-                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
-                ephemeral=True
-            )
-            try:
-                await interaction.message.edit(view=self)
-            except Exception:
-                pass
-            return
-            
-        # Verificar clase y nivel
-        if req["class"] is not None:
-            if player.level < req["min_level"] or player.combat_class != req["class"]:
-                await interaction.response.send_message(
-                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
-                    ephemeral=True
-                )
-                try:
-                    await interaction.message.edit(view=self)
-                except Exception:
-                    pass
-                return
-        
-        # Verificar subclase si aplica
-        if req.get("subclass") is not None:
-            if player.combat_subclass != req["subclass"]:
-                await interaction.response.send_message(
-                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
-                    ephemeral=True
-                )
-                try:
-                    await interaction.message.edit(view=self)
-                except Exception:
-                    pass
-                return
-
-        # Registrar la acción
         if user_id in self.actions:
             await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
             return
 
-        await self._register_action(interaction, selected_value)
+        player_skills = get_combatant_available_skills(player)
+        if not player_skills:
+            await interaction.response.send_message("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            return
 
-    async def _register_action(self, interaction: discord.Interaction, action: str):
+        options = [
+            discord.SelectOption(
+                label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                value=skill_id,
+                emoji=skill['emoji'],
+                description=skill['desc'][:100]
+            ) for skill_id, skill in player_skills
+        ]
+
+        view = PersonalSkillSelectView(raid_view=self, player=player, options=options)
+        await interaction.response.send_message("Elige tu habilidad especial:", view=view, ephemeral=True)
+
+    async def _register_action(self, interaction: discord.Interaction, action: str, is_ephemeral: bool = False):
         if self.game_over:
-            await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
+            if is_ephemeral:
+                await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
             return
 
         user_id = interaction.user.id
@@ -809,15 +805,24 @@ class RaidCombatView(discord.ui.View):
         # Verificar que es un participante
         player = next((p for p in self.players if p.user.id == user_id), None)
         if player is None:
-            await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
+            if is_ephemeral:
+                await interaction.followup.send("❌ No participas en esta raid.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
             return
 
         if player.is_dead:
-            await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
+            if is_ephemeral:
+                await interaction.followup.send("❌ Has caído en combate.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
             return
 
         if user_id in self.actions:
-            await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
+            if is_ephemeral:
+                await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
             return
 
         self.actions[user_id] = action
@@ -827,11 +832,18 @@ class RaidCombatView(discord.ui.View):
         all_ready = all(p.user.id in self.actions for p in alive)
 
         if all_ready:
-            await interaction.response.defer()
-            await self._resolve_round(interaction)
+            if is_ephemeral:
+                await self._resolve_round(None)
+            else:
+                await interaction.response.defer()
+                await self._resolve_round(interaction)
         else:
             embed = self._build_embed()
-            await interaction.response.edit_message(embed=embed, view=self)
+            if is_ephemeral:
+                if self.interaction_msg:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
 
     # ──────────────────── RESOLUCIÓN ────────────────────
 
@@ -2227,7 +2239,17 @@ class RaidCombatView(discord.ui.View):
             self.stop()
             return
 
-        await interaction.message.edit(embed=embed, view=self)
+        try:
+            if interaction and getattr(interaction, "message", None):
+                await interaction.message.edit(embed=embed, view=self)
+            elif self.interaction_msg:
+                await self.interaction_msg.edit(embed=embed, view=self)
+        except Exception:
+            if self.interaction_msg:
+                try:
+                    await self.interaction_msg.edit(embed=embed, view=self)
+                except Exception:
+                    pass
 
     def _execute_boss_ability(self) -> list[str]:
         """Ejecuta la habilidad especial del boss. Retorna líneas de log."""
@@ -2467,6 +2489,9 @@ class RaidCombatView(discord.ui.View):
 
     async def _resolve_drops(self, victory: bool):
         """Resuelve los drops de ítems para cada participante."""
+        from src.utils.raid_config import RAID_LOOT_DIFFICULTY_CONFIG
+        diff_cfg = RAID_LOOT_DIFFICULTY_CONFIG.get(self.difficulty, RAID_LOOT_DIFFICULTY_CONFIG["normal"])
+
         channel = None
         if self.interaction_msg:
             channel = self.interaction_msg.channel
@@ -2495,7 +2520,8 @@ class RaidCombatView(discord.ui.View):
                 label = "Derrota"
 
             if random.random() < drop_rate:
-                loot = generate_raid_loot(p.level, rarity_bonus)
+                final_rarity_bonus = min(0.75, rarity_bonus + diff_cfg["rarity_bonus"])
+                loot = generate_raid_loot(p.level, final_rarity_bonus, floor_idx=diff_cfg["rarity_floor_idx"], ilvl_bonus=diff_cfg["ilvl_bonus"])
                 equipment = await asyncio.to_thread(get_user_equipment, p.user.id)
                 current_piece = equipment.get(loot["slot"])
 
@@ -2512,39 +2538,79 @@ class RaidCombatView(discord.ui.View):
                         )
                         effective_channel = None
 
-                if effective_channel is None:
-                    logger.warning(
-                        "Drop de raid generado para %s pero no hay canal. Loot: %s",
-                        getattr(p.user, "name", "desconocido"), loot,
-                    )
-                    continue
+                if effective_channel is not None:
+                    # Épico / Legendario → Sistema de Loot Roll grupal
+                    if loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
+                        alive_players = [pl for pl in self.players if not pl.is_dead]
+                        eligible = alive_players if alive_players else self.players
+                        roll_view = RaidLootRollView(loot, eligible, effective_channel)
+                        roll_embed = roll_view.build_embed()
+                        msg = await effective_channel.send(
+                            content=(
+                                f"🎲 **¡Drop {loot['rarity']}!** "
+                                f"{loot['rarity_color']} **{loot['name']}** — "
+                                f"¡Todos los sobrevivientes pueden tirar los dados!"
+                            ),
+                            embed=roll_embed,
+                            view=roll_view,
+                        )
+                        roll_view.message = msg
+                    else:
+                        # Drop individual normal
+                        view = RaidLootView(p.user, loot, current_piece)
+                        loot_embed = view.build_embed()
+                        msg = await effective_channel.send(
+                            content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
+                            embed=loot_embed,
+                            view=view,
+                        )
+                        view.message = msg
 
-                # Épico / Legendario → Sistema de Loot Roll grupal
-                if loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
-                    alive_players = [pl for pl in self.players if not pl.is_dead]
-                    eligible = alive_players if alive_players else self.players
-                    roll_view = RaidLootRollView(loot, eligible, effective_channel)
-                    roll_embed = roll_view.build_embed()
-                    msg = await effective_channel.send(
-                        content=(
-                            f"🎲 **¡Drop {loot['rarity']}!** "
-                            f"{loot['rarity_color']} **{loot['name']}** — "
-                            f"¡Todos los sobrevivientes pueden tirar los dados!"
-                        ),
-                        embed=roll_embed,
-                        view=roll_view,
-                    )
-                    roll_view.message = msg
-                else:
-                    # Drop individual normal
-                    view = RaidLootView(p.user, loot, current_piece)
-                    loot_embed = view.build_embed()
-                    msg = await effective_channel.send(
-                        content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
-                        embed=loot_embed,
-                        view=view,
-                    )
-                    view.message = msg
+            # Roll para item único en Mítica (sólo en victorias de raids míticas)
+            if victory and self.difficulty == "mitica" and random.random() < diff_cfg["unique_chance"]:
+                unique_loot = roll_unique_item(self.boss.name)
+                if unique_loot:
+                    effective_channel = channel
+                    if effective_channel is None:
+                        try:
+                            if p.user.dm_channel is None:
+                                await p.user.create_dm()
+                            effective_channel = p.user.dm_channel
+                        except Exception as exc:
+                            logger.warning(
+                                "No se pudo resolver canal para enviar drop único de raid a %s: %r",
+                                getattr(p.user, "name", "desconocido"), exc,
+                            )
+                            effective_channel = None
+
+                    if effective_channel is not None:
+                        equipment = await asyncio.to_thread(get_user_equipment, p.user.id)
+                        unique_current_piece = equipment.get(unique_loot["slot"])
+
+                        if unique_loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
+                            alive_players = [pl for pl in self.players if not pl.is_dead]
+                            eligible = alive_players if alive_players else self.players
+                            roll_view = RaidLootRollView(unique_loot, eligible, effective_channel)
+                            roll_embed = roll_view.build_embed()
+                            msg = await effective_channel.send(
+                                content=(
+                                    f"⭐ **¡Drop ÚNICO!** "
+                                    f"{unique_loot['rarity_color']} **{unique_loot['name']}** — "
+                                    f"¡Todos los sobrevivientes pueden tirar los dados!"
+                                ),
+                                embed=roll_embed,
+                                view=roll_view,
+                            )
+                            roll_view.message = msg
+                        else:
+                            view = RaidLootView(p.user, unique_loot, unique_current_piece)
+                            loot_embed = view.build_embed()
+                            msg = await effective_channel.send(
+                                content=f"⭐ {p.user.mention} — ¡Has obtenido un Ítem Único de Raid! ({label})",
+                                embed=loot_embed,
+                                view=view,
+                            )
+                            view.message = msg
 
 
 # ══════════════════════════════════════════════
@@ -3032,6 +3098,53 @@ def build_miniboss_config(miniboss_key: str, miniboss_dict: dict) -> dict:
         "miniboss_key": miniboss_key,
         "guaranteed_loot": miniboss_dict.get("guaranteed_loot", False),
         "invisibility_pattern": miniboss_dict.get("invisibility_pattern", False),
+    }
+
+
+
+def roll_unique_item(boss_name: str) -> dict | None:
+    """8% de probabilidad ya se evalúa antes de llamar esto. Retorna un ítem del catálogo o None."""
+    import random
+    from src.db import db_cursor
+    from src.utils.combat_progression import RARITY_COLORS, calc_sell_price
+
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, Lore
+            FROM UniqueItemCatalog
+            WHERE BossSource = %s OR BossSource IS NULL
+        """, (boss_name,))
+        rows = cursor.fetchall()
+    if not rows:
+        return None
+
+    # Seleccionar uno al azar
+    row = random.choice(rows)
+    item_key, name, slot, rarity, primary_stat, primary_value, secondaries, passive, lore = row
+
+    # Armar stats_summary para que coincida con generate_loot()
+    stats_summary = {primary_stat: primary_value}
+    for sec in secondaries:
+        stats_summary[sec["stat"]] = stats_summary.get(sec["stat"], 0) + sec["value"]
+
+    rarity_hex = RARITY_COLORS.get(rarity, 0xff8800)
+    sell_price = calc_sell_price(rarity, 35)
+
+    return {
+        "slot": slot,
+        "name": name,
+        "rarity": rarity,
+        "rarity_color": "🟧",  # Color de Legendario
+        "rarity_hex": rarity_hex,
+        "item_level": 35,
+        "primary_stat": primary_stat,
+        "primary_value": primary_value,
+        "secondaries": secondaries,
+        "passive": passive,
+        "sell_price": sell_price,
+        "stats_summary": stats_summary,
+        "item_key": item_key,  # Guardar referencia
+        "lore": lore
     }
 
 
