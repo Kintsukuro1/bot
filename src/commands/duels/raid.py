@@ -88,6 +88,7 @@ class RaidBoss:
 
         self.miniboss_key = boss_config.get("miniboss_key")
         self.is_miniboss = is_miniboss
+        self.minion_pool = boss_config.get("minion_pool")
 
         # Stats base guardados para mutación
         self._base_atk = self.atk
@@ -1070,7 +1071,7 @@ class RaidCombatView(discord.ui.View):
         # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
         if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:
             self.minions_summoned = True
-            self.minions = build_minions_from_pool(self.boss_config)
+            self.minions = build_minions_from_pool(self.boss)
             minion_names = ", ".join(f"**{m['name']}**" for m in self.minions)
             logs.append(f"\n👾 **¡El jefe invoca esbirros: {minion_names}!** Los ataques se redirigirán a ellos hasta destruirlos.")
 
@@ -2986,11 +2987,14 @@ def count_mythic_raids_today(user_id: int) -> int:
         return cursor.fetchone()[0]
 
 
-def build_minions_from_pool(boss_config: dict) -> list[dict]:
+def build_minions_from_pool(boss_config) -> list[dict]:
     import random
     from src.utils.raid_config import MINION_ARCHETYPES
 
-    pool = boss_config.get("minion_pool")
+    if isinstance(boss_config, dict):
+        pool = boss_config.get("minion_pool")
+    else:
+        pool = getattr(boss_config, "minion_pool", None)
     if pool is None:  # Caso Abyssus: 2 random
         pool = random.sample(list(MINION_ARCHETYPES.keys()), 2)
     minions = []
