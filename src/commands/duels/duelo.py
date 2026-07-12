@@ -2861,7 +2861,54 @@ class DuelsCog(commands.Cog):
         current_class = c_stats.get('combat_class')
         current_subclass = c_stats.get('combat_subclass')
         player_level = c_stats['level']
-        
+
+        if current_class:
+            if player_level < SUBCLASS_UNLOCK_LEVEL:
+                await interaction.response.send_message(
+                    f"❌ Ya has elegido la clase **{current_class}** y no puedes cambiarla. Podrás elegir una subclase a nivel {SUBCLASS_UNLOCK_LEVEL}.",
+                    ephemeral=True
+                )
+                return
+
+            # Si ya tiene clase y nivel >= 10, va directo a la elección de subclase
+            selected_class = current_class
+            sub_infos = get_all_subclass_info_for_display(selected_class)
+            sub_embed = discord.Embed(
+                title=f"🎭 Elige tu Subclase de {selected_class}",
+                description=f"Clase actual: **{selected_class}** (no se puede cambiar).\nElige tu especialización:",
+                color=discord.Color.purple()
+            )
+            for info in sub_infos:
+                skill_text = f"**Nv.10 — {info['skill_10_name']}:** {info['skill_10_desc']}\n"
+                if player_level >= ULTIMATE_UNLOCK_LEVEL:
+                    skill_text += f"**Nv.15 — {info['skill_15_name']}:** {info['skill_15_desc']}"
+                else:
+                    skill_text += f"*Nv.15 — {info['skill_15_name']}:* 🔒 Se desbloquea a Nv.15"
+                sub_embed.add_field(
+                    name=f"{info['emoji']} {info['name']} ({info['role']})",
+                    value=f"*{info['desc']}*\n{skill_text}",
+                    inline=False
+                )
+
+            sub_view = SubclassSelectionView(interaction.user, selected_class, current_subclass)
+            await interaction.response.send_message(embed=sub_embed, view=sub_view, ephemeral=True)
+
+            await sub_view.wait()
+
+            selected_subclass = sub_view.selected_subclass
+            if not selected_subclass:
+                return
+
+            success = await asyncio.to_thread(
+                update_user_class_and_subclass, user_id, selected_class, selected_subclass
+            )
+            if success:
+                msg = f"✅ ¡Tu subclase ha sido actualizada a **{selected_subclass}**!"
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Hubo un error al guardar en la base de datos.", ephemeral=True)
+            return
+
         # ── Paso 1: Elegir clase ──
         embed = discord.Embed(
             title="🎭 Elige tu Clase de Combate",

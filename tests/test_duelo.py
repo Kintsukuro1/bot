@@ -433,5 +433,67 @@ class TestDueloSetBonuses(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Caelum", p.abyssus_log)
 
 
+class TestClaseCommand(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        from src.commands.duels.duelo import DuelsCog
+        self.bot = MagicMock()
+        self.cog = DuelsCog(self.bot)
+        self.mock_user = MagicMock()
+        self.mock_user.id = 12345
+        self.mock_user.display_name = "TestPlayer"
+
+        self.mock_interaction = MagicMock()
+        self.mock_interaction.user = self.mock_user
+        self.mock_interaction.response.send_message = AsyncMock()
+        self.mock_interaction.followup.send = AsyncMock()
+
+    @patch('src.commands.duels.duelo.get_combat_stats')
+    async def test_clase_cmd_under_level_5(self, mock_get_stats):
+        mock_get_stats.return_value = {"level": 4, "combat_class": None, "combat_subclass": None}
+        
+        await self.cog.clase_cmd.callback(self.cog, self.mock_interaction)
+        
+        self.mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = self.mock_interaction.response.send_message.call_args
+        self.assertIn("Necesitas nivel de combate **5**", args[0])
+
+    @patch('src.commands.duels.duelo.get_combat_stats')
+    async def test_clase_cmd_already_has_class_low_level(self, mock_get_stats):
+        mock_get_stats.return_value = {"level": 7, "combat_class": "Mago", "combat_subclass": None}
+        
+        await self.cog.clase_cmd.callback(self.cog, self.mock_interaction)
+        
+        self.mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = self.mock_interaction.response.send_message.call_args
+        self.assertIn("Ya has elegido la clase **Mago**", args[0])
+
+    @patch('src.commands.duels.duelo.get_combat_stats')
+    @patch('src.commands.duels.duelo.SubclassSelectionView')
+    @patch('src.commands.duels.duelo.update_user_class_and_subclass')
+    async def test_clase_cmd_already_has_class_high_level(self, mock_update, mock_view_class, mock_get_stats):
+        mock_get_stats.return_value = {"level": 12, "combat_class": "Mago", "combat_subclass": None}
+        
+        mock_view_inst = MagicMock()
+        mock_view_inst.wait = AsyncMock()
+        mock_view_inst.selected_subclass = "Piromante"
+        mock_view_class.return_value = mock_view_inst
+        
+        mock_update.return_value = True
+        
+        await self.cog.clase_cmd.callback(self.cog, self.mock_interaction)
+        
+        self.mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = self.mock_interaction.response.send_message.call_args
+        sent_embed = kwargs.get("embed")
+        self.assertIsNotNone(sent_embed)
+        self.assertIn("Elige tu Subclase de Mago", sent_embed.title)
+        
+        mock_update.assert_called_once_with(self.mock_user.id, "Mago", "Piromante")
+        self.mock_interaction.followup.send.assert_called_once()
+        f_args, f_kwargs = self.mock_interaction.followup.send.call_args
+        self.assertIn("Tu subclase ha sido actualizada", f_args[0])
+
+
 if __name__ == '__main__':
     unittest.main()
