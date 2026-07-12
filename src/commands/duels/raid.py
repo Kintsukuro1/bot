@@ -20,6 +20,7 @@ from src.db import (
     add_balance, registrar_transaccion, equip_item,
     db_cursor, add_combat_currency,
     get_consumable_catalog, get_user_consumables, use_consumable,
+    get_gem_catalog, buy_consumable_discounted, insert_gem_discounted,
 )
 from src.utils.combat_progression import (
     calc_base_stats, calc_equipment_bonus, get_effective_bonus,
@@ -182,6 +183,9 @@ class RaidCombatant:
         self.set_bonus_leviathan_4pc = False
         self.set_bonus_aurelius_4pc = False
         self.set_bonus_abyssus_4pc = False
+        self.first_strike_used = False
+        self.low_hp_heal_used = False
+        self.next_hit_lifesteal_bonus = 0.0
 
         # Cargar cache de sets si está vacío
         if not EQUIPMENT_SETS_CACHE:
@@ -253,6 +257,22 @@ class RaidCombatant:
                     ]
                     self.abyssus_rolled_4pc_effect = random.choice(possible_effects)
 
+        # Abyssus random set effect activation
+        if getattr(self, "set_bonus_abyssus_4pc", False):
+            effect_map = {
+                "yggdrasil_group_regen": ("set_bonus_yggdrasil_4pc", "Regeneración de Grupo (Yggdrasil)"),
+                "ignis_burn_extension": ("set_bonus_ignis_4pc", "Extensión de Quemadura (Ignis)"),
+                "caelum_first_strike_dodge": ("set_bonus_caelum_4pc", "Esquiva Inicial (Caelum)"),
+                "thanatos_ally_death_lifesteal": ("set_bonus_thanatos_4pc", "Robo de Vida por Aliado Caído (Thanatos)"),
+                "leviathan_cc_reduction": ("set_bonus_leviathan_4pc", "Reducción de CC (Leviathán)"),
+                "aurelius_low_hp_heal": ("set_bonus_aurelius_4pc", "Curación al HP Crítico (Aurelius)"),
+            }
+            effect_id = getattr(self, "abyssus_rolled_4pc_effect", None)
+            if effect_id in effect_map:
+                flag, name = effect_map[effect_id]
+                setattr(self, flag, True)
+                self.abyssus_log = f"🌀 **Efecto Abyssus:** ¡{self.user.display_name} obtiene el bonus del set **{name}**!"
+
         # Pasivos de equipo (Legendario)
         self.passives = passives
         self.used_second_wind = False
@@ -263,6 +283,7 @@ class RaidCombatant:
         self.has_fury = any(p['id'] == 'fury' for p in passives)
         self.has_dodge = any(p['id'] == 'dodge' for p in passives)
         self.has_parry = any(p['id'] == 'parry' for p in passives)
+        self.has_bleed_on_hit = any(p['id'] == 'bleed_on_hit' for p in passives)
 
         # Estado de combate
         self.is_defending = False
@@ -285,9 +306,9 @@ class RaidCombatant:
         
         # Estados de subclase
         self.taunt_turns = 0                # Duración del taunt (tanques)
-        self.stun_turns = 0                 # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
-        self.frozen_turns = 0               # Turnos congelado
-        self.silence_turns = 0              # Turnos silenciado
+        self._stun_turns = 0                 # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
+        self._frozen_turns = 0               # Turnos congelado
+        self._silence_turns = 0              # Turnos silenciado
         self.bleed_turns = 0                # Turnos sangrado
         self.bleed_source_pct = 0.06        # 6% del último daño físico
         self.last_physical_damage_taken = 0  # Para sangrado
@@ -321,6 +342,36 @@ class RaidCombatant:
         self.retribution_active = False     # Postura de Represalia activa
         self.blinded_turns = 0              # Ceguera
         self.turns_survived = 0    # Turnos sobrevividos (para XP)
+
+    @property
+    def stun_turns(self) -> int:
+        return self._stun_turns
+
+    @stun_turns.setter
+    def stun_turns(self, value: int):
+        if value > getattr(self, "_stun_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._stun_turns = value
+
+    @property
+    def frozen_turns(self) -> int:
+        return self._frozen_turns
+
+    @frozen_turns.setter
+    def frozen_turns(self, value: int):
+        if value > getattr(self, "_frozen_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._frozen_turns = value
+
+    @property
+    def silence_turns(self) -> int:
+        return self._silence_turns
+
+    @silence_turns.setter
+    def silence_turns(self, value: int):
+        if value > getattr(self, "_silence_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._silence_turns = value
 
 
 # ══════════════════════════════════════════════
@@ -825,6 +876,11 @@ class RaidCombatView(discord.ui.View):
         self.action_log: list[str] = []
         self.interaction_msg = None
 
+        # Check Abyssus sets logs
+        for p in self.players:
+            if hasattr(p, "abyssus_log"):
+                self.action_log.append(p.abyssus_log)
+
         # Nuevos estados de mecánicas dinámicas y estados
         self.minions: list[dict] = []
         self.minions_summoned = False
@@ -1220,6 +1276,12 @@ class RaidCombatView(discord.ui.View):
 
             # Evasión garantizada / paso fantasma / cota de malla / esquiva pasiva
             if is_boss_attack:
+                if target.set_bonus_caelum_4pc and not target.first_strike_used and not target.guaranteed_dodge_next:
+                    target.first_strike_used = True
+                    if random.random() < 0.20:
+                        logs.append(f"💨 **Efecto Caelum:** ¡{target.user.display_name} esquiva el primer golpe recibido en el combate!")
+                        return
+
                 if target.guaranteed_dodge_next:
                     target.guaranteed_dodge_next = False
                     logs.append(f"👥 **Paso Fantasma:** {target.user.display_name} **ESQUIVÓ** el ataque!")
@@ -1308,6 +1370,14 @@ class RaidCombatView(discord.ui.View):
                     target.last_physical_damage_taken = raw_dmg
                 logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
 
+            # Aurelius 4pc low hp heal check
+            if target.hp > 0 and target.hp < target.max_hp * 0.30 and target.set_bonus_aurelius_4pc and not target.low_hp_heal_used:
+                target.low_hp_heal_used = True
+                heal_amt = int(target.max_hp * 0.15)
+                heal_amt = int(heal_amt * (1.0 + target.healing_bonus_pct))
+                target.hp = min(target.max_hp, target.hp + heal_amt)
+                logs.append(f"☀️ **Set Aurelius:** ¡{target.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP! ({target.hp}/{target.max_hp} HP)")
+
             if target.hp <= 0:
                 # Pasivo: Segundo aliento (sobrevive con 1 HP una vez)
                 if not target.used_second_wind and any(p['id'] == 'second_wind' for p in target.passives):
@@ -1317,6 +1387,10 @@ class RaidCombatView(discord.ui.View):
                     return
                 target.is_dead = True
                 logs.append(f"💀 **{target.user.display_name}** ha caído en combate!")
+                for ally in self.players:
+                    if not ally.is_dead and ally.user.id != target.user.id and ally.set_bonus_thanatos_4pc:
+                        ally.next_hit_lifesteal_bonus = 0.10
+                        logs.append(f"💀 **Efecto Thanatos:** ¡La caída de un aliado otorga a {ally.user.display_name} +10% de robo de vida en su próximo golpe!")
                 if self.affix == "Sangriento":
                     heal = int(self.boss.max_hp * 0.15)
                     self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
@@ -1757,7 +1831,7 @@ class RaidCombatView(discord.ui.View):
                         def_mitig = int(target_def * cfg["def_mitigation_factor"])
                         damage = max(1, raw_dmg - def_mitig)
                         
-                        if hasattr(active_target, 'poison_turns'):
+                        if active_target == self.boss:
                             if self.boss_poison_turns == 0:
                                 self.boss_poison_damage = 10
                             else:
@@ -1783,10 +1857,13 @@ class RaidCombatView(discord.ui.View):
                         damage = max(1, raw_dmg - def_mitig)
                         is_magic = True
                         
+                        burn_duration = cfg["turns"] + 1
+                        if p.set_bonus_ignis_4pc:
+                            burn_duration += 2
                         if hasattr(active_target, 'burn_turns'):
-                            self.boss.burn_turns = cfg["turns"] + 1
+                            self.boss.burn_turns = burn_duration
                         else:
-                            active_target["burn_turns"] = cfg["turns"] + 1
+                            active_target["burn_turns"] = burn_duration
                         logs.append(f"🔥 **Tormenta de Fuego:** {p.user.display_name} usa Tormenta de Fuego y quema a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
                     
                     elif action == "drenaje":
@@ -2175,12 +2252,15 @@ class RaidCombatView(discord.ui.View):
                             if self.affix == "Inestabilidad Mágica":
                                 dmg = int(dmg * 1.4)
                                 
+                            burn_duration = cfg["burn_duration"] + 1
+                            if p.set_bonus_ignis_4pc:
+                                burn_duration += 2
                             if hasattr(enemy, 'hp'):
                                 enemy.hp = max(0, enemy.hp - dmg)
                                 total_damage_dealt_this_turn += dmg
                                 if self.boss_channeling:
                                     self.boss_channeled_damage += dmg
-                                enemy.burn_turns = cfg["burn_duration"] + 1
+                                enemy.burn_turns = burn_duration
                             else:
                                 if isinstance(enemy, dict) and enemy.get("archetype") == "escudo":
                                     dmg = max(1, int(dmg * 0.5))
@@ -2188,7 +2268,7 @@ class RaidCombatView(discord.ui.View):
                                 enemy["hp"] = max(0, enemy["hp"] - dmg)
                                 if enemy["hp"] <= 0:
                                     logs.append(f"💀 **{enemy['name']}** ha sido destruido!")
-                                enemy["burn_turns"] = cfg["burn_duration"] + 1
+                                enemy["burn_turns"] = burn_duration
                             logs.append(f"   → {enemy.name if hasattr(enemy, 'name') else enemy['name']}: **{dmg}** daño + Quemadura.")
                         damage = 0
                         
@@ -2204,12 +2284,15 @@ class RaidCombatView(discord.ui.View):
                         damage = max(1, raw_dmg - def_mitig)
                         is_magic = True
                         
+                        burn_duration = cfg["burn_duration"] + 1
+                        if p.set_bonus_ignis_4pc:
+                            burn_duration += 2
                         if hasattr(active_target, 'burn_turns'):
-                            active_target.burn_turns = cfg["burn_duration"] + 1
-                            active_target.enhanced_burn_turns = cfg["burn_duration"] + 1
+                            active_target.burn_turns = burn_duration
+                            active_target.enhanced_burn_turns = burn_duration
                         else:
-                            active_target["burn_turns"] = cfg["burn_duration"] + 1
-                            active_target["enhanced_burn_turns"] = cfg["burn_duration"] + 1
+                            active_target["burn_turns"] = burn_duration
+                            active_target["enhanced_burn_turns"] = burn_duration
                         logs.append(f"☄️ **Cataclismo de Fuego:** {p.user.display_name} causa **{damage}** daño e inflige Quemadura Reforzada a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
                     
                     elif action == "onda_escarcha":
@@ -2248,14 +2331,17 @@ class RaidCombatView(discord.ui.View):
                         damage = max(1, raw_dmg - def_mitig)
                         is_magic = True
                         
+                        burn_duration = cfg["burn_duration"] + 1
+                        if p.set_bonus_ignis_4pc:
+                            burn_duration += 2
                         if hasattr(active_target, 'burn_turns'):
-                            active_target.burn_turns = cfg["burn_duration"] + 1
+                            active_target.burn_turns = burn_duration
                             if active_target.stun_turns > 0:
                                 active_target.stun_turns += 1
                             else:
                                 active_target.frozen_turns = cfg["freeze_turns"] + 1
                         else:
-                            active_target["burn_turns"] = cfg["burn_duration"] + 1
+                            active_target["burn_turns"] = burn_duration
                             if active_target.get("stun_turns", 0) > 0:
                                 active_target["stun_turns"] += 1
                             else:
@@ -2464,13 +2550,30 @@ class RaidCombatView(discord.ui.View):
                     crit_str = crit_text if 'crit_text' in locals() else ""
                     logs.append(f"   → Daño al jefe: **{damage}** daño{crit_str}.")
 
-                # Pasivo: Vampirismo
-                if p.vampirism_pct > 0:
+                # Pasivo: Vampirismo (e incluye bono de set de Thanatos)
+                total_lifesteal = p.vampirism_pct + getattr(p, "next_hit_lifesteal_bonus", 0.0)
+                if total_lifesteal > 0 and damage > 0:
                     if p.anti_heal_turns == 0:
-                        vamp_heal = max(1, int(damage * p.vampirism_pct))
+                        vamp_heal = max(1, int(damage * total_lifesteal))
                         vamp_heal = int(vamp_heal * (1.0 + p.healing_bonus_pct))
                         p.hp = min(p.max_hp, p.hp + vamp_heal)
-                        logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
+                        if getattr(p, "next_hit_lifesteal_bonus", 0.0) > 0:
+                            logs.append(f"🧛 **Vampirismo (Thanatos):** {p.user.display_name} se cura **{vamp_heal}** HP (incluye +10% de Thanatos).")
+                        else:
+                            logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
+                    p.next_hit_lifesteal_bonus = 0.0
+
+                # Pasivo: Filo Sangrante
+                if action == 'attack' and p.has_bleed_on_hit and not is_magic and damage > 0 and random.random() < 0.15:
+                    active_target = alive_minions[0] if alive_minions else self.boss
+                    if isinstance(active_target, dict):
+                        active_target["bleed_turns"] = 3 + 1
+                        active_target["bleed_source_pct"] = 0.06
+                        logs.append(f"🩸 **Filo Sangrante:** ¡El ataque de {p.user.display_name} corta profundo aplicando Sangrado a {active_target['name']}!")
+                    else:
+                        active_target.bleed_turns = 3 + 1
+                        active_target.bleed_source_pct = 0.06
+                        logs.append(f"🩸 **Filo Sangrante:** ¡El ataque de {p.user.display_name} corta profundo aplicando Sangrado a {active_target.name}!")
 
         # 5. ¿Boss derrotado?
         if self.boss.hp <= 0:
@@ -2580,6 +2683,19 @@ class RaidCombatView(discord.ui.View):
                 await self._finish_raid(interaction, victory=True)
                 return
 
+        # Yggdrasil set bonus: Regeneración de grupo (cada 3 turnos)
+        if self.turn_count % 3 == 0:
+            ygg_healers = [p for p in self._alive_players() if p.set_bonus_yggdrasil_4pc]
+            if ygg_healers:
+                alive_players = self._alive_players()
+                for healer in ygg_healers:
+                    for target_p in alive_players:
+                        if target_p.anti_heal_turns == 0:
+                            heal_amt = max(1, int(target_p.max_hp * 0.03))
+                            heal_amt = int(heal_amt * (1.0 + healer.healing_bonus_pct))
+                            target_p.hp = min(target_p.max_hp, target_p.hp + heal_amt)
+                            logs.append(f"💚 **Regeneración de Yggdrasil:** {target_p.user.display_name} se cura **{heal_amt}** HP gracias al set de {healer.user.display_name}.")
+
         # 8. Limpiar estados de ronda y reducir cooldowns
         for p in self.players:
             p.is_defending = False
@@ -2633,9 +2749,22 @@ class RaidCombatView(discord.ui.View):
                 p.hp = max(0, p.hp - b_dmg)
                 p.bleed_turns -= 1
                 logs.append(f"🩸 **Sangrado:** {p.user.display_name} sufre **{b_dmg}** HP de daño por sangrado.")
+
+                # Aurelius 4pc low hp heal check after bleed
+                if p.hp > 0 and p.hp < p.max_hp * 0.30 and p.set_bonus_aurelius_4pc and not p.low_hp_heal_used:
+                    p.low_hp_heal_used = True
+                    heal_amt = int(p.max_hp * 0.15)
+                    heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                    p.hp = min(p.max_hp, p.hp + heal_amt)
+                    logs.append(f"☀️ **Set Aurelius:** ¡{p.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP! ({p.hp}/{p.max_hp} HP)")
+
                 if p.hp <= 0:
                     p.is_dead = True
                     logs.append(f"💀 **{p.user.display_name}** ha caído por sangrado!")
+                    for ally in self.players:
+                        if not ally.is_dead and ally.user.id != p.user.id and ally.set_bonus_thanatos_4pc:
+                            ally.next_hit_lifesteal_bonus = 0.10
+                            logs.append(f"💀 **Efecto Thanatos:** ¡La caída de un aliado otorga a {ally.user.display_name} +10% de robo de vida en su próximo golpe!")
             if not p.is_dead:
                 p.turns_survived += 1
 
@@ -3306,10 +3435,8 @@ class RaidLootView(discord.ui.View):
         sell_msg = ""
         if old:
             old_sell = calc_sell_price(old['rarity'], old['item_level'])
-            await asyncio.to_thread(add_balance, self.user.id, old_sell)
-            await asyncio.to_thread(registrar_transaccion, self.user.id, old_sell,
-                                    f"Venta equipo (raid): {old['item_name']}")
-            sell_msg = f"\n💰 Vendiste **{old['item_name']}** por **{old_sell:,}** monedas."
+            await asyncio.to_thread(add_combat_currency, self.user.id, old_sell)
+            sell_msg = f"\n💰 Vendiste **{old['item_name']}** por **{format_currency(old_sell)}**."
 
         for item in self.children:
             item.disabled = True
@@ -3336,16 +3463,14 @@ class RaidLootView(discord.ui.View):
 
     async def _sell(self, interaction=None):
         loot = self.loot
-        await asyncio.to_thread(add_balance, self.user.id, loot['sell_price'])
-        await asyncio.to_thread(registrar_transaccion, self.user.id, loot['sell_price'],
-                                f"Venta drop raid: {loot['name']}")
+        await asyncio.to_thread(add_combat_currency, self.user.id, loot['sell_price'])
 
         for item in self.children:
             item.disabled = True
 
         embed = discord.Embed(
             title="💰 Vendido",
-            description=f"Vendiste **{loot['name']}** por **{loot['sell_price']:,}** monedas.",
+            description=f"Vendiste **{loot['name']}** por **{format_currency(loot['sell_price'])}**.",
             color=discord.Color.light_grey()
         )
 
@@ -3501,16 +3626,14 @@ class RaidLootRollView(discord.ui.View):
             sell_price = loot['sell_price']
             share = sell_price // len(self.eligible_players)
             for p in self.eligible_players:
-                await asyncio.to_thread(add_balance, p.user.id, share)
-                await asyncio.to_thread(registrar_transaccion, p.user.id, share,
-                                        f"Venta grupal raid: {loot['name']}")
+                await asyncio.to_thread(add_combat_currency, p.user.id, share)
 
             embed = discord.Embed(
                 title="💰 Nadie reclamó el loot",
                 description=(
                     f"**{loot['rarity_color']} {loot['name']}** se vendió automáticamente por "
-                    f"**{sell_price:,}** monedas.\n"
-                    f"Cada jugador recibió **{share:,}** monedas."
+                    f"**{format_currency(sell_price)}**.\n"
+                    f"Cada jugador recibió **{format_currency(share)}**."
                 ),
                 color=discord.Color.light_grey()
             )
@@ -3652,19 +3775,20 @@ def build_miniboss_config(miniboss_key: str, miniboss_dict: dict) -> dict:
         "emoji": miniboss_dict["emoji"],
         "element": miniboss_dict.get("element", "Neutral"),
         "color": miniboss_dict.get("color", 0x8B4513),
-        "base_hp": miniboss_dict["hp"],
-        "base_atk": miniboss_dict["atk"],
-        "base_def": miniboss_dict["def_stat"],
-        "hp": miniboss_dict["hp"],
-        "atk": miniboss_dict["atk"],
-        "def_stat": miniboss_dict["def_stat"],
-        "ability": miniboss_dict["ability"],
+        "base_hp": miniboss_dict.get("hp", 0),
+        "base_atk": miniboss_dict.get("atk", 0),
+        "base_def": miniboss_dict.get("def_stat", 0),
+        "hp": miniboss_dict.get("hp", 0),
+        "atk": miniboss_dict.get("atk", 0),
+        "def_stat": miniboss_dict.get("def_stat", 0),
+        "ability": miniboss_dict.get("ability", "none"),
         "lore": miniboss_dict["lore"],
         "minion_pool": [],
         "is_miniboss": True,
         "miniboss_key": miniboss_key,
         "guaranteed_loot": miniboss_dict.get("guaranteed_loot", False),
         "invisibility_pattern": miniboss_dict.get("invisibility_pattern", False),
+        "is_shop": miniboss_dict.get("is_shop", False),
     }
 
 
@@ -3715,6 +3839,223 @@ def roll_unique_item(boss_name: str) -> dict | None:
     }
 
 
+class PhantomMerchantSlotSelectView(discord.ui.View):
+    """Vista efímera para seleccionar el slot donde insertar una gema comprada al Mercader Fantasma."""
+
+    def __init__(self, buyer: discord.Member, gem_key: str, gem_name: str, discounted_price: int, equipment: dict):
+        super().__init__(timeout=60)
+        self.buyer = buyer
+        self.gem_key = gem_key
+        self.discounted_price = discounted_price
+        
+        # Opciones para elegir slot
+        options = []
+        for slot in EQUIPMENT_SLOTS:
+            piece = equipment.get(slot)
+            piece_name = piece["item_name"] if piece else "Ninguno"
+            gem_text = ""
+            if piece and piece.get("gem"):
+                gem_text = f" (💎 {piece['gem']['name']})"
+            options.append(
+                discord.SelectOption(
+                    label=f"{SLOT_EMOJIS.get(slot, '🔹')} {slot}",
+                    value=slot,
+                    description=f"Equipo: {piece_name}{gem_text}"
+                )
+            )
+            
+        self.slot_select = discord.ui.Select(
+            placeholder=f"Elegir slot para {gem_name}...",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        self.slot_select.callback = self.slot_callback
+        self.add_item(self.slot_select)
+
+    async def slot_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.buyer.id:
+            await interaction.response.send_message("❌ Esta opción no es para ti.", ephemeral=True)
+            return
+
+        slot = self.slot_select.values[0]
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+
+        success, message = await asyncio.to_thread(
+            insert_gem_discounted, self.buyer.id, slot, self.gem_key, self.discounted_price
+        )
+        if success:
+            embed = discord.Embed(
+                title="✅ Compra Exitosa",
+                description=message,
+                color=discord.Color.green()
+            )
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.followup.send(f"❌ Error: {message}", ephemeral=True)
+
+
+class PhantomMerchantView(discord.ui.View):
+    """Vista de la tienda del Mercader Fantasma en raids."""
+
+    def __init__(self, participants: list[discord.Member], cog):
+        super().__init__(timeout=60)
+        self.participants = participants
+        self.cog = cog
+        self.message: discord.Message | None = None
+        self.offers = self._roll_offers()
+        self._build_interface()
+
+    def _roll_offers(self):
+        gems = get_gem_catalog()
+        consumables = get_consumable_catalog()
+        pool = [{"kind": "gem", **g} for g in gems] + [{"kind": "consumable", **c} for c in consumables]
+        
+        # Roll 4 distinct offers
+        chosen = random.sample(pool, min(4, len(pool)))
+        discount = random.uniform(0.20, 0.30)
+        
+        for offer in chosen:
+            price = offer.get("price") or offer.get("Price") or 0
+            offer["original_price"] = price
+            offer["discounted_price"] = int(price * (1 - discount))
+            
+        return chosen
+
+    def _build_interface(self):
+        options = []
+        for idx, offer in enumerate(self.offers):
+            kind = offer["kind"]
+            name = offer["name"]
+            orig_price = offer["original_price"]
+            disc_price = offer["discounted_price"]
+            
+            orig_price_str = f"~~{orig_price}~~"
+            disc_price_str = f"{disc_price} Bronce"
+            
+            if kind == "gem":
+                val_str = f"+{int(offer['bonus_value'])}" if not offer["is_percentage"] else f"+{int(offer['bonus_value'] * 100)}%"
+                desc = f"💎 Gema · {offer['stat_target'].upper()} {val_str} · {orig_price_str} -> {disc_price_str}"
+            else:
+                desc = f"🧪 Consumible · {offer['description'][:45]}... · {orig_price_str} -> {disc_price_str}"
+
+            options.append(
+                discord.SelectOption(
+                    label=name,
+                    value=str(idx),
+                    description=desc
+                )
+            )
+
+        self.shop_select = discord.ui.Select(
+            placeholder="🛒 Selecciona un trato de la tienda...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+        self.shop_select.callback = self.shop_callback
+        self.add_item(self.shop_select)
+
+    def _build_embed(self):
+        embed = discord.Embed(
+            title="🛒 El Mercader Fantasma ha Aparecido",
+            description=(
+                "*Una figura encapuchada que aparece entre la niebla, ofreciendo tratos... por un precio.*\n\n"
+                "**Ofertas del Día (20-30% de Descuento):**\n"
+            ),
+            color=0x4B0082  # Dark indigo / spectral color
+        )
+        
+        for offer in self.offers:
+            kind = offer["kind"]
+            name = offer["name"]
+            orig_price = offer["original_price"]
+            disc_price = offer["discounted_price"]
+            
+            orig_price_formatted = format_currency(orig_price)
+            disc_price_formatted = format_currency(disc_price)
+            
+            if kind == "gem":
+                val_str = f"+{int(offer['bonus_value'])}" if not offer["is_percentage"] else f"+{int(offer['bonus_value'] * 100)}%"
+                details = f"Efecto: **+{offer['stat_target'].upper()} {val_str}**"
+            else:
+                details = f"Efecto: *{offer['description']}*"
+
+            embed.add_field(
+                name=f"✨ {name}",
+                value=f"{details}\nPrecio: ~~{orig_price_formatted}~~ **{disc_price_formatted}**",
+                inline=False
+            )
+            
+        embed.set_footer(text=f"Tienda disponible por 60 segundos · Solo participantes de la raid pueden comprar.")
+        return embed
+
+    async def shop_callback(self, interaction: discord.Interaction):
+        # Validate participant
+        buyer_ids = [p.id for p in self.participants]
+        if interaction.user.id not in buyer_ids:
+            await interaction.response.send_message("❌ No formas parte de este grupo. No puedes comprar aquí.", ephemeral=True)
+            return
+
+        idx = int(self.shop_select.values[0])
+        offer = self.offers[idx]
+        kind = offer["kind"]
+        disc_price = offer["discounted_price"]
+        item_name = offer["name"]
+        
+        if kind == "consumable":
+            # Direct purchase
+            await interaction.response.defer(ephemeral=True)
+            success, message = await asyncio.to_thread(
+                buy_consumable_discounted, interaction.user.id, offer["consumable_key"], disc_price
+            )
+            if success:
+                embed = discord.Embed(
+                    title="✅ Compra Exitosa",
+                    description=message,
+                    color=discord.Color.green()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error: {message}", ephemeral=True)
+        else:
+            # Gem: requires slot selection
+            await interaction.response.defer(ephemeral=True)
+            equipment = await asyncio.to_thread(get_user_equipment, interaction.user.id)
+            view = PhantomMerchantSlotSelectView(
+                buyer=interaction.user,
+                gem_key=offer["gem_key"],
+                gem_name=item_name,
+                discounted_price=disc_price,
+                equipment=equipment
+            )
+            embed = discord.Embed(
+                title="💎 Ranura de Inserción",
+                description=f"Selecciona en qué pieza de tu equipo deseas insertar **{item_name}** por **{format_currency(disc_price)}**:",
+                color=discord.Color.blue()
+            )
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        
+        # Clean up all participants from active_raids
+        for p in self.participants:
+            self.cog.active_raids.discard(p.id)
+
+        if self.message:
+            try:
+                embed = self.message.embeds[0]
+                embed.description = "⏰ *La tienda del Mercader Fantasma ha desaparecido en la niebla...*\n\n" + embed.description
+                embed.color = discord.Color.dark_gray()
+                await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
+
+
 # ══════════════════════════════════════════════
 # COG: RAIDS
 # ══════════════════════════════════════════════
@@ -3757,6 +4098,15 @@ class RaidsCog(commands.Cog):
 
         # Marcar como activo
         self.active_raids.add(user_id)
+
+        if boss_config.get("is_shop"):
+            merchant_view = PhantomMerchantView([user], self)
+            embed = merchant_view._build_embed()
+            await interaction.response.send_message(embed=embed, view=merchant_view)
+            msg = await interaction.original_response()
+            merchant_view.message = msg
+            await merchant_view.wait()
+            return
 
         # Crear lobby
         lobby = RaidLobbyView(user, boss_config, self)

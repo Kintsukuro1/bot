@@ -420,4 +420,9 @@ MINIBOSSES = {
         "invisibility_pattern": True,  # Invisible cada 2do turno (tangible en turnos impares, intangible en pares)
         "guaranteed_loot": False,
     },
+    "mercader_fantasma": {
+        "name": "Mercader Fantasma", "emoji": "🛒",
+        "lore": "Una figura encapuchada que aparece entre la niebla, ofreciendo tratos... por un precio.",
+        "is_shop": True,  # Distingue este evento de los de combate (cofre_mimetico, espiritu_errante)
+    },
 }
