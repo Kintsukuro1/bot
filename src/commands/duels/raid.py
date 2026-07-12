@@ -485,32 +485,32 @@ class PersonalSkillSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_callback(self, interaction: discord.Interaction):
-        # Deshabilitar para evitar dobles clics
+        # Deshabilitar el select para evitar dobles clics, pero NO respondemos todavía —
+        # esperamos a saber el resultado final para editar una sola vez.
         for child in self.children:
             if isinstance(child, discord.ui.Select):
                 child.disabled = True
-        await interaction.response.edit_message(view=self)
 
-        # 1. Comprobar condiciones de nuevo (defensa en profundidad)
+        # 1. Comprobar condiciones (defensa en profundidad)
         if self.raid_view.game_over:
-            await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ La raid ya terminó.", view=self)
             return
 
         user_id = self.player.user.id
         if user_id in self.raid_view.actions:
-            await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Ya elegiste tu acción.", view=self)
             return
 
         selected_value = interaction.data["values"][0]
         if selected_value == "none":
-            await interaction.followup.send("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ No tienes habilidades especiales disponibles.", view=self)
             return
 
         # 2. Validar cooldown, clase, nivel y subclase
         from src.utils.combat_config import SKILLS_CONFIG
         req = SKILLS_CONFIG.get(selected_value)
         if not req:
-            await interaction.followup.send("❌ Habilidad desconocida.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Habilidad desconocida.", view=self)
             return
 
         if req.get("min_level") == 10:
@@ -521,32 +521,30 @@ class PersonalSkillSelectView(discord.ui.View):
             cd = self.player.special_cooldown
 
         if cd > 0:
-            await interaction.followup.send(
-                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
-                ephemeral=True
+            await interaction.response.edit_message(
+                content=f"❌ Habilidad en enfriamiento ({cd} turnos restantes).", view=self
             )
             return
 
         if req["class"] is not None:
             if self.player.level < req["min_level"] or self.player.combat_class != req["class"]:
-                await interaction.followup.send(
-                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    view=self
                 )
                 return
 
         if req.get("subclass") is not None:
             if self.player.combat_subclass != req["subclass"]:
-                await interaction.followup.send(
-                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.", view=self
                 )
                 return
 
-        # 3. Registrar la acción
-        # Mostramos mensaje efímero de confirmación al jugador
-        await interaction.followup.send(f"✅ Habilidad especial registrada: **{req['name']}**", ephemeral=True)
-        # Llamar a _register_action de la vista de la raid pasándole is_ephemeral=True
+        # 3. Todo válido — editar el mismo mensaje con la confirmación final
+        await interaction.response.edit_message(content=f"✅ Habilidad especial registrada: **{req['name']}**", view=self)
+
+        # 4. Registrar la acción
         await self.raid_view._register_action(interaction, selected_value, is_ephemeral=True)
 
 

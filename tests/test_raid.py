@@ -835,7 +835,6 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         await personal_view.select_callback(mock_interaction)
         
         mock_interaction.response.edit_message.assert_called_once()
-        mock_interaction.followup.send.assert_called_once()
         # Verify it calls _register_action with is_ephemeral=True
         mock_register.assert_called_once_with(mock_interaction, "quemadura", is_ephemeral=True)
 

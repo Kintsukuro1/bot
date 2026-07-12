@@ -257,18 +257,19 @@ class PersonalDuelSkillSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_callback(self, interaction: discord.Interaction):
+        # Deshabilitar el select para evitar dobles clics, pero NO respondemos todavía —
+        # esperamos a saber el resultado final para editar una sola vez.
         for child in self.children:
             if isinstance(child, discord.ui.Select):
                 child.disabled = True
-        await interaction.response.edit_message(view=self)
 
         if self.duel_view.game_over:
-            await interaction.followup.send("❌ El duelo ya terminó.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ El duelo ya terminó.", view=self)
             return
 
         current_action = self.duel_view.p1_action if self.player == self.duel_view.p1 else self.duel_view.p2_action
         if current_action is not None:
-            await interaction.followup.send("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Ya has elegido tu acción para esta ronda.", view=self)
             return
 
         selected_value = interaction.data["values"][0]
@@ -277,7 +278,7 @@ class PersonalDuelSkillSelectView(discord.ui.View):
         from src.utils.combat_config import SKILLS_CONFIG
         req = SKILLS_CONFIG.get(selected_value)
         if not req:
-            await interaction.followup.send("❌ Habilidad desconocida.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Habilidad desconocida.", view=self)
             return
 
         if req.get("min_level") == 10:
@@ -288,32 +289,30 @@ class PersonalDuelSkillSelectView(discord.ui.View):
             cd = self.player.special_cooldown
 
         if cd > 0:
-            await interaction.followup.send(
-                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
-                ephemeral=True
+            await interaction.response.edit_message(
+                content=f"❌ Habilidad en enfriamiento ({cd} turnos restantes).", view=self
             )
             return
 
         if req["class"] is not None:
             if self.player.level < req["min_level"] or self.player.combat_class != req["class"]:
-                await interaction.followup.send(
-                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    view=self
                 )
                 return
         else:
             if self.player.level >= 5 and self.player.combat_class is not None:
-                await interaction.followup.send(
-                    "❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content="❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
+                    view=self
                 )
                 return
 
         if req.get("subclass") is not None:
             if self.player.combat_subclass != req["subclass"]:
-                await interaction.followup.send(
-                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.", view=self
                 )
                 return
 
@@ -327,7 +326,8 @@ class PersonalDuelSkillSelectView(discord.ui.View):
             self.duel_view.p2_special_id = selected_value
             self.duel_view.p2.consecutive_timeouts = 0
 
-        await interaction.followup.send(f"✅ Habilidad especial registrada: **{req['name']}**", ephemeral=True)
+        # Todo válido — editar el mismo mensaje con la confirmación final
+        await interaction.response.edit_message(content=f"✅ Habilidad especial registrada: **{req['name']}**", view=self)
         await self.duel_view._check_and_resolve(interaction, is_ephemeral=True)
 
 

@@ -286,7 +286,6 @@ class TestDueloMuerteSubita(unittest.IsolatedAsyncioTestCase):
         await personal_view.select_callback(mock_interaction)
         
         mock_interaction.response.edit_message.assert_called_once()
-        mock_interaction.followup.send.assert_called_once()
         self.assertEqual(self.view.p1_action, "special")
         self.assertEqual(self.view.p1_special_id, "quemadura")
         mock_check_resolve.assert_called_once_with(mock_interaction, is_ephemeral=True)
