@@ -2495,6 +2495,59 @@ class DuelsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    # ──────────────────── /estados ────────────────────
+
+    @app_commands.command(name="estados", description="Muestra qué hace cada buff, debuff y estado de combate")
+    async def estados_cmd(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="📖 Glosario de Estados de Combate",
+            description="Todos los buffs, debuffs y efectos que puedes encontrar en duelos y raids.",
+            color=discord.Color.dark_gold()
+        )
+
+        embed.add_field(
+            name="🔥 Daño sobre tiempo (DOT)",
+            value=(
+                "☠️ **Veneno** — 10 HP/turno, hasta 3 capas (máx. 30/turno), 3 turnos.\n"
+                "🔥 **Quemadura** — 5-8% HP máx/turno, no stackea, 3-5 turnos.\n"
+                "🩸 **Sangrado** — 6% del último golpe físico recibido/turno, 3 turnos."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🧊 Control",
+            value=(
+                "😵 **Aturdimiento** — pierde el turno. 1 turno.\n"
+                "❄️ **Congelación** — +1 turno al cooldown de tu próxima especial. 1 turno.\n"
+                "🔇 **Silencio** — no puedes usar especiales. 2 turnos.\n"
+                "🌀 **Ceguera** — 65% de fallar tus ataques. 3 turnos."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="📉 Debuffs de stat",
+            value=(
+                "🛡️💥 **Fragilidad** — -20% DEF. 3 turnos.\n"
+                "💢 **Debilidad** — -20% ATK. 3 turnos.\n"
+                "🎯 **Vulnerabilidad** — +30% daño recibido (tope combinado +75%). 1-3 turnos.\n"
+                "🚫 **Anti-cura** — bloquea toda curación. 2 turnos."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="✨ Buffs",
+            value=(
+                "⚔️ **Frenesí** — +35% ATK / +15% daño recibido. 2 turnos.\n"
+                "🛡️ **Escudo** — absorbe daño (valor según la fuente).\n"
+                "💚 **Regeneración (HoT)** — cura % HP máx/turno (valor según la fuente).\n"
+                "🔥 **Furia Creciente** — +10% daño con HP < 30% (pasivo, no expira)."
+            ),
+            inline=False
+        )
+
+        embed.set_footer(text="Usa /perfil_combate para ver tu clase, subclase y nivel actual.")
+        await interaction.response.send_message(embed=embed)
+
     # ──────────────────── /duelo_inventario ────────────────────
 
     @app_commands.command(name="duelo_inventario", description="Muestra tu equipo de combate actual")

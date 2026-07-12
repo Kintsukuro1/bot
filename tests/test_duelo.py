@@ -292,5 +292,22 @@ class TestDueloMuerteSubita(unittest.IsolatedAsyncioTestCase):
         mock_check_resolve.assert_called_once_with(mock_interaction, is_ephemeral=True)
 
 
+    async def test_estados_cmd(self):
+        from src.commands.duels.duelo import DuelsCog
+        
+        cog = DuelsCog(MagicMock())
+        mock_interaction = MagicMock()
+        mock_interaction.response.send_message = AsyncMock()
+        
+        await cog.estados_cmd.callback(cog, mock_interaction)
+        
+        mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = mock_interaction.response.send_message.call_args
+        sent_embed = kwargs.get("embed")
+        self.assertIsNotNone(sent_embed)
+        self.assertEqual(sent_embed.title, "📖 Glosario de Estados de Combate")
+        self.assertTrue(len(sent_embed.fields) == 4)
+
+
 if __name__ == '__main__':
     unittest.main()
