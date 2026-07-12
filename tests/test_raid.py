@@ -1,7 +1,7 @@
 import unittest
 import sys
 import os
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 # Asegurar que el directorio raíz está en el path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -250,6 +250,59 @@ class TestRaidImprovements(unittest.TestCase):
         self.assertLess(stats_high["hp"], 2500) # Debería ser mucho menor que el lineal antiguo (5080)
         self.assertGreater(stats_high["hp"], 1000)
 
+    def test_subclass_equipment_conversion_guardian_sagrado(self):
+        from src.commands.duels.raid import RaidCombatant
+        mock_user = MagicMock()
+        mock_user.id = 777
+        mock_user.display_name = "GuardianSagradoPlayer"
+        
+        equipment = {
+            "Escudo": {
+                "primary_stat": "def",
+                "primary_value": 20,
+                "secondaries": [],
+                "passive": None
+            }
+        }
+        combatant = RaidCombatant(mock_user, 10, equipment, combat_class="Paladín", combat_subclass="Guardián Sagrado")
+        self.assertEqual(combatant.combat_subclass, "Guardián Sagrado")
+        self.assertGreater(combatant.shield, 0)
+
+    def test_get_combatant_available_skills(self):
+        from src.commands.duels.raid import RaidCombatant, get_combatant_available_skills
+        mock_user = MagicMock()
+        mock_user.id = 888
+        
+        c = RaidCombatant(mock_user, 15, {}, combat_class="Guerrero", combat_subclass="Centinela")
+        skills = get_combatant_available_skills(c)
+        skill_ids = [s[0] for s in skills]
+        self.assertIn("golpe_escudo", skill_ids)
+        self.assertIn("muralla_inquebrantable", skill_ids)
+
+    def test_boss_debuffs_exist(self):
+        from src.commands.duels.raid import RaidBoss
+        boss_config = RAID_BOSSES[0]
+        boss = RaidBoss(boss_config, total_level=10)
+        self.assertEqual(boss.stun_turns, 0)
+        self.assertEqual(boss.weakness_turns, 0)
+        self.assertEqual(boss.burn_turns, 0)
+        self.assertEqual(boss.blinded_turns, 0)
+
+    def test_apply_softcap_formulas(self):
+        from src.utils.combat_progression import apply_softcap
+        
+        # Test case 1: raw <= cap
+        self.assertEqual(apply_softcap(8, 10), 8)
+        self.assertEqual(apply_softcap(10, 10), 10)
+        
+        # Test case 2: cap < raw <= cap * 2
+        # cap=10, raw=20: 10 + 10 * 0.5 = 15
+        self.assertAlmostEqual(apply_softcap(20, 10), 15.0)
+        
+        # Test case 3: raw > cap * 2
+        # cap=10, raw=35: 10 + 10 * 0.5 + 15 * 0.2 = 18
+        self.assertAlmostEqual(apply_softcap(35, 10), 18.0)
+
     def test_raid_combatant_passives(self):
         from src.commands.duels.raid import RaidCombatant
         mock_user = MagicMock()
@@ -283,6 +336,344 @@ class TestRaidImprovements(unittest.TestCase):
         self.assertTrue(hasattr(rc, "RAID_XP_BASE_DEFEAT"))
         self.assertTrue(hasattr(rc, "RAID_XP_PER_TURN"))
         self.assertTrue(hasattr(rc, "RAID_XP_ALIVE_BONUS"))
+
+
+class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
+    """Tests para la resolución de ronda con habilidades especiales."""
+
+    async def test_muralla_inquebrantable_applies_mitigation(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        from src.utils.raid_config import RAID_BOSSES
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        mock_user.display_name = "GuerreroCentinela"
+        
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Guerrero", combat_subclass="Centinela")
+        boss_config = RAID_BOSSES[0]
+        boss = RaidBoss(boss_config, total_level=15)
+        boss.stun_turns = 1
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.actions = {p.user.id: "muralla_inquebrantable"}
+        
+        view.interaction_msg = AsyncMock()
+        view._finish_raid = AsyncMock()
+        
+        mock_interaction = MagicMock()
+        mock_interaction.message = AsyncMock()
+        mock_interaction.message.edit = AsyncMock()
+        
+        await view._resolve_round(mock_interaction)
+        
+        self.assertEqual(p.damage_reduction_turns, 3)
+        self.assertEqual(p.damage_reduction_pct, 0.50)
+
+    async def test_sed_sangre_applies_buff(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        from src.utils.raid_config import RAID_BOSSES
+        
+        mock_user = MagicMock()
+        mock_user.id = 222
+        mock_user.display_name = "GuerreroBerserker"
+        
+        p = RaidCombatant(mock_user, 15, {}, combat_class="Guerrero", combat_subclass="Berserker")
+        p.hp = 100
+        boss_config = RAID_BOSSES[0]
+        boss = RaidBoss(boss_config, total_level=15)
+        boss.stun_turns = 1
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.actions = {p.user.id: "sed_sangre"}
+        
+        view.interaction_msg = AsyncMock()
+        view._finish_raid = AsyncMock()
+        
+        mock_interaction = MagicMock()
+        mock_interaction.message = AsyncMock()
+        mock_interaction.message.edit = AsyncMock()
+        
+        await view._resolve_round(mock_interaction)
+        
+        self.assertEqual(p.hp, 75)
+        self.assertEqual(p.atk_buff_turns, 3)
+        self.assertEqual(p.atk_buff_pct, 0.60)
+
+
+    def test_combat_state_taxonomy_rules(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss
+        mock_user = MagicMock()
+        p = RaidCombatant(mock_user, 10, {})
+        
+        # Stacking poison rules
+        # Initial veneno application (p.poison_turns is 0)
+        self.assertEqual(p.poison_damage, 0)
+        p.poison_damage = 10
+        p.poison_turns = 3
+        # Reaplication: should stack +10 to poison_damage
+        p.poison_damage = min(30, p.poison_damage + 10)
+        self.assertEqual(p.poison_damage, 20)
+        p.poison_damage = min(30, p.poison_damage + 10)
+        self.assertEqual(p.poison_damage, 30)
+        # Cap at 30
+        p.poison_damage = min(30, p.poison_damage + 10)
+        self.assertEqual(p.poison_damage, 30)
+        
+        # Bleed calculations
+        p.last_physical_damage_taken = 100
+        p.bleed_source_pct = 0.06
+        bleed_dmg = max(1, int(p.last_physical_damage_taken * p.bleed_source_pct))
+        self.assertEqual(bleed_dmg, 6)
+        
+        # Silence checks
+        p.silence_turns = 2
+        self.assertTrue(p.silence_turns > 0)
+
+
+    @patch('random.uniform', return_value=1.0)
+    async def test_apply_damage_to_player_integration(self, mock_uniform):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        from src.utils.raid_config import RAID_BOSSES
+        
+        mock_user = MagicMock()
+        mock_user.id = 888
+        mock_user.display_name = "VulnHero"
+        p = RaidCombatant(mock_user, 10, {})
+        p.hp = 200
+        p.max_hp = 200
+        p.vulnerability_turns = 2
+        p.vulnerability_pct = 0.30
+        
+        boss_config = RAID_BOSSES[0]
+        boss = RaidBoss(boss_config, total_level=10)
+        boss.atk = 100  # Set boss ATK to 100
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.turn_count = 0  # Round 1 (not special)
+        view.actions = {p.user.id: "attack"}
+        view.interaction_msg = AsyncMock()
+        view._finish_raid = AsyncMock()
+        
+        mock_interaction = MagicMock()
+        mock_interaction.message = AsyncMock()
+        mock_interaction.message.edit = AsyncMock()
+        
+        await view._resolve_round(mock_interaction)
+        
+        # Expected damage = 100 * 1.3 = 130
+        # HP after = 200 - 130 = 70
+        self.assertEqual(p.hp, 70)
+
+
+    def test_calc_power_level_no_subclass(self):
+        from src.utils.combat_progression import calc_power_level
+        # level = 10, no equipment
+        power = calc_power_level(10, {})
+        self.assertEqual(power, 10.0)
+
+        # with equipment
+        equip = {
+            "arma": {
+                "primary_stat": "atk",
+                "primary_value": 22,
+                "secondaries": [],
+            }
+        }
+        # atk raw = 22, base Mago atk = 40, cap = 40 * 0.4 = 16
+        # tramo2 = 22 - 16 = 6 -> 16 + 6 * 0.5 = 19 effective atk.
+        # bonus_levels = 19 / 11 = 1.72727272
+        # expected power = 10 + 1.72727272 = 11.72727272
+        power = calc_power_level(10, equip)
+        self.assertAlmostEqual(power, 11.72727272, places=4)
+
+    def test_calc_boss_stats_difficulties(self):
+        from src.utils.raid_config import calc_boss_stats
+        boss_config = {
+            "name": "Dummy Boss",
+            "base_hp": 100,
+            "base_atk": 10,
+            "base_def": 5,
+        }
+        
+        # Test floor threshold (power = 5 < 10 -> scale_factor = 0 -> base stats)
+        stats_floor = calc_boss_stats(boss_config, total_power=5.0, difficulty="normal")
+        self.assertEqual(stats_floor["hp"], 100)
+        self.assertEqual(stats_floor["atk"], 10)
+        self.assertEqual(stats_floor["def_stat"], 5)
+        
+        # Test normal scaling (power = 18 -> scale_factor = 16 -> sqrt = 4)
+        # Normal HP: base_hp * (1 + 0.45 * sqrt) = 100 * (1 + 0.45 * 4) = 280
+        stats_normal = calc_boss_stats(boss_config, total_power=18.0, difficulty="normal")
+        self.assertEqual(stats_normal["hp"], 280)
+        
+        # Test difficult scaling (power = 18 -> scale_factor = 16 -> sqrt = 4)
+        # HP: 100 * (1 + 0.65 * 4) = 360
+        stats_hard = calc_boss_stats(boss_config, total_power=18.0, difficulty="dificil")
+        self.assertEqual(stats_hard["hp"], 360)
+        
+        # Test mythic scaling (power = 18 -> scale_factor = 16 -> sqrt = 4)
+        # HP: 100 * (1 + 0.90 * 4) = 460
+        stats_mythic = calc_boss_stats(boss_config, total_power=18.0, difficulty="mitica")
+        self.assertEqual(stats_mythic["hp"], 460)
+
+    @patch('src.commands.duels.raid.db_cursor')
+    def test_count_mythic_raids_today(self, mock_db_cursor):
+        from src.commands.duels.raid import count_mythic_raids_today
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (2,)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        attempts = count_mythic_raids_today(111)
+        self.assertEqual(attempts, 2)
+        mock_cursor.execute.assert_called_once()
+
+    def test_build_minions_from_pool(self):
+        from src.commands.duels.raid import build_minions_from_pool
+        # Test normal boss (Yggdrasil: curandero, debilitador)
+        boss_0 = {"minion_pool": ["curandero", "debilitador"]}
+        minions = build_minions_from_pool(boss_0)
+        self.assertEqual(len(minions), 2)
+        self.assertEqual(minions[0]["archetype"], "curandero")
+        self.assertEqual(minions[1]["archetype"], "debilitador")
+
+        # Test Abyssus (minion_pool is None)
+        boss_abyssus = {"minion_pool": None}
+        minions_ab = build_minions_from_pool(boss_abyssus)
+        self.assertEqual(len(minions_ab), 2)
+
+    def test_raid_boss_is_miniboss_no_scaling(self):
+        from src.commands.duels.raid import RaidBoss
+        boss_config = {
+            "name": "Cofre Mimético",
+            "emoji": "🎁",
+            "element": "Físico",
+            "color": 0x8B4513,
+            "hp": 150,
+            "atk": 15,
+            "def_stat": 8,
+            "ability": "none",
+            "lore": "Un cofre con dientes",
+        }
+        boss = RaidBoss(boss_config, total_power=50.0, difficulty="mitica", is_miniboss=True)
+        self.assertEqual(boss.max_hp, 150)
+        self.assertEqual(boss.hp, 150)
+        self.assertEqual(boss.atk, 15)
+        self.assertEqual(boss.def_stat, 8)
+
+    def test_espiritu_errante_invisibility(self):
+        from src.commands.duels.raid import RaidBoss
+        boss_config = {
+            "name": "Espíritu Errante",
+            "emoji": "👻",
+            "element": "Espectral",
+            "color": 0xE0FFFF,
+            "hp": 200,
+            "atk": 20,
+            "def_stat": 10,
+            "ability": "none",
+            "lore": "Presencia parpadeante",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        # Verify property hp works normally first
+        boss.hp = 180
+        self.assertEqual(boss.hp, 180)
+
+        # Enable intangibility
+        boss.is_intangible = True
+        # Try to decrease HP: should be blocked
+        boss.hp = 150
+        self.assertEqual(boss.hp, 180)
+
+        # Try to increase HP (healing): should still be allowed
+        boss.hp = 190
+        self.assertEqual(boss.hp, 190)
+
+    @patch('random.uniform', return_value=1.0)
+    async def test_shield_minion_damage_mitigation(self, mock_uniform):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 777
+        mock_user.display_name = "Player"
+        p = RaidCombatant(mock_user, 10, {})
+        p.hp = 100
+        p.max_hp = 100
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.minions = [
+            {
+                "name": "Guardián de Escudo", "archetype": "escudo", "hp": 30, "max_hp": 30,
+                "def_stat": 15, "stun_turns": 0, "weakness_turns": 0, "weakness_pct": 0.0,
+                "fragility_turns": 0, "fragility_pct": 0.0, "vulnerability_turns": 0, "vulnerability_pct": 0.0,
+                "burn_turns": 0, "poison_turns": 0, "poison_damage": 0,
+                "frozen_turns": 0, "silence_turns": 0, "bleed_turns": 0, "bleed_source_pct": 0.06,
+                "last_physical_damage_taken": 0
+            }
+        ]
+        view.actions = {p.user.id: "attack"}
+        view.interaction_msg = AsyncMock()
+        view._finish_raid = AsyncMock()
+        
+        mock_interaction = MagicMock()
+        mock_interaction.message = AsyncMock()
+        mock_interaction.message.edit = AsyncMock()
+        
+        # Player base_dmg = effective_atk * random.uniform(0.85, 1.15)
+        # Mago base_atk at level 10 = 40. base_dmg = 40 * 1.0 = 40
+        # target_def = 15. def_mitig = target_def * 0.35 = 5.25 -> 5
+        # damage before shield = 40 - 5 = 35
+        # Shield mitigates 50% -> 35 * 0.5 = 17.5 -> 17
+        await view._resolve_round(mock_interaction)
+        
+        self.assertEqual(view.minions[0]["hp"], 13) # 30 - 17 = 13
+
+    @patch('src.commands.duels.raid.generate_raid_loot')
+    @patch('src.commands.duels.raid.get_user_equipment')
+    async def test_mimic_chest_guaranteed_loot(self, mock_get_equip, mock_gen_loot):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 666
+        mock_user.display_name = "Winner"
+        mock_user.dm_channel = AsyncMock()
+        p = RaidCombatant(mock_user, 10, {})
+        
+        boss_config = {
+            "name": "Cofre Mimético", "emoji": "🎁", "element": "Neutral", "color": 0x000,
+            "hp": 150, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+            "miniboss_key": "cofre_mimetico", "is_miniboss": True
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.channel = AsyncMock()
+        
+        mock_gen_loot.return_value = {
+            "name": "Espada de Madera", "slot": "arma", "rarity": "Común", "rarity_color": "Común", "rarity_hex": 0x7f8c8d, "item_level": 10,
+            "primary_stat": "atk", "primary_value": 5, "secondaries": [],
+            "stats_summary": {"atk": 5}, "sell_price": 50
+        }
+        mock_get_equip.return_value = {}
+        
+        mock_interaction = MagicMock()
+        mock_interaction.message = AsyncMock()
+        mock_interaction.message.channel = AsyncMock()
+        
+        await view._finish_raid(mock_interaction, victory=True)
+        
+        mock_gen_loot.assert_called_once_with(10, 0.10) # Level 10, MINIBOSS_LOOT_RARITY_BONUS = 0.10
 
 
 if __name__ == '__main__':

@@ -72,5 +72,434 @@ SKILLS_CONFIG = {
         "cooldown": 3,
         "drain_pct": 0.15,        # Roba el 15% del HP actual del oponente
         "desc": "Clérigo: Roba 15% HP actual y disipa debuffs propios."
-    }
+    },
+
+    # ══════════════════════════════════════════════
+    # HABILIDADES DE SUBCLASE — Nv.10
+    # ══════════════════════════════════════════════
+
+    # ⚔️ Guerrero
+    "golpe_escudo": {
+        "id": "golpe_escudo",
+        "name": "Golpe de Escudo",
+        "emoji": "🛡️",
+        "class": "Guerrero",
+        "subclass": "Centinela",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 0.8,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.35,
+        "stun_turns": 1,
+        "desc": "Centinela: Daño moderado + aturde 1 turno."
+    },
+    "golpe_desesperado": {
+        "id": "golpe_desesperado",
+        "name": "Golpe Desesperado",
+        "emoji": "💢",
+        "class": "Guerrero",
+        "subclass": "Berserker",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_stat": "atk",
+        "base_damage_mult": 1.0,
+        "def_mitigation_factor": 0.30,
+        "hp_scaling": True,
+        "desc": "Berserker: Daño escala inversamente a tu % HP. Menos vida = más daño."
+    },
+    "estocada_precisa": {
+        "id": "estocada_precisa",
+        "name": "Estocada Precisa",
+        "emoji": "🎯",
+        "class": "Guerrero",
+        "subclass": "Duelista",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 1.2,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.30,
+        "guaranteed_crit": True,
+        "ignores_evasion_pct": 0.50,
+        "desc": "Duelista: Crítico garantizado + ignora 50% de evasión."
+    },
+
+    # ✝️ Paladín
+    "escudo_compartido": {
+        "id": "escudo_compartido",
+        "name": "Escudo Compartido",
+        "emoji": "🛡️",
+        "class": "Paladín",
+        "subclass": "Guardián Sagrado",
+        "min_level": 10,
+        "cooldown": 3,
+        "shield_pct_of_max_hp": 0.20,
+        "desc": "Guardián Sagrado: Escudo (20% HP max) al aliado con menor HP o a sí mismo."
+    },
+    "castigo_divino": {
+        "id": "castigo_divino",
+        "name": "Castigo Divino",
+        "emoji": "⚡",
+        "class": "Paladín",
+        "subclass": "Vengador",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_stat": "atk",
+        "base_damage_mult": 0.5,
+        "def_mitigation_factor": 0.30,
+        "scales_with_damage_taken": True,
+        "scaling_factor": 0.10,
+        "desc": "Vengador: Daño base + 10% del daño total recibido en el combate."
+    },
+    "estandarte_guerra": {
+        "id": "estandarte_guerra",
+        "name": "Estandarte de Guerra",
+        "emoji": "🚩",
+        "class": "Paladín",
+        "subclass": "Cruzado",
+        "min_level": 10,
+        "cooldown": 3,
+        "atk_buff_pct": 0.20,
+        "duration": 3,
+        "desc": "Cruzado: +20% ATK al equipo (raid) o a sí mismo (duelo) por 3 turnos."
+    },
+
+    # 🥷 Pícaro
+    "golpe_sombras": {
+        "id": "golpe_sombras",
+        "name": "Golpe en las Sombras",
+        "emoji": "🗡️",
+        "class": "Pícaro",
+        "subclass": "Asesino",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 1.0,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.30,
+        "double_if_poisoned": True,
+        "desc": "Asesino: Golpe doble si el objetivo ya está envenenado."
+    },
+    "paso_fantasma": {
+        "id": "paso_fantasma",
+        "name": "Paso Fantasma",
+        "emoji": "👻",
+        "class": "Pícaro",
+        "subclass": "Sombra",
+        "min_level": 10,
+        "cooldown": 3,
+        "guaranteed_dodge_next": True,
+        "desc": "Sombra: Esquiva garantizada del próximo ataque."
+    },
+    "trampa_aconito": {
+        "id": "trampa_aconito",
+        "name": "Trampa de Acónito",
+        "emoji": "🕸️",
+        "class": "Pícaro",
+        "subclass": "Trampero",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 0.6,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.35,
+        "debuff_type": "weakness",
+        "debuff_value": 0.20,
+        "debuff_duration": 3,
+        "desc": "Trampero: Daño leve + Debilidad (-20% ATK rival) 3 turnos."
+    },
+
+    # 🔮 Mago
+    "llamarada": {
+        "id": "llamarada",
+        "name": "Llamarada",
+        "emoji": "🔥",
+        "class": "Mago",
+        "subclass": "Piromante",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 1.8,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.20,
+        "burn_duration": 4,
+        "desc": "Piromante: Quemadura reforzada de 4 turnos."
+    },
+    "onda_escarcha": {
+        "id": "onda_escarcha",
+        "name": "Onda de Escarcha",
+        "emoji": "❄️",
+        "class": "Mago",
+        "subclass": "Elementalista",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 0.8,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.25,
+        "freeze_turns": 1,
+        "desc": "Elementalista: Daño leve + congela al rival 1 turno."
+    },
+    "sobrecarga_arcana": {
+        "id": "sobrecarga_arcana",
+        "name": "Sobrecarga Arcana",
+        "emoji": "💥",
+        "class": "Mago",
+        "subclass": "Arcanista",
+        "min_level": 10,
+        "cooldown": 3,
+        "damage_mult": 2.5,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.15,
+        "self_damage_pct": 0.10,
+        "desc": "Arcanista: Nuke (2.5×MAG) pero sufre 10% HP max como coste."
+    },
+
+    # ⚕️ Clérigo
+    "luz_curativa": {
+        "id": "luz_curativa",
+        "name": "Luz Curativa",
+        "emoji": "💚",
+        "class": "Clérigo",
+        "subclass": "Sanador",
+        "min_level": 10,
+        "cooldown": 3,
+        "heal_pct_of_max_hp": 0.25,
+        "desc": "Sanador: Cura 25% HP max a sí mismo (duelo) o al aliado con menor HP (raid)."
+    },
+    "pacto_sangre": {
+        "id": "pacto_sangre",
+        "name": "Pacto de Sangre",
+        "emoji": "🖤",
+        "class": "Clérigo",
+        "subclass": "Oscuro",
+        "min_level": 10,
+        "cooldown": 3,
+        "drain_pct": 0.20,
+        "anti_heal_duration": 2,
+        "desc": "Oscuro: Drena 20% HP actual + impide curación 2 turnos."
+    },
+    "bendicion_hierro": {
+        "id": "bendicion_hierro",
+        "name": "Bendición de Hierro",
+        "emoji": "🛡️",
+        "class": "Clérigo",
+        "subclass": "Guardián de la Fe",
+        "min_level": 10,
+        "cooldown": 3,
+        "shield_pct_of_max_hp": 0.18,
+        "desc": "Guardián de la Fe: Escudo (18% HP max) a sí mismo (duelo) o a un aliado (raid)."
+    },
+
+    # ══════════════════════════════════════════════
+    # HABILIDADES DE SUBCLASE — Nv.15 (Ultimates)
+    # ══════════════════════════════════════════════
+
+    # ⚔️ Guerrero
+    "muralla_inquebrantable": {
+        "id": "muralla_inquebrantable",
+        "name": "Muralla Inquebrantable",
+        "emoji": "🏰",
+        "class": "Guerrero",
+        "subclass": "Centinela",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_reduction_pct": 0.50,
+        "duration": 3,
+        "desc": "Centinela ULT: -50% daño recibido por 3t (equipo en raid)."
+    },
+    "sed_sangre": {
+        "id": "sed_sangre",
+        "name": "Sed de Sangre",
+        "emoji": "🩸",
+        "class": "Guerrero",
+        "subclass": "Berserker",
+        "min_level": 15,
+        "cooldown": 6,
+        "hp_sacrifice_pct": 0.25,
+        "atk_buff_pct": 0.60,
+        "buff_duration": 3,
+        "desc": "Berserker ULT: Sacrifica 25% HP → +60% ATK por 3 turnos."
+    },
+    "ejecucion": {
+        "id": "ejecucion",
+        "name": "Ejecución",
+        "emoji": "⚔️",
+        "class": "Guerrero",
+        "subclass": "Duelista",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 1.5,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.25,
+        "execute_threshold_pct": 0.30,
+        "execute_bonus_mult": 2.0,
+        "desc": "Duelista ULT: ×2.0 daño si objetivo <30% HP."
+    },
+
+    # ✝️ Paladín
+    "aura_salvacion": {
+        "id": "aura_salvacion",
+        "name": "Aura de Salvación",
+        "emoji": "💛",
+        "class": "Paladín",
+        "subclass": "Guardián Sagrado",
+        "min_level": 15,
+        "cooldown": 6,
+        "shield_pct": 0.15,
+        "hot_pct": 0.05,
+        "duration": 3,
+        "desc": "G. Sagrado ULT: Escudo + curación gradual para todo el equipo 3t."
+    },
+    "juicio_final": {
+        "id": "juicio_final",
+        "name": "Juicio Final",
+        "emoji": "⚖️",
+        "class": "Paladín",
+        "subclass": "Vengador",
+        "min_level": 15,
+        "cooldown": 6,
+        "reflect_pct": 1.50,
+        "duration": 2,
+        "desc": "Vengador ULT: Refleja 150% del daño recibido durante 2 turnos."
+    },
+    "carga_sagrada": {
+        "id": "carga_sagrada",
+        "name": "Carga Sagrada",
+        "emoji": "⚔️",
+        "class": "Paladín",
+        "subclass": "Cruzado",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 1.8,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.25,
+        "desc": "Cruzado ULT: Golpe extra fuera de turno para todo el equipo (raid) o ×1.8 ATK (duelo)."
+    },
+
+    # 🥷 Pícaro
+    "ejecucion_sombria": {
+        "id": "ejecucion_sombria",
+        "name": "Ejecución Sombría",
+        "emoji": "💀",
+        "class": "Pícaro",
+        "subclass": "Asesino",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 2.5,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.20,
+        "desc": "Asesino ULT: Burst muy alto (2.5×ATK). Todo o nada."
+    },
+    "danza_cuchillas": {
+        "id": "danza_cuchillas",
+        "name": "Danza de Cuchillas",
+        "emoji": "💃",
+        "class": "Pícaro",
+        "subclass": "Sombra",
+        "min_level": 15,
+        "cooldown": 6,
+        "hits": 3,
+        "damage_mult_per_hit": 0.7,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.30,
+        "evasion_buff_pct": 0.30,
+        "evasion_buff_duration": 2,
+        "desc": "Sombra ULT: 3 golpes (0.7×ATK) + evasión +30% por 2 turnos."
+    },
+    "enjambre_trampas": {
+        "id": "enjambre_trampas",
+        "name": "Enjambre de Trampas",
+        "emoji": "🕸️",
+        "class": "Pícaro",
+        "subclass": "Trampero",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 0.8,
+        "damage_stat": "atk",
+        "def_mitigation_factor": 0.30,
+        "desc": "Trampero ULT: Aplica Debilidad, Fragilidad y Veneno de golpe."
+    },
+
+    # 🔮 Mago
+    "cataclismo_fuego": {
+        "id": "cataclismo_fuego",
+        "name": "Cataclismo de Fuego",
+        "emoji": "☄️",
+        "class": "Mago",
+        "subclass": "Piromante",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 2.8,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.15,
+        "burn_duration": 5,
+        "enhanced_burn_pct": 0.08,
+        "desc": "Piromante ULT: Nuke (2.8×MAG) + quemadura 5t (8% HP max/t)."
+    },
+    "tormenta_elemental": {
+        "id": "tormenta_elemental",
+        "name": "Tormenta Elemental",
+        "emoji": "🌪️",
+        "class": "Mago",
+        "subclass": "Elementalista",
+        "min_level": 15,
+        "cooldown": 6,
+        "damage_mult": 1.5,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.20,
+        "burn_duration": 2,
+        "freeze_turns": 1,
+        "desc": "Elementalista ULT: Quemadura 2t + congelación 1t + golpe (1.5×MAG)."
+    },
+    "singularidad": {
+        "id": "singularidad",
+        "name": "Singularidad",
+        "emoji": "🌌",
+        "class": "Mago",
+        "subclass": "Arcanista",
+        "min_level": 15,
+        "cooldown": 8,
+        "damage_mult": 4.0,
+        "damage_stat": "mag",
+        "def_mitigation_factor": 0.10,
+        "self_damage_pct": 0.15,
+        "vulnerability_after_turns": 1,
+        "vulnerability_pct": 0.30,
+        "desc": "Arcanista ULT: El golpe más devastador (4.0×MAG). CD largo, auto-daño, vulnerable 1t."
+    },
+
+    # ⚕️ Clérigo
+    "resurreccion_parcial": {
+        "id": "resurreccion_parcial",
+        "name": "Resurrección Parcial",
+        "emoji": "✝️",
+        "class": "Clérigo",
+        "subclass": "Sanador",
+        "min_level": 15,
+        "cooldown": 8,
+        "revive_hp_pct": 0.30,
+        "self_heal_in_duel_pct": 0.40,
+        "desc": "Sanador ULT: Revive aliado con 30% HP (raid). Auto-cura 40% HP (duelo)."
+    },
+    "consumir_alma": {
+        "id": "consumir_alma",
+        "name": "Consumir Alma",
+        "emoji": "👁️",
+        "class": "Clérigo",
+        "subclass": "Oscuro",
+        "min_level": 15,
+        "cooldown": 6,
+        "base_drain_pct": 0.15,
+        "execute_threshold_pct": 0.30,
+        "execute_drain_pct": 0.35,
+        "desc": "Oscuro ULT: Drena 15% HP, o 35% si objetivo <30% HP."
+    },
+    "santuario": {
+        "id": "santuario",
+        "name": "Santuario",
+        "emoji": "🏛️",
+        "class": "Clérigo",
+        "subclass": "Guardián de la Fe",
+        "min_level": 15,
+        "cooldown": 6,
+        "shield_pct": 0.15,
+        "cleanse_all_debuffs": True,
+        "desc": "G. de la Fe ULT: Escudo grupal + limpia todos los debuffs (raid)."
+    },
 }

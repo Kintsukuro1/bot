@@ -1796,7 +1796,8 @@ def init_db():
                     LastDuelTime TIMESTAMP,
                     TotalMoneyWon BIGINT DEFAULT 0,
                     TotalMoneyLost BIGINT DEFAULT 0,
-                    CombatClass VARCHAR(20) DEFAULT NULL
+                    CombatClass VARCHAR(20) DEFAULT NULL,
+                    CombatSubclass VARCHAR(30) DEFAULT NULL
                 )
             """)
 
@@ -1814,6 +1815,8 @@ def init_db():
                 """)
                 if not cursor.fetchone():
                     cursor.execute("ALTER TABLE CombatStats ADD COLUMN CombatClass VARCHAR(20) DEFAULT NULL")
+                # Migración: añadir CombatSubclass si no existe
+                cursor.execute("ALTER TABLE CombatStats ADD COLUMN IF NOT EXISTS CombatSubclass VARCHAR(30) DEFAULT NULL")
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS CombatLog (
@@ -1891,6 +1894,7 @@ def init_db():
                     Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            cursor.execute("ALTER TABLE RaidLog ADD COLUMN IF NOT EXISTS Difficulty VARCHAR(10) DEFAULT 'normal'")
             # ─── FIN TABLAS DUELOS PVP ───
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
@@ -1912,7 +1916,8 @@ def get_combat_stats(user_id):
         """, (user_id,))
         cursor.execute("""
             SELECT CombatLevel, CombatXP, Wins, Losses, WinStreak,
-                   BestWinStreak, LastDuelTime, TotalMoneyWon, TotalMoneyLost, CombatClass
+                   BestWinStreak, LastDuelTime, TotalMoneyWon, TotalMoneyLost,
+                   CombatClass, CombatSubclass
             FROM CombatStats WHERE UserID = %s
         """, (user_id,))
         row = cursor.fetchone()
@@ -1926,7 +1931,8 @@ def get_combat_stats(user_id):
             'last_duel_time': row[6],
             'total_money_won': row[7] or 0,
             'total_money_lost': row[8] or 0,
-            'combat_class': row[9],  # None o nombre de la clase
+            'combat_class': row[9],       # None o nombre de la clase
+            'combat_subclass': row[10],   # None o nombre de la subclase
         }
 
 
@@ -2275,5 +2281,35 @@ def update_user_class(user_id: int, class_name: str) -> bool:
             return True
     except Exception as e:
         logger.error(f"Error updating user class for user {user_id}: {e}")
+        return False
+
+
+def update_user_subclass(user_id: int, subclass_name: str) -> bool:
+    """Actualiza la subclase de combate de un usuario."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                UPDATE CombatStats 
+                SET CombatSubclass = %s 
+                WHERE UserID = %s
+            """, (subclass_name, user_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error updating user subclass for user {user_id}: {e}")
+        return False
+
+
+def update_user_class_and_subclass(user_id: int, class_name: str, subclass_name: str | None) -> bool:
+    """Actualiza clase y subclase de combate en una sola operación."""
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                UPDATE CombatStats 
+                SET CombatClass = %s, CombatSubclass = %s 
+                WHERE UserID = %s
+            """, (class_name, subclass_name, user_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error updating user class/subclass for user {user_id}: {e}")
         return False
 
