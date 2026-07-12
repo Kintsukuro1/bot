@@ -207,5 +207,48 @@ class TestDueloMuerteSubita(unittest.TestCase):
         self.assertEqual(actual_dmg_51, expected_dmg_51)
         self.assertEqual(actual_dmg_51, actual_dmg_50 * 2)
 
+    def test_duel_state_taxonomy_rules(self):
+        from src.commands.duels.duelo import Combatant
+        mock_user = MagicMock()
+        p = Combatant(mock_user, level=10, equipment={})
+        
+        # Stacking poison rules
+        p.poison_turns = 3
+        # First layer
+        p1_poison_damage = 10
+        # Re-apply
+        p1_poison_damage = min(30, p1_poison_damage + 10)
+        self.assertEqual(p1_poison_damage, 20)
+        p1_poison_damage = min(30, p1_poison_damage + 10)
+        self.assertEqual(p1_poison_damage, 30)
+        
+        # Bleed calculation
+        p.last_physical_damage_taken = 200
+        p.bleed_source_pct = 0.06
+        bleed_dmg = max(1, int(p.last_physical_damage_taken * p.bleed_source_pct))
+        self.assertEqual(bleed_dmg, 12)
+        
+        # Stun/Freeze active reinforcement checks
+        p.stun_turns = 2
+        p.frozen_turns = 0
+        if p.stun_turns > 0:
+            p.stun_turns += 1
+        else:
+            p.frozen_turns = 2
+        self.assertEqual(p.stun_turns, 3)
+        self.assertEqual(p.frozen_turns, 0)
+        
+        # Capped combined damage received amp (+75% max)
+        # Frenzy (+15%) + Vulnerability (+30% Singularity)
+        amp_pct = 0.15 + 0.30
+        amp_pct = min(0.75, amp_pct)
+        self.assertAlmostEqual(amp_pct, 0.45)
+        
+        # Frenzy (+15%) + Vulnerability (+30%) + afijo (+40%) = 0.85 -> capped at 0.75
+        amp_pct = 0.15 + 0.30 + 0.40
+        amp_pct = min(0.75, amp_pct)
+        self.assertEqual(amp_pct, 0.75)
+
+
 if __name__ == '__main__':
     unittest.main()

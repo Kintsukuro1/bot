@@ -28,6 +28,14 @@ from src.utils.combat_progression import (
     get_combat_rank, get_combat_rank_emoji,
     EQUIPMENT_SLOTS, SLOT_EMOJIS, RARITY_COLORS,
     LOOT_TIMEOUT_SECONDS, ALL_STATS, format_item_stats_display,
+    apply_subclass_equipment_conversion,
+)
+from src.utils.combat_config import SKILLS_CONFIG
+from src.utils.subclass_config import (
+    SUBCLASSES, SUBCLASS_TO_CLASS, CLASS_SUBCLASSES,
+    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL,
+    get_subclass_config, get_subclass_skills, get_available_subclasses,
+    get_all_subclass_info_for_display,
 )
 from src.utils.raid_config import (
     RAID_MIN_PLAYERS, RAID_MAX_PLAYERS,
@@ -51,7 +59,7 @@ from src.db import update_combat_stats_after_duel
 class RaidBoss:
     """Estado del boss durante el combate de raid."""
 
-    def __init__(self, boss_config: dict, total_level: int):
+    def __init__(self, boss_config: dict, total_power: float = 0.0, difficulty: str = "normal", total_level: float | None = None, is_miniboss: bool = False):
         self.name = boss_config["name"]
         self.emoji = boss_config["emoji"]
         self.element = boss_config["element"]
@@ -60,16 +68,57 @@ class RaidBoss:
         self.ability_id = boss_config["ability"]
         self.ability = BOSS_ABILITIES[self.ability_id]
 
-        # Stats escalados
-        stats = calc_boss_stats(boss_config, total_level)
-        self.max_hp = stats["max_hp"]
-        self.hp = stats["hp"]
-        self.atk = stats["atk"]
-        self.def_stat = stats["def_stat"]
+        if total_level is not None:
+            total_power = total_level
+
+        self.is_intangible = False
+
+        if is_miniboss:
+            self.max_hp = boss_config["hp"]
+            self._hp = boss_config["hp"]
+            self.atk = boss_config["atk"]
+            self.def_stat = boss_config["def_stat"]
+        else:
+            # Stats escalados
+            stats = calc_boss_stats(boss_config, total_power, difficulty)
+            self.max_hp = stats["max_hp"]
+            self._hp = stats["hp"]
+            self.atk = stats["atk"]
+            self.def_stat = stats["def_stat"]
+
+        self.miniboss_key = boss_config.get("miniboss_key")
+        self.is_miniboss = is_miniboss
 
         # Stats base guardados para mutación
         self._base_atk = self.atk
         self._base_def = self.def_stat
+
+        # Debuffs/Estados del Boss
+        self.stun_turns = 0
+        self.weakness_turns = 0
+        self.weakness_pct = 0.0
+        self.fragility_turns = 0
+        self.fragility_pct = 0.0
+        self.vulnerability_turns = 0
+        self.vulnerability_pct = 0.0
+        self.burn_turns = 0
+        self.enhanced_burn_turns = 0
+        self.blinded_turns = 0
+        self.frozen_turns = 0
+        self.silence_turns = 0
+        self.bleed_turns = 0
+        self.bleed_source_pct = 0.06
+        self.last_physical_damage_taken = 0
+
+    @property
+    def hp(self):
+        return self._hp
+
+    @hp.setter
+    def hp(self, value):
+        if getattr(self, "is_intangible", False) and value < self._hp:
+            return
+        self._hp = value
 
 
 # ══════════════════════════════════════════════
@@ -79,22 +128,27 @@ class RaidBoss:
 class RaidCombatant:
     """Estado de un jugador durante la raid."""
 
-    def __init__(self, user: discord.Member, level: int, equipment: dict, combat_class: str = None):
+    def __init__(self, user: discord.Member, level: int, equipment: dict, combat_class: str = None, combat_subclass: str = None):
         self.user = user
         self.level = level
         self.combat_class = combat_class
+        self.combat_subclass = combat_subclass
 
         # Stats base + equipo
         base = calc_base_stats(level)
         bonus, passives = calc_equipment_bonus(equipment)
+
+        # Aplicar conversión de equipo por subclase (antes del cap)
+        bonus, self.subclass_extras = apply_subclass_equipment_conversion(bonus, combat_subclass)
+
         effective, _, _ = get_effective_bonus(bonus, level)
 
-        self.max_hp = base["hp"] + effective.get("hp", 0)
+        self.max_hp = base["hp"] + int(round(effective.get("hp", 0)))
         self.hp = self.max_hp
-        self.atk = base["atk"] + effective.get("atk", 0)
+        self.atk = base["atk"] + int(round(effective.get("atk", 0)))
         self.base_atk = self.atk  # Para restaurar después de debuffs
-        self.mag = base["mag"] + effective.get("mag", 0)
-        self.def_stat = base["def"] + effective.get("def", 0)
+        self.mag = base["mag"] + int(round(effective.get("mag", 0)))
+        self.def_stat = base["def"] + int(round(effective.get("def", 0)))
 
         # Pasivos de equipo (Legendario)
         self.passives = passives
@@ -110,15 +164,55 @@ class RaidCombatant:
         # Estado de combate
         self.is_defending = False
         self.is_dead = False
+        self.is_taunting = False
         self.poison_turns = 0      # Turnos de veneno restantes
         self.poison_damage = 0     # Daño por turno de veneno
         self.atk_debuff_turns = 0  # Turnos de reducción de ATK
         self.atk_debuff_pct = 0.0  # Porcentaje de reducción
         
-        # Nuevos estados para habilidades activas y mecánicas
-        self.shield = 0            # Escudo de absorción (Paladín)
-        self.is_taunting = False   # Provocación activa (Guerrero)
-        self.class_ability_cooldown = 0 # Enfriamiento de habilidad de clase
+        # Escudo de absorción de subclase (Guardián Sagrado, Guardián de la Fe)
+        self.shield = self.subclass_extras.get("shield_pool", 0)
+        
+        # Cooldowns de habilidades
+        self.class_ability_cooldown = 0 # Enfriamiento de habilidad de clase (legacy)
+        self.special_cooldown = 0       # Cooldown de especial (nivel 5)
+        self.skill10_cooldown = 0       # Cooldown de habilidad Nv. 10
+        self.skill15_cooldown = 0       # Cooldown de habilidad Nv. 15 (ultimate)
+        self.taunt_cooldown = 0         # Cooldown de taunt pasivo
+        
+        # Estados de subclase
+        self.taunt_turns = 0                # Duración del taunt (tanques)
+        self.stun_turns = 0                 # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
+        self.frozen_turns = 0               # Turnos congelado
+        self.silence_turns = 0              # Turnos silenciado
+        self.bleed_turns = 0                # Turnos sangrado
+        self.bleed_source_pct = 0.06        # 6% del último daño físico
+        self.last_physical_damage_taken = 0  # Para sangrado
+        self.damage_reduction_turns = 0     # Turnos de -X% daño recibido (Muralla)
+        self.damage_reduction_pct = 0.0
+        self.atk_buff_turns = 0             # Turnos de +X% ATK (Sed de Sangre, Estandarte)
+        self.atk_buff_pct = 0.0
+        self.juicio_final_turns = 0         # Reflejo 150% (Vengador ult)
+        self.juicio_final_reflect_pct = 0.0
+        self.evasion_buff_turns = 0         # Evasión extra (Danza de Cuchillas)
+        self.evasion_buff_pct = 0.0
+        self.guaranteed_dodge_next = False   # Paso Fantasma
+        self.anti_heal_turns = 0            # Impide curación (Pacto de Sangre)
+        self.weakness_turns = 0             # Debilidad: -ATK (Trampa de Acónito)
+        self.weakness_pct = 0.0
+        self.fragility_turns = 0            # Fragilidad: -DEF (Enjambre)
+        self.fragility_pct = 0.0
+        self.vulnerability_turns = 0        # Vulnerabilidad +daño recibido (Singularidad)
+        self.vulnerability_pct = 0.0
+        self.hot_turns = 0                  # Heal over time (Aura de Salvación)
+        self.hot_pct = 0.0
+        self.total_damage_taken = 0         # Acumulador para Castigo Divino (Vengador)
+        self.enhanced_burn_pct = 0.0        # Quemadura mejorada (Cataclismo)
+        self.enhanced_burn_turns = 0
+        self.burn_turns = 0                 # Turnos de quemadura
+        self.frenzy_turns = 0               # Turnos de Frenesí
+        self.retribution_active = False     # Postura de Represalia activa
+        self.blinded_turns = 0              # Ceguera
         self.turns_survived = 0    # Turnos sobrevividos (para XP)
 
 
@@ -136,31 +230,56 @@ class RaidLobbyView(discord.ui.View):
         self.cog = cog
         self.players: list[discord.Member] = [creator]  # El creador se une automáticamente
         self.player_stats: dict[int, dict] = {}  # user_id -> combat_stats
+        self.player_equipments: dict[int, dict] = {}  # user_id -> equipment
+        self.difficulty = "normal"
         self.started = False
         self.cancelled = False
 
     def _build_lobby_embed(self):
+        from src.utils.combat_progression import calc_power_level
+
         boss = self.boss_config
+        
+        player_powers = {}
+        for p in self.players:
+            level = self.player_stats.get(p.id, {}).get("level", 1)
+            equip = self.player_equipments.get(p.id, {})
+            subclass = self.player_stats.get(p.id, {}).get("combat_subclass")
+            power = calc_power_level(level, equip, subclass)
+            player_powers[p.id] = power
+
         player_list = "\n".join(
             f"{get_combat_rank_emoji(self.player_stats.get(p.id, {}).get('level', 1))} "
-            f"**{p.display_name}** — Nv. {self.player_stats.get(p.id, {}).get('level', 1)}"
+            f"**{p.display_name}** — Nv. {self.player_stats.get(p.id, {}).get('level', 1)} "
+            f"(Poder: **{player_powers[p.id]:.1f}**)"
             for p in self.players
         )
 
-        total_level = sum(self.player_stats.get(p.id, {}).get('level', 1) for p in self.players)
-        scaled_stats = calc_boss_stats(boss, total_level)
+        total_power = sum(player_powers[p.id] for p in self.players)
+        if boss.get("is_miniboss", False):
+            scaled_stats = {
+                "hp": boss["hp"],
+                "max_hp": boss["hp"],
+                "atk": boss["atk"],
+                "def_stat": boss["def_stat"],
+            }
+            stats_label = "**Stats del Miniboss** (Fijos):"
+        else:
+            scaled_stats = calc_boss_stats(boss, total_power, self.difficulty)
+            stats_label = f"**Stats del Boss** (escalado a Poder total {total_power:.1f}):"
 
         embed = discord.Embed(
-            title=f"{boss['emoji']} Raid — {boss['name']}",
+            title=f"{boss['emoji']} Raid — {boss['name']} ({self.difficulty.capitalize()})",
             description=(
                 f"*{boss['lore']}*\n\n"
                 f"**Elemento:** {boss['element']}\n"
+                f"**Dificultad:** {self.difficulty.upper()}\n"
                 f"**Habilidad Especial:** {BOSS_ABILITIES[boss['ability']]['emoji']} "
                 f"{BOSS_ABILITIES[boss['ability']]['name']}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"**Jugadores ({len(self.players)}/{RAID_MAX_PLAYERS}):**\n{player_list}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"**Stats del Boss** (escalado a Nv. total {total_level}):\n"
+                f"{stats_label}\n"
                 f"❤️ HP: {scaled_stats['hp']:,} · ⚔️ ATK: {scaled_stats['atk']} · 🛡️ DEF: {scaled_stats['def_stat']}"
             ),
             color=boss["color"]
@@ -189,10 +308,20 @@ class RaidLobbyView(discord.ui.View):
             await interaction.response.send_message("❌ Ya tienes una raid en curso.", ephemeral=True)
             return
 
-        # Cargar stats
+        # Si la dificultad es mítica, verificar intentos diarios del que se une
+        if self.difficulty == "mitica":
+            attempts = await asyncio.to_thread(count_mythic_raids_today, user.id)
+            if attempts >= 2:
+                await interaction.response.send_message("❌ Ya usaste tus 2 intentos de raid Mítica de hoy. Vuelve mañana.", ephemeral=True)
+                return
+
+        # Cargar stats y equipo
         await asyncio.to_thread(ensure_user, user.id, user.name)
         stats = await asyncio.to_thread(get_combat_stats, user.id)
+        equip = await asyncio.to_thread(get_user_equipment, user.id)
+        
         self.player_stats[user.id] = stats
+        self.player_equipments[user.id] = equip
 
         self.players.append(user)
         self.cog.active_raids.add(user.id)
@@ -214,6 +343,20 @@ class RaidLobbyView(discord.ui.View):
                 ephemeral=True
             )
             return
+
+        # Si es dificultad Mítica, verificar de nuevo a todos los participantes antes de iniciar
+        if self.difficulty == "mitica":
+            locked_players = []
+            for p in self.players:
+                attempts = await asyncio.to_thread(count_mythic_raids_today, p.id)
+                if attempts >= 2:
+                    locked_players.append(p.display_name)
+            if locked_players:
+                await interaction.response.send_message(
+                    f"❌ No se puede iniciar la raid Mítica: los siguientes jugadores ya usaron sus 2 intentos diarios: {', '.join(locked_players)}.",
+                    ephemeral=True
+                )
+                return
 
         self.started = True
         for item in self.children:
@@ -251,11 +394,75 @@ class RaidLobbyView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
         self.stop()
 
+    @discord.ui.select(
+        placeholder="Seleccionar Dificultad",
+        options=[
+            discord.SelectOption(label="Normal", value="normal", description="Escalado estándar", default=True),
+            discord.SelectOption(label="Difícil", value="dificil", description="Enemigo +45% HP y +40% ATK/DEF"),
+            discord.SelectOption(label="Mítica", value="mitica", description="¡Desafío extremo! Límite de 2 intentos diarios"),
+        ],
+        row=1
+    )
+    async def select_difficulty(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if interaction.user.id != self.creator.id:
+            await interaction.response.send_message("❌ Solo el creador de la raid puede cambiar la dificultad.", ephemeral=True)
+            return
+
+        selected_diff = select.values[0]
+
+        # Validar Mítica
+        if selected_diff == "mitica":
+            # Verificar intentos del creador
+            creator_attempts = await asyncio.to_thread(count_mythic_raids_today, self.creator.id)
+            if creator_attempts >= 2:
+                await interaction.response.send_message("❌ No puedes seleccionar dificultad Mítica: has alcanzado el límite de 2 intentos diarios.", ephemeral=True)
+                return
+            # Verificar otros jugadores ya en el lobby
+            locked_players = []
+            for p in self.players:
+                if p.id != self.creator.id:
+                    attempts = await asyncio.to_thread(count_mythic_raids_today, p.id)
+                    if attempts >= 2:
+                        locked_players.append(p.display_name)
+            if locked_players:
+                await interaction.response.send_message(f"❌ No puedes seleccionar dificultad Mítica: los siguientes jugadores ya usaron sus 2 intentos diarios: {', '.join(locked_players)}.", ephemeral=True)
+                return
+
+        # Actualizar opciones por defecto
+        for opt in select.options:
+            opt.default = (opt.value == selected_diff)
+
+        self.difficulty = selected_diff
+        embed = self._build_lobby_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
     async def on_timeout(self):
         if not self.started and not self.cancelled:
             self.cancelled = True
             for p in self.players:
                 self.cog.active_raids.discard(p.id)
+
+
+def get_combatant_available_skills(combatant: RaidCombatant) -> list[tuple[str, dict]]:
+    available = []
+    for skill_id, skill in SKILLS_CONFIG.items():
+        if skill.get("class") is None:
+            # ceguera is only for classless
+            if combatant.combat_class is None:
+                available.append((skill_id, skill))
+        else:
+            # Class-specific skill
+            if combatant.combat_class == skill["class"]:
+                req_subclass = skill.get("subclass")
+                if req_subclass:
+                    # Subclass skill
+                    if combatant.combat_subclass == req_subclass and combatant.level >= skill["min_level"]:
+                        available.append((skill_id, skill))
+                else:
+                    # Base class skill
+                    if combatant.level >= skill["min_level"]:
+                        available.append((skill_id, skill))
+    return available
 
 
 # ══════════════════════════════════════════════
@@ -265,12 +472,13 @@ class RaidLobbyView(discord.ui.View):
 class RaidCombatView(discord.ui.View):
     """Vista principal del combate cooperativo contra el boss."""
 
-    def __init__(self, players: list[RaidCombatant], boss: RaidBoss, cog: 'RaidsCog', affix: str = "Ninguno"):
+    def __init__(self, players: list[RaidCombatant], boss: RaidBoss, cog: 'RaidsCog', affix: str = "Ninguno", difficulty: str = "normal"):
         super().__init__(timeout=RAID_TURN_TIMEOUT)
         self.players = players
         self.boss = boss
         self.cog = cog
         self.affix = affix
+        self.difficulty = difficulty
 
         # Acciones elegidas por cada jugador (user_id -> action)
         self.actions: dict[int, str] = {}
@@ -289,6 +497,40 @@ class RaidCombatView(discord.ui.View):
         self.boss_channeling_threshold = 0
         self.boss_poison_turns = 0
         self.boss_poison_damage = 0
+
+        # Obtener las habilidades disponibles para todos los participantes
+        combined_skills = {}
+        for p in self.players:
+            p_skills = get_combatant_available_skills(p)
+            for skill_id, skill in p_skills:
+                combined_skills[skill_id] = skill
+                
+        # Re-poblar las opciones del select_special
+        select_menu = None
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                select_menu = child
+                break
+                
+        if select_menu:
+            if combined_skills:
+                select_menu.options = [
+                    discord.SelectOption(
+                        label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                        value=skill_id,
+                        emoji=skill['emoji'],
+                        description=skill['desc'][:100]
+                    ) for skill_id, skill in combined_skills.items()
+                ]
+            else:
+                select_menu.options = [
+                    discord.SelectOption(
+                        label="Sin habilidades disponibles",
+                        value="none",
+                        description="No tienes habilidades especiales disponibles."
+                    )
+                ]
+                select_menu.disabled = True
 
     def _alive_players(self) -> list[RaidCombatant]:
         """Retorna los jugadores que siguen vivos."""
@@ -321,8 +563,22 @@ class RaidCombatView(discord.ui.View):
 
         # Boss field
         ability_emoji = self.boss.ability["emoji"]
+        boss_status = ""
+        if self.boss.stun_turns > 0:
+            boss_status += f" 💫(Aturdido {self.boss.stun_turns}t)"
+        if self.boss.weakness_turns > 0:
+            boss_status += f" ❄️(Debil {self.boss.weakness_turns}t)"
+        if self.boss.fragility_turns > 0:
+            boss_status += f" 💔(Frágil {self.boss.fragility_turns}t)"
+        if self.boss.vulnerability_turns > 0:
+            boss_status += f" ⚠️(Vulner. {self.boss.vulnerability_turns}t)"
+        if self.boss.burn_turns > 0:
+            boss_status += f" 🔥(Quemadura {self.boss.burn_turns}t)"
+        if self.boss_poison_turns > 0:
+            boss_status += f" 🧪(Veneno {self.boss_poison_turns}t)"
+
         embed.add_field(
-            name=f"{self.boss.emoji} {self.boss.name} — Nv. ∞",
+            name=f"{self.boss.emoji} {self.boss.name} — Nv. ∞{boss_status}",
             value=(
                 f"{boss_hp_bar}\n"
                 f"⚔️ {self.boss.atk} ATK · 🛡️ {self.boss.def_stat} DEF\n"
@@ -334,8 +590,21 @@ class RaidCombatView(discord.ui.View):
         # Minions field if any are alive
         alive_minions = [m for m in self.minions if m["hp"] > 0]
         if alive_minions:
-            minions_text = "\n".join(f"👾 **{m['name']}**: {format_hp_bar(m['hp'], m['max_hp'])}" for m in alive_minions)
-            embed.add_field(name="👾 Esbirros del Jefe", value=minions_text, inline=False)
+            minions_lines = []
+            for m in alive_minions:
+                m_status = ""
+                if m.get("stun_turns", 0) > 0:
+                    m_status += f" 💫(Aturdido {m['stun_turns']}t)"
+                if m.get("weakness_turns", 0) > 0:
+                    m_status += f" ❄️(Debil {m['weakness_turns']}t)"
+                if m.get("fragility_turns", 0) > 0:
+                    m_status += f" 💔(Frágil {m['fragility_turns']}t)"
+                if m.get("vulnerability_turns", 0) > 0:
+                    m_status += f" ⚠️(Vulner. {m['vulnerability_turns']}t)"
+                if m.get("burn_turns", 0) > 0:
+                    m_status += f" 🔥(Quemadura {m['burn_turns']}t)"
+                minions_lines.append(f"👾 **{m['name']}**{m_status}: {format_hp_bar(m['hp'], m['max_hp'])}")
+            embed.add_field(name="👾 Esbirros del Jefe", value="\n".join(minions_lines), inline=False)
 
         # Player fields
         for p in self.players:
@@ -350,9 +619,29 @@ class RaidCombatView(discord.ui.View):
                     status += f" 🧪({p.poison_turns}t)"
                 if p.atk_debuff_turns > 0:
                     status += f" ❄️({p.atk_debuff_turns}t)"
+                if p.stun_turns > 0:
+                    status += f" 💫(Aturdido {p.stun_turns}t)"
+                if p.damage_reduction_turns > 0:
+                    status += f" 🏰(-{int(p.damage_reduction_pct*100)}% daño {p.damage_reduction_turns}t)"
+                if p.atk_buff_turns > 0:
+                    status += f" 💪(+{int(p.atk_buff_pct*100)}% ATK {p.atk_buff_turns}t)"
+                if p.juicio_final_turns > 0:
+                    status += f" ⚖️(Reflejo {p.juicio_final_turns}t)"
+                if p.evasion_buff_turns > 0:
+                    status += f" 💨(Evasión+ {p.evasion_buff_turns}t)"
+                if p.guaranteed_dodge_next:
+                    status += " 👻(Esquiva)"
+                if p.anti_heal_turns > 0:
+                    status += f" 🚫(Anti-cura {p.anti_heal_turns}t)"
+                if p.weakness_turns > 0:
+                    status += f" ❄️(Debil {p.weakness_turns}t)"
+                if p.fragility_turns > 0:
+                    status += f" 💔(Frágil {p.fragility_turns}t)"
+                if p.vulnerability_turns > 0:
+                    status += f" ⚠️(Vulner. {p.vulnerability_turns}t)"
                 if p.shield > 0:
-                    status += f" 🛡️(Escudo: {p.shield})"
-                if p.is_taunting:
+                    status += f" 🛡️({p.shield})"
+                if p.taunt_turns > 0:
                     status += " 📣(Taunt)"
 
             # Acción elegida
@@ -362,10 +651,25 @@ class RaidCombatView(discord.ui.View):
                     action_status = " · 🟢 ¡Listo!"
                 else:
                     action_status = " · 🔴 Eligiendo..."
-                if p.class_ability_cooldown > 0:
-                    action_status += f" ⏳({p.class_ability_cooldown}t)"
+                
+                # Mostrar cooldowns activos
+                cds = []
+                if p.special_cooldown > 0:
+                    cds.append(f"ESP:{p.special_cooldown}t")
+                if p.skill10_cooldown > 0:
+                    cds.append(f"S10:{p.skill10_cooldown}t")
+                if p.skill15_cooldown > 0:
+                    cds.append(f"ULT:{p.skill15_cooldown}t")
+                if cds:
+                    action_status += f" ⏳({', '.join(cds)})"
 
-            class_tag = f" [{p.combat_class}]" if p.combat_class else ""
+            # Mostrar subclase si la tiene, sino clase
+            if p.combat_subclass:
+                class_tag = f" [{p.combat_subclass}]"
+            elif p.combat_class:
+                class_tag = f" [{p.combat_class}]"
+            else:
+                class_tag = ""
             embed.add_field(
                 name=f"{rank_emoji} {p.user.display_name}{class_tag} (Nv.{p.level}){status}{action_status}",
                 value=f"{hp_bar}\n⚔️ {p.atk} ATK · 🛡️ {p.def_stat} DEF",
@@ -377,7 +681,7 @@ class RaidCombatView(discord.ui.View):
             log_text = "\n".join(self.action_log[-6:])
             embed.add_field(name="📜 Registro", value=log_text, inline=False)
 
-        embed.set_footer(text=f"Acciones: ⚔️ Atacar · 🛡️ Defender · ✨ Especial de Clase · Tiempo por ronda: {RAID_TURN_TIMEOUT}s")
+        embed.set_footer(text=f"Acciones: ⚔️ Atacar · 🛡️ Defender · ✨ Habilidad Especial · Tiempo por ronda: {RAID_TURN_TIMEOUT}s")
         return embed
 
     # ──────────────────── BOTONES ────────────────────
@@ -390,8 +694,23 @@ class RaidCombatView(discord.ui.View):
     async def defend_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._register_action(interaction, 'defend')
 
-    @discord.ui.button(label="✨ Especial de Clase", style=discord.ButtonStyle.secondary, row=0)
-    async def class_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.select(
+        placeholder="✨ Lanzar Habilidad Especial...",
+        min_values=1,
+        max_values=1,
+        row=1,
+        options=[
+            discord.SelectOption(
+                label="Sin habilidades disponibles",
+                value="none"
+            )
+        ]
+    )
+    async def select_special(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if self.game_over:
+            await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
+            return
+
         user_id = interaction.user.id
         player = next((p for p in self.players if p.user.id == user_id), None)
         if player is None:
@@ -400,17 +719,84 @@ class RaidCombatView(discord.ui.View):
         if player.is_dead:
             await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
             return
-        if not player.combat_class:
-            await interaction.response.send_message("❌ No tienes una clase (requiere Nv. 5+).", ephemeral=True)
-            return
-        if player.class_ability_cooldown > 0:
-            await interaction.response.send_message(
-                f"⏳ Tu habilidad de clase está en enfriamiento ({player.class_ability_cooldown} turnos).",
-                ephemeral=True
-            )
+        if player.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
             return
 
-        await self._register_action(interaction, 'class_special')
+        if player.silence_turns > 0:
+            await interaction.response.send_message("❌ Estás silenciado y no puedes usar habilidades especiales.", ephemeral=True)
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
+            return
+
+        selected_value = select.values[0]
+        if selected_value == "none":
+            await interaction.response.send_message("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            return
+
+        # Validar si el especial seleccionado corresponde a su clase y nivel
+        req = SKILLS_CONFIG.get(selected_value)
+        if not req:
+            await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
+            return
+
+        # Verificar cooldown adecuado
+        if req.get("min_level") == 10:
+            cd = player.skill10_cooldown
+        elif req.get("min_level") == 15:
+            cd = player.skill15_cooldown
+        else:
+            cd = player.special_cooldown
+
+        if cd > 0:
+            await interaction.response.send_message(
+                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
+            return
+            
+        # Verificar clase y nivel
+        if req["class"] is not None:
+            if player.level < req["min_level"] or player.combat_class != req["class"]:
+                await interaction.response.send_message(
+                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    ephemeral=True
+                )
+                try:
+                    await interaction.message.edit(view=self)
+                except Exception:
+                    pass
+                return
+        
+        # Verificar subclase si aplica
+        if req.get("subclass") is not None:
+            if player.combat_subclass != req["subclass"]:
+                await interaction.response.send_message(
+                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
+                    ephemeral=True
+                )
+                try:
+                    await interaction.message.edit(view=self)
+                except Exception:
+                    pass
+                return
+
+        # Registrar la acción
+        if user_id in self.actions:
+            await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
+            return
+
+        await self._register_action(interaction, selected_value)
 
     async def _register_action(self, interaction: discord.Interaction, action: str):
         if self.game_over:
@@ -451,22 +837,73 @@ class RaidCombatView(discord.ui.View):
     async def _resolve_round(self, interaction=None):
         """Resuelve la ronda: acciones de jugadores → IA del boss."""
         logs = [f"🏁 **Ronda {self.turn_count + 1}:**"]
+        
+        # Configurar intangibilidad para Espíritu Errante (Ronda 2, 4, 6... -> turn_count % 2 == 1)
+        if getattr(self.boss, "miniboss_key", None) == "espiritu_errante" and (self.turn_count % 2 == 1):
+            self.boss.is_intangible = True
+            logs.append("👻 **Espíritu Errante:** ¡El jefe se vuelve intangible este turno! Es inmune a todo el daño.")
+        else:
+            self.boss.is_intangible = False
+
         alive = self._alive_players()
 
         # Helper para aplicar daño a jugadores (con pasivos)
         def apply_damage_to_player(target, raw_dmg, is_boss_attack=False):
             if target.is_dead:
                 return
-            # Pasivo: Esquiva mejorada (5% chance, solo de ataques del boss)
-            if is_boss_attack and target.has_dodge and random.random() < 0.05:
-                logs.append(f"💨 **Esquiva:** {target.user.display_name} **ESQUIVÓ** el ataque!")
-                return
+
+            # Evasión garantizada / paso fantasma / cota de malla / esquiva pasiva
+            if is_boss_attack:
+                if target.guaranteed_dodge_next:
+                    target.guaranteed_dodge_next = False
+                    logs.append(f"👥 **Paso Fantasma:** {target.user.display_name} **ESQUIVÓ** el ataque!")
+                    return
+                if target.evasion_buff_turns > 0 and random.random() < target.evasion_buff_pct:
+                    logs.append(f"💨 **Evasión:** ¡{target.user.display_name} esquiva el ataque gracias a su agilidad!")
+                    return
+                if target.has_dodge and random.random() < 0.05:
+                    logs.append(f"💨 **Esquiva:** {target.user.display_name} **ESQUIVÓ** el ataque!")
+                    return
+
+            # Amplificación de daño combinada (Frenesí + Vulnerabilidad)
+            amp_pct = 0.0
+            if target.frenzy_turns > 0:
+                amp_pct += SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+            if target.vulnerability_turns > 0:
+                amp_pct += target.vulnerability_pct
+            
+            amp_pct = min(0.75, amp_pct)
+            raw_dmg = int(raw_dmg * (1.0 + amp_pct))
+
+            # Reducción de daño activa (e.g. Muralla Inquebrantable)
+            if target.damage_reduction_turns > 0:
+                raw_dmg = int(raw_dmg * (1.0 - target.damage_reduction_pct))
+                logs.append(f"🏰 **Mitigación:** Daño recibido reducido a **{raw_dmg}** por Muralla Inquebrantable.")
+
+            # Daño de entrada registrado para Castigo Divino
+            target.total_damage_taken += raw_dmg
+
+            # Reflejo (Juicio Final)
+            if target.juicio_final_turns > 0 and raw_dmg > 0:
+                reflected = int(raw_dmg * target.juicio_final_reflect_pct)
+                alive_minions = [m for m in self.minions if m["hp"] > 0]
+                if alive_minions:
+                    target_minion = alive_minions[0]
+                    target_minion["hp"] = max(0, target_minion["hp"] - reflected)
+                    logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {target_minion['name']}!")
+                    if target_minion["hp"] <= 0:
+                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido por el reflejo!")
+                else:
+                    self.boss.hp = max(0, self.boss.hp - reflected)
+                    logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {self.boss.name}!")
+
             absorbed = 0
             if target.shield > 0:
                 absorbed = min(target.shield, raw_dmg)
                 raw_dmg -= absorbed
                 target.shield -= absorbed
                 logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
+
             # Pasivo: Escudo arcano (primer golpe recibido se reduce a la mitad)
             if is_boss_attack and target.arcane_shield_active:
                 raw_dmg = max(1, int(raw_dmg / 2))
@@ -478,6 +915,8 @@ class RaidCombatView(discord.ui.View):
                 parry_heal = max(1, int(raw_dmg * 0.30))
                 final_dmg = max(0, raw_dmg - parry_heal)
                 target.hp = max(0, target.hp - final_dmg)
+                if is_boss_attack:
+                    target.last_physical_damage_taken = final_dmg
                 logs.append(f"💥 {target.user.display_name} recibe **{final_dmg}** daño (tras curarse **{parry_heal}** por Parada). ({target.hp}/{target.max_hp} HP)")
                 
                 # Contraatacar al boss o esbirro
@@ -496,6 +935,8 @@ class RaidCombatView(discord.ui.View):
                 if target.is_defending:
                     raw_dmg = max(1, int(raw_dmg * 0.4))
                 target.hp = max(0, target.hp - raw_dmg)
+                if is_boss_attack:
+                    target.last_physical_damage_taken = raw_dmg
                 logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
 
             if target.hp <= 0:
@@ -527,13 +968,34 @@ class RaidCombatView(discord.ui.View):
             await self._finish_raid(interaction, victory=False)
             return
 
-        # 2. Aplicar DOTs (veneno) a jugadores
+        # 1.5 HoT Heal (Aura de Salvación) en jugadores
+        for p in alive:
+            if p.hot_turns > 0:
+                if p.anti_heal_turns == 0:
+                    hot_heal = int(p.max_hp * p.hot_pct)
+                    p.hp = min(p.max_hp, p.hp + hot_heal)
+                    logs.append(f"💚 **Aura de Salvación:** {p.user.display_name} se cura **{hot_heal}** HP por efecto gradual.")
+
+        # 2. Aplicar DOTs (veneno y quemadura) a jugadores
         for p in alive:
             if p.poison_turns > 0:
                 dmg = min(p.hp, p.poison_damage)
                 p.poison_turns -= 1
+                if p.poison_turns == 0:
+                    p.poison_damage = 0
                 logs.append(f"🧪 **Veneno:** {p.user.display_name} sufre **{dmg}** daño por veneno.")
                 apply_damage_to_player(p, dmg)
+
+        # Refrescar vivos
+        alive = self._alive_players()
+        
+        for p in alive:
+            if p.burn_turns > 0:
+                dot_pct = 0.08 if p.enhanced_burn_turns > 0 else 0.05
+                b_dmg = min(p.hp, max(1, int(p.max_hp * dot_pct)))
+                p.burn_turns -= 1
+                logs.append(f"🔥 **Quemadura:** {p.user.display_name} sufre **{b_dmg}** daño por quemadura.")
+                apply_damage_to_player(p, b_dmg)
 
         # Refrescar vivos
         alive = self._alive_players()
@@ -544,7 +1006,52 @@ class RaidCombatView(discord.ui.View):
             await self._finish_raid(interaction, victory=False)
             return
 
-        # Decrementar debuffs
+        # 2.2 Aplicar DOT de quemadura al Boss
+        if self.boss.burn_turns > 0:
+            dot_pct = 0.08 if self.boss.enhanced_burn_turns > 0 else 0.05
+            b_dmg = max(1, int(self.boss.max_hp * dot_pct))
+            
+            # Buscar si hay algún Piromante en la raid para sumar bonus de MAG
+            piromantes = [pl for pl in self.players if pl.combat_subclass == "Piromante" and not pl.is_dead]
+            if piromantes:
+                b_dmg += int(max(pl.mag for pl in piromantes) * 0.15)
+                
+            self.boss.hp = max(0, self.boss.hp - b_dmg)
+            self.boss.burn_turns -= 1
+            logs.append(f"🔥 **Quemadura del Boss:** {self.boss.name} sufre **{b_dmg}** daño por quemadura.")
+            
+            if self.boss.hp <= 0:
+                self.game_over = True
+                logs.append(f"🎉 **¡{self.boss.name} ha caído por quemaduras!**")
+                self.action_log.extend(logs)
+                await self._finish_raid(interaction, victory=True)
+                return
+
+        # 2.3 Aplicar DOT de quemadura a Esbirros
+        alive_minions = [m for m in self.minions if m["hp"] > 0]
+        for m in alive_minions:
+            if m.get("burn_turns", 0) > 0:
+                b_dmg = max(1, int(m["max_hp"] * 0.05))
+                m["hp"] = max(0, m["hp"] - b_dmg)
+                m["burn_turns"] -= 1
+                logs.append(f"🔥 **Quemadura:** {m['name']} sufre **{b_dmg}** daño por quemadura.")
+                if m["hp"] <= 0:
+                    logs.append(f"💀 **{m['name']}** ha sido destruido por quemaduras!")
+
+        # 2.4 Aplicar DOT de veneno a Esbirros
+        alive_minions = [m for m in self.minions if m["hp"] > 0]
+        for m in alive_minions:
+            if m.get("poison_turns", 0) > 0:
+                p_dmg = min(m["hp"], m.get("poison_damage", 10))
+                m["hp"] = max(0, m["hp"] - p_dmg)
+                m["poison_turns"] -= 1
+                if m["poison_turns"] == 0:
+                    m["poison_damage"] = 0
+                logs.append(f"🧪 **Veneno:** {m['name']} sufre **{p_dmg}** daño por veneno.")
+                if m["hp"] <= 0:
+                    logs.append(f"💀 **{m['name']}** ha sido destruido por veneno!")
+
+        # Decrementar debuffs en jugadores
         for p in alive:
             if p.atk_debuff_turns > 0:
                 p.atk_debuff_turns -= 1
@@ -554,19 +1061,40 @@ class RaidCombatView(discord.ui.View):
 
         # 2.5. Pasivo: Regeneración (+3% HP máximo al inicio de ronda)
         for p in alive:
-            if p.has_regen:
-                regen_heal = max(1, int(p.max_hp * 0.03))
-                p.hp = min(p.max_hp, p.hp + regen_heal)
-                logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
+            if p.has_regen and p.hp < p.max_hp:
+                if p.anti_heal_turns == 0:
+                    regen_heal = max(1, int(p.max_hp * 0.03))
+                    p.hp = min(p.max_hp, p.hp + regen_heal)
+                    logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
 
         # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
         if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:
             self.minions_summoned = True
-            self.minions = [
-                {"name": "Esbirro de Sombras A", "hp": 40, "max_hp": 40},
-                {"name": "Esbirro de Sombras B", "hp": 40, "max_hp": 40}
-            ]
-            logs.append("\n👾 **¡El jefe invoca 2 Esbirros de Sombras!** Los ataques se redirigirán a ellos hasta destruirlos.")
+            self.minions = build_minions_from_pool(self.boss_config)
+            minion_names = ", ".join(f"**{m['name']}**" for m in self.minions)
+            logs.append(f"\n👾 **¡El jefe invoca esbirros: {minion_names}!** Los ataques se redirigirán a ellos hasta destruirlos.")
+
+        # 3.1. Acción de Esbirro Debilitador (al inicio de cada turno)
+        alive_minions = [m for m in self.minions if m["hp"] > 0]
+        for m in alive_minions:
+            if m.get("archetype") == "debilitador":
+                if m.get("stun_turns", 0) > 0 or m.get("frozen_turns", 0) > 0:
+                    logs.append(f"🌀 {m['name']} está incapacitado y no puede debilitar este turno.")
+                    continue
+                if alive:
+                    target_player = random.choice(alive)
+                    debuff_type = random.choice(["weakness", "fragility", "ceguera"])
+                    if debuff_type == "weakness":
+                        target_player.weakness_turns = 2
+                        target_player.weakness_pct = 0.25
+                        logs.append(f"🌀 **Espectro Debilitante:** Aplica Debilidad (-25% daño infligido) a {target_player.user.display_name} por 2 turnos.")
+                    elif debuff_type == "fragility":
+                        target_player.fragility_turns = 2
+                        target_player.fragility_pct = 0.25
+                        logs.append(f"🌀 **Espectro Debilitante:** Aplica Fragilidad (-25% DEF) a {target_player.user.display_name} por 2 turnos.")
+                    elif debuff_type == "ceguera":
+                        target_player.blinded_turns = 2
+                        logs.append(f"🌀 **Espectro Debilitante:** Aplica Ceguera (50% probabilidad de fallo) a {target_player.user.display_name} por 2 turnos.")
 
         # 4. Procesar acciones de jugadores
         total_damage_dealt_this_turn = 0
@@ -577,111 +1105,830 @@ class RaidCombatView(discord.ui.View):
             is_magic = False
             crit = False
 
+            # Resolver el objetivo activo
+            alive_minions = [m for m in self.minions if m["hp"] > 0]
+            if alive_minions:
+                active_target = alive_minions[0]
+            else:
+                active_target = self.boss
+
+            # Verificación de ceguera (50% de probabilidad de fallo)
+            if p.blinded_turns > 0 and action != "defend" and action != "timeout":
+                if random.random() < 0.5:
+                    logs.append(f"👁️ **Ceguera:** ¡{p.user.display_name} está cegado y falla su acción!")
+                    continue
+
             if action == 'attack':
                 # Ataque normal (daño físico)
                 effective_atk = p.atk
-                if p.atk_debuff_turns > 0:
-                    effective_atk = int(p.atk * (1.0 - p.atk_debuff_pct))
+                if p.atk_buff_turns > 0:
+                    effective_atk = int(effective_atk * (1.0 + p.atk_buff_pct))
+                if p.weakness_turns > 0:
+                    effective_atk = int(effective_atk * (1.0 - p.weakness_pct))
 
                 base_dmg = effective_atk * random.uniform(0.85, 1.15)
-                reduction = self.boss.def_stat * 0.35
-                damage = max(1, int(base_dmg - reduction))
+                
+                # Obtener la defensa del objetivo y aplicar Fragilidad si tiene
+                target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                    target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                    target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
 
-                # Crítico 10% (o 20% con crit_boost)
-                crit_chance = 0.20 if p.has_crit_boost else 0.10
+                damage = max(1, int(base_dmg - target_def * 0.35))
+
+                # Crítico 10% (o más con crit_boost y crit_chance_bonus de Duelista)
+                crit_chance = 0.10
+                if p.has_crit_boost:
+                    crit_chance += 0.10
+                crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
+                
                 crit = random.random() < crit_chance
                 if crit:
-                    damage = int(damage * 1.5)
-
-            elif action == 'class_special':
-                # Habilidad especial de clase
-                if p.combat_class == 'Guerrero':
-                    # Daño físico 50% y taunt
-                    damage = max(1, int(p.atk * 0.5 * random.uniform(0.9, 1.1) - self.boss.def_stat * 0.35))
-                    p.is_taunting = True
-                    p.class_ability_cooldown = 3
-                    logs.append(f"🛡️ **{p.user.display_name}** usa **Provocación**.")
-                elif p.combat_class == 'Mago':
-                    # Daño mágico masivo
-                    damage = max(1, int(p.mag * 2.2 * random.uniform(0.85, 1.15) - self.boss.def_stat * 0.20))
-                    is_magic = True
-                    p.class_ability_cooldown = 3
-                    logs.append(f"🔮 **{p.user.display_name}** usa **Explosión Arcana**.")
-                elif p.combat_class == 'Pícaro':
-                    # Daño físico y veneno al jefe
-                    damage = max(1, int(p.atk * 1.5 * random.uniform(0.9, 1.1) - self.boss.def_stat * 0.35))
-                    self.boss_poison_turns = 3
-                    self.boss_poison_damage = 20
-                    p.class_ability_cooldown = 3
-                    logs.append(f"🗡️ **{p.user.display_name}** usa **Emboscada** e inflige veneno.")
-                elif p.combat_class == 'Clérigo':
-                    # Curación grupal (mágica)
-                    heal = int(p.mag * 1.0)
-                    for target_p in self.players:
-                        if not target_p.is_dead:
-                            target_p.hp = min(target_p.max_hp, target_p.hp + heal)
-                    p.class_ability_cooldown = 4
-                    logs.append(f"💚 **{p.user.display_name}** usa **Plegaria Celestial** y cura **{heal}** HP a todo el grupo.")
-                elif p.combat_class == 'Paladín':
-                    # Escuda al aliado con menor porcentaje de HP
-                    target_p = min([target for target in self.players if not target.is_dead], key=lambda x: x.hp / x.max_hp)
-                    shield_val = int(p.max_hp * 0.2)
-                    target_p.shield = shield_val
-                    p.class_ability_cooldown = 4
-                    logs.append(f"✨ **{p.user.display_name}** usa **Baluarte Sagrado** escudando a {target_p.user.display_name} por **{shield_val}**.")
+                    crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
+                    damage = int(damage * crit_mult)
+                    crit_text = " **¡CRÍTICO BRUTAL!**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **¡CRÍTICO!**"
+                else:
+                    crit_text = ""
 
             elif action == 'defend':
                 p.is_defending = True
-                heal = calc_defend_heal(p.max_hp)
-                # Si tiene parry, no recibe la curación normal de defender
+                
+                # Taunt pasivo al Defender
+                has_taunt_subclass = p.combat_subclass in ["Centinela", "Guardián Sagrado", "Guardián de la Fe"]
+                if has_taunt_subclass and p.taunt_cooldown == 0:
+                    p.taunt_cooldown = 4 if p.combat_subclass == "Guardián de la Fe" else 3
+                    p.taunt_turns = 3  # Dura 2 turnos activos
+                    if p.combat_subclass == "Guardián Sagrado":
+                        shield_amt = int(p.max_hp * 0.05)
+                        p.shield += shield_amt
+                        logs.append(f"🛡️ **Taunt Pasivo:** {p.user.display_name} activa Taunt y obtiene un escudo de **{shield_amt}** HP.")
+                    else:
+                        logs.append(f"🛡️ **Taunt Pasivo:** {p.user.display_name} activa Taunt!")
+
+                # Curación de defensa
                 if not p.has_parry:
-                    p.hp = min(p.max_hp, p.hp + heal)
-                    logs.append(f"🛡️ {p.user.display_name} se defiende y recupera **{heal}** HP.")
+                    heal = calc_defend_heal(p.max_hp)
+                    if p.anti_heal_turns == 0:
+                        p.hp = min(p.max_hp, p.hp + heal)
+                        logs.append(f"🛡️ {p.user.display_name} se defiende y recupera **{heal}** HP.")
+                    else:
+                        logs.append(f"🛡️ {p.user.display_name} se defiende pero no puede curarse debido a la anti-curación.")
                 else:
                     logs.append(f"🛡️ {p.user.display_name} se prepara para parar y contraatacar.")
 
             elif action == 'timeout':
                 logs.append(f"⏰ {p.user.display_name} no respondió a tiempo.")
 
+            else:
+                # Es un lanzamiento de habilidad especial
+                cfg = SKILLS_CONFIG.get(action)
+                if cfg:
+                    # Aplicar enfriamiento
+                    skill_cd = cfg.get("cooldown", 3)
+                    has_mana_residual = any(pass_item['id'] == 'mana_residual' for pass_item in p.passives)
+                    if has_mana_residual:
+                        skill_cd = max(1, skill_cd - 1)
+
+                    if cfg.get("min_level") == 10:
+                        p.skill10_cooldown = skill_cd
+                    elif cfg.get("min_level") == 15:
+                        p.skill15_cooldown = skill_cd
+                    else:
+                        p.special_cooldown = skill_cd
+
+                    # Procesar cada habilidad específica
+                    if action == "ceguera":
+                        if hasattr(active_target, 'blinded_turns'):
+                            active_target.blinded_turns = cfg["turns"] + 1
+                        else:
+                            active_target["blinded_turns"] = cfg["turns"] + 1
+                        logs.append(f"👁️ **Tierra a los ojos:** {p.user.display_name} lanza tierra a los ojos de {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "frenesi":
+                        p.frenzy_turns = cfg["turns"] + 1
+                        logs.append(f"⚔️ **Frenesí de Batalla:** {p.user.display_name} entra en Frenesí (+ATK, -DEF)!")
+                    
+                    elif action == "represalia":
+                        p.retribution_active = True
+                        logs.append(f"🛡️ **Postura de Represalia:** {p.user.display_name} adopta la Postura de Represalia!")
+                    
+                    elif action == "veneno":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        
+                        if hasattr(active_target, 'poison_turns'):
+                            if self.boss_poison_turns == 0:
+                                self.boss_poison_damage = 10
+                            else:
+                                self.boss_poison_damage = min(30, self.boss_poison_damage + 10)
+                            self.boss_poison_turns = cfg["turns"] + 1
+                        else:
+                            if active_target.get("poison_turns", 0) == 0:
+                                active_target["poison_damage"] = 10
+                            else:
+                                active_target["poison_damage"] = min(30, active_target.get("poison_damage", 0) + 10)
+                            active_target["poison_turns"] = cfg["turns"] + 1
+                        logs.append(f"🧪 **Daga Envenenada:** {p.user.display_name} usa Daga Envenenada e inflige veneno a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "quemadura":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        if hasattr(active_target, 'burn_turns'):
+                            self.boss.burn_turns = cfg["turns"] + 1
+                        else:
+                            active_target["burn_turns"] = cfg["turns"] + 1
+                        logs.append(f"🔥 **Tormenta de Fuego:** {p.user.display_name} usa Tormenta de Fuego y quema a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "drenaje":
+                        drain_pct = cfg["drain_pct"] + p.subclass_extras.get("extra_drain_pct", 0.0)
+                        target_hp = active_target.hp if hasattr(active_target, 'hp') else active_target["hp"]
+                        steal_amt = max(1, int(target_hp * drain_pct))
+                        
+                        if hasattr(active_target, 'hp'):
+                            active_target.hp = max(0, active_target.hp - steal_amt)
+                            if self.boss_channeling:
+                                self.boss_channeled_damage += steal_amt
+                            total_damage_dealt_this_turn += steal_amt
+                        else:
+                            active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            if active_target["hp"] <= 0:
+                                logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
+                                
+                        if p.anti_heal_turns == 0:
+                            heal_amt = min(p.max_hp - p.hp, steal_amt)
+                            p.hp += heal_amt
+                            logs.append(f"⚕️ **Drenaje Sagrado:** {p.user.display_name} drena **{steal_amt}** HP y se cura **{heal_amt}** HP.")
+                        else:
+                            logs.append(f"⚕️ **Drenaje Sagrado:** {p.user.display_name} drena **{steal_amt}** HP, pero no puede curarse.")
+                            
+                        # Limpiar debuffs propios
+                        p.poison_turns = 0
+                        p.atk_debuff_turns = 0
+                        p.atk = p.base_atk
+                        p.stun_turns = 0
+                        p.weakness_turns = 0
+                        p.fragility_turns = 0
+                        p.vulnerability_turns = 0
+                        p.anti_heal_turns = 0
+                        
+                    # Habilidades de Subclase Nivel 10 / 15
+                    elif action == "golpe_escudo":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        
+                        if hasattr(active_target, 'stun_turns'):
+                            if active_target.frozen_turns > 0:
+                                active_target.frozen_turns += 1
+                            else:
+                                active_target.stun_turns = cfg["stun_turns"] + 1
+                        else:
+                            if active_target.get("frozen_turns", 0) > 0:
+                                active_target["frozen_turns"] += 1
+                            else:
+                                active_target["stun_turns"] = cfg["stun_turns"] + 1
+                        logs.append(f"🛡️ **Golpe de Escudo:** {p.user.display_name} aturde a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "muralla_inquebrantable":
+                        logs.append(f"🏰 **Muralla Inquebrantable:** ¡{p.user.display_name} protege a todo el grupo, reduciendo el daño recibido un 50%!")
+                        for target_p in alive:
+                            target_p.damage_reduction_turns = cfg["duration"] + 1
+                            target_p.damage_reduction_pct = cfg["damage_reduction_pct"]
+                        damage = 0
+                    
+                    elif action == "golpe_desesperado":
+                        raw_dmg = int(p.atk * cfg["base_damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        hp_ratio = p.hp / p.max_hp
+                        hp_mult = 1.0 / max(0.01, hp_ratio)
+                        raw_dmg = int(raw_dmg * hp_mult)
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        logs.append(f"💢 **Golpe Desesperado:** {p.user.display_name} causa daño desesperado (HP mult: {hp_mult:.2f}x)!")
+                    
+                    elif action == "sed_sangre":
+                        sacrifice = int(p.hp * cfg["hp_sacrifice_pct"])
+                        p.hp = max(1, p.hp - sacrifice)
+                        p.atk_buff_turns = cfg["buff_duration"] + 1
+                        p.atk_buff_pct = cfg["atk_buff_pct"]
+                        logs.append(f"🩸 **Sed de Sangre:** {p.user.display_name} sacrifica **{sacrifice}** HP a cambio de +60% ATK por 3 turnos!")
+                        damage = 0
+                    
+                    elif action == "estocada_precisa":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        raw_dmg = int(raw_dmg * 1.5)  # Crítico garantizado
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        logs.append(f"🎯 **Estocada Precisa:** {p.user.display_name} asesta un crítico directo!")
+                    
+                    elif action == "ejecucion":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_hp = active_target.hp if hasattr(active_target, 'hp') else active_target["hp"]
+                        target_max = active_target.max_hp if hasattr(active_target, 'max_hp') else active_target["max_hp"]
+                        is_low = (target_hp / target_max) < cfg["execute_threshold_pct"]
+                        if is_low:
+                            raw_dmg = int(raw_dmg * cfg["execute_bonus_mult"])
+                            detail = " **(¡Ejecución!)**"
+                        else:
+                            detail = ""
+                            
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        logs.append(f"⚔️ **Ejecución:** {p.user.display_name} causa daño físico{detail}!")
+                    
+                    elif action == "escudo_compartido":
+                        target_p = min(alive, key=lambda x: x.hp / x.max_hp)
+                        shield_val = int(p.max_hp * cfg["shield_pct_of_max_hp"])
+                        target_p.shield += shield_val
+                        logs.append(f"🛡️ **Escudo Compartido:** {p.user.display_name} otorga un escudo de **{shield_val}** HP a {target_p.user.display_name}.")
+                        damage = 0
+                    
+                    elif action == "aura_salvacion":
+                        logs.append(f"💛 **Aura de Salvación:** {p.user.display_name} desata un aura protectora y curativa para todo el grupo!")
+                        for target_p in alive:
+                            target_p.shield += int(p.max_hp * cfg["shield_pct"])
+                            target_p.hot_turns = cfg["duration"] + 1
+                            target_p.hot_pct = cfg["hot_pct"]
+                        damage = 0
+                    
+                    elif action == "castigo_divino":
+                        raw_dmg = int(p.atk * cfg["base_damage_mult"]) + int(p.total_damage_taken * cfg["scaling_factor"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                            
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        logs.append(f"⚡ **Castigo Divino:** {p.user.display_name} causa **{damage}** daño (daño acumulado: +{int(p.total_damage_taken * cfg['scaling_factor'])}).")
+                    
+                    elif action == "juicio_final":
+                        p.juicio_final_turns = cfg["duration"] + 1
+                        p.juicio_final_reflect_pct = cfg["reflect_pct"]
+                        logs.append(f"⚖️ **Juicio Final:** {p.user.display_name} reflejará el 150% del daño recibido por 2 turnos.")
+                        damage = 0
+                    
+                    elif action == "estandarte_guerra":
+                        logs.append(f"🚩 **Estandarte de Guerra:** ¡{p.user.display_name} coloca un estandarte de guerra que aumenta el ATK de todo el grupo en 20% por 3 turnos!")
+                        for target_p in alive:
+                            target_p.atk_buff_turns = cfg["duration"] + 1
+                            target_p.atk_buff_pct = cfg["atk_buff_pct"]
+                        damage = 0
+                    
+                    elif action == "carga_sagrada":
+                        logs.append(f"⚔️ **Carga Sagrada:** ¡Todo el grupo realiza una carga ofensiva de ataques físicos!")
+                        for ally in alive:
+                            ally_atk = ally.atk
+                            if ally.atk_buff_turns > 0:
+                                ally_atk = int(ally_atk * (1.0 + ally.atk_buff_pct))
+                            if ally.weakness_turns > 0:
+                                ally_atk = int(ally_atk * (1.0 - ally.weakness_pct))
+                            
+                            base_dmg = ally_atk * random.uniform(0.85, 1.15)
+                            target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                            if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                                target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                            elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                                target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                                
+                            dmg = max(1, int(base_dmg - target_def * 0.35))
+                            
+                            # Modificador afijo
+                            if self.affix == "Inestabilidad Mágica":
+                                dmg = int(dmg * 0.7)
+                                
+                            if hasattr(active_target, 'hp'):
+                                active_target.hp = max(0, active_target.hp - dmg)
+                                total_damage_dealt_this_turn += dmg
+                                if self.boss_channeling:
+                                    self.boss_channeled_damage += dmg
+                            else:
+                                active_target["hp"] = max(0, active_target["hp"] - dmg)
+                                if active_target["hp"] <= 0:
+                                    logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
+                            logs.append(f"   → {ally.user.display_name} ataca por **{dmg}** daño.")
+                        damage = 0
+                        
+                    elif action == "golpe_sombras":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        # Daño doble si está envenenado
+                        is_poisoned = False
+                        if hasattr(active_target, 'hp'):
+                            is_poisoned = (self.boss_poison_turns > 0)
+                        else:
+                            is_poisoned = (active_target.get("poison_turns", 0) > 0)
+                            
+                        if is_poisoned:
+                            raw_dmg = int(raw_dmg * 2.0)
+                            detail = " **(¡Daño Duplicado por Veneno!)**"
+                        else:
+                            detail = ""
+                            
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        logs.append(f"🗡️ **Golpe en las Sombras:** {p.user.display_name} causa **{damage}** daño{detail}!")
+                    
+                    elif action == "ejecucion_sombria":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        
+                        extra_crit = 0.10 if p.has_crit_boost else 0.0
+                        extra_crit += p.subclass_extras.get("crit_chance_bonus", 0.0)
+                        crit = random.random() < (0.10 + extra_crit)
+                        if crit:
+                            crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
+                            damage = int(damage * crit_mult)
+                            logs.append(f"💀 **Ejecución Sombría:** ¡Crítico brutal! **{damage}** daño a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                        else:
+                            logs.append(f"💀 **Ejecución Sombría:** {p.user.display_name} causa **{damage}** daño.")
+                    
+                    elif action == "paso_fantasma":
+                        p.guaranteed_dodge_next = True
+                        p.taunt_turns = 0
+                        logs.append(f"👥 **Paso Fantasma:** {p.user.display_name} se desvanece y esquivará el próximo golpe.")
+                        damage = 0
+                    
+                    elif action == "danza_cuchillas":
+                        total_dmg = 0
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        for _ in range(cfg["hits"]):
+                            raw_dmg = int(p.atk * cfg["damage_mult_per_hit"])
+                            if p.atk_buff_turns > 0:
+                                raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                            if p.weakness_turns > 0:
+                                raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                            total_dmg += max(1, raw_dmg - int(target_def * cfg["def_mitigation_factor"]))
+                        
+                        p.evasion_buff_turns = cfg["evasion_buff_duration"] + 1
+                        p.evasion_buff_pct = cfg["evasion_buff_pct"]
+                        damage = total_dmg
+                        logs.append(f"💃 **Danza de Cuchillas:** {p.user.display_name} ataca 3 veces causando **{damage}** daño y aumenta su Evasión.")
+                    
+                    elif action == "trampa_aconito":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        
+                        if hasattr(active_target, 'weakness_turns'):
+                            active_target.weakness_turns = cfg["debuff_duration"] + 1
+                            active_target.weakness_pct = cfg["debuff_value"]
+                        else:
+                            active_target["weakness_turns"] = cfg["debuff_duration"] + 1
+                            active_target["weakness_pct"] = cfg["debuff_value"]
+                        logs.append(f"🕸️ **Trampa de Acónito:** {p.user.display_name} causa **{damage}** daño y debilita a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "enjambre_trampas":
+                        raw_dmg = int(p.atk * cfg["damage_mult"])
+                        if p.atk_buff_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            raw_dmg = int(raw_dmg * (1.0 - p.weakness_pct))
+                        
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        
+                        # Aplicar debuffs
+                        if hasattr(active_target, 'weakness_turns'):
+                            active_target.weakness_turns = 4
+                            active_target.weakness_pct = 0.20
+                            active_target.fragility_turns = 4
+                            active_target.fragility_pct = 0.20
+                            if self.boss_poison_turns == 0:
+                                self.boss_poison_damage = 10
+                            else:
+                                self.boss_poison_damage = min(30, self.boss_poison_damage + 10)
+                            self.boss_poison_turns = 4
+                        else:
+                            active_target["weakness_turns"] = 4
+                            active_target["weakness_pct"] = 0.20
+                            active_target["fragility_turns"] = 4
+                            active_target["fragility_pct"] = 0.20
+                            if active_target.get("poison_turns", 0) == 0:
+                                active_target["poison_damage"] = 10
+                            else:
+                                active_target["poison_damage"] = min(30, active_target.get("poison_damage", 0) + 10)
+                            active_target["poison_turns"] = 4
+                        logs.append(f"🕸️ **Enjambre de Trampas:** {p.user.display_name} causa **{damage}** daño e inflige Veneno, Debilidad y Fragilidad a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "llamarada":
+                        logs.append(f"🔥 **Llamarada:** ¡{p.user.display_name} lanza fuego en área a los enemigos!")
+                        is_magic = True
+                        all_enemies = [self.boss] + [m for m in self.minions if m["hp"] > 0]
+                        for enemy in all_enemies:
+                            raw_dmg = int(p.mag * cfg["damage_mult"])
+                            enemy_def = enemy.def_stat if hasattr(enemy, 'def_stat') else enemy.get("def_stat", 10)
+                            if hasattr(enemy, 'fragility_turns') and enemy.fragility_turns > 0:
+                                enemy_def = int(enemy_def * (1.0 - enemy.fragility_pct))
+                            elif isinstance(enemy, dict) and enemy.get("fragility_turns", 0) > 0:
+                                enemy_def = int(enemy_def * (1.0 - enemy.get("fragility_pct", 0.0)))
+                                
+                            dmg = max(1, raw_dmg - int(enemy_def * cfg["def_mitigation_factor"]))
+                            
+                            # Modificador afijo
+                            if self.affix == "Inestabilidad Mágica":
+                                dmg = int(dmg * 1.4)
+                                
+                            if hasattr(enemy, 'hp'):
+                                enemy.hp = max(0, enemy.hp - dmg)
+                                total_damage_dealt_this_turn += dmg
+                                if self.boss_channeling:
+                                    self.boss_channeled_damage += dmg
+                                enemy.burn_turns = cfg["burn_duration"] + 1
+                            else:
+                                if isinstance(enemy, dict) and enemy.get("archetype") == "escudo":
+                                    dmg = max(1, int(dmg * 0.5))
+                                    logs.append(f"   🛡️ **Guardián de Escudo:** ¡{enemy['name']} reduce el daño recibido un 50%!")
+                                enemy["hp"] = max(0, enemy["hp"] - dmg)
+                                if enemy["hp"] <= 0:
+                                    logs.append(f"💀 **{enemy['name']}** ha sido destruido!")
+                                enemy["burn_turns"] = cfg["burn_duration"] + 1
+                            logs.append(f"   → {enemy.name if hasattr(enemy, 'name') else enemy['name']}: **{dmg}** daño + Quemadura.")
+                        damage = 0
+                        
+                    elif action == "cataclismo_fuego":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        if hasattr(active_target, 'burn_turns'):
+                            active_target.burn_turns = cfg["burn_duration"] + 1
+                            active_target.enhanced_burn_turns = cfg["burn_duration"] + 1
+                        else:
+                            active_target["burn_turns"] = cfg["burn_duration"] + 1
+                            active_target["enhanced_burn_turns"] = cfg["burn_duration"] + 1
+                        logs.append(f"☄️ **Cataclismo de Fuego:** {p.user.display_name} causa **{damage}** daño e inflige Quemadura Reforzada a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "onda_escarcha":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        if hasattr(active_target, 'stun_turns'):
+                            if active_target.stun_turns > 0:
+                                active_target.stun_turns += 1
+                            else:
+                                active_target.frozen_turns = cfg["freeze_turns"] + 1
+                        else:
+                            if active_target.get("stun_turns", 0) > 0:
+                                active_target["stun_turns"] += 1
+                            else:
+                                active_target["frozen_turns"] = cfg["freeze_turns"] + 1
+                        logs.append(f"❄️ **Onda de Escarcha:** {p.user.display_name} causa **{damage}** daño y congela a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "tormenta_elemental":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        if hasattr(active_target, 'burn_turns'):
+                            active_target.burn_turns = cfg["burn_duration"] + 1
+                            if active_target.stun_turns > 0:
+                                active_target.stun_turns += 1
+                            else:
+                                active_target.frozen_turns = cfg["freeze_turns"] + 1
+                        else:
+                            active_target["burn_turns"] = cfg["burn_duration"] + 1
+                            if active_target.get("stun_turns", 0) > 0:
+                                active_target["stun_turns"] += 1
+                            else:
+                                active_target["frozen_turns"] = cfg["freeze_turns"] + 1
+                        logs.append(f"🌪️ **Tormenta Elemental:** {p.user.display_name} causa **{damage}** daño, quema y congela a {active_target.name if hasattr(active_target, 'name') else active_target['name']}!")
+                    
+                    elif action == "sobrecarga_arcana":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        self_dmg = int(p.hp * cfg["self_damage_pct"])
+                        p.hp = max(1, p.hp - self_dmg)
+                        logs.append(f"💥 **Sobrecarga Arcana:** {p.user.display_name} causa **{damage}** daño y sufre **{self_dmg}** HP autodaño.")
+                    
+                    elif action == "singularidad":
+                        raw_dmg = int(p.mag * cfg["damage_mult"])
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                            
+                        def_mitig = int(target_def * cfg["def_mitigation_factor"])
+                        damage = max(1, raw_dmg - def_mitig)
+                        is_magic = True
+                        
+                        self_dmg = int(p.hp * cfg["self_damage_pct"])
+                        p.hp = max(1, p.hp - self_dmg)
+                        p.vulnerability_turns = cfg["vulnerability_after_turns"] + 1
+                        p.vulnerability_pct = cfg["vulnerability_pct"]
+                        logs.append(f"🌌 **Singularidad:** {p.user.display_name} causa **{damage}** daño, sufre **{self_dmg}** HP autodaño y se vuelve vulnerable.")
+                    
+                    elif action == "luz_curativa":
+                        target_p = min(alive, key=lambda x: x.hp / x.max_hp)
+                        if target_p.anti_heal_turns > 0:
+                            logs.append(f"🚫 **Luz Curativa:** {p.user.display_name} intenta curar a {target_p.user.display_name}, pero tiene anti-cura.")
+                        else:
+                            heal_val = int(target_p.max_hp * cfg["heal_pct_of_max_hp"]) + p.subclass_extras.get("heal_power", 0)
+                            target_p.hp = min(target_p.max_hp, target_p.hp + heal_val)
+                            logs.append(f"💚 **Luz Curativa:** {p.user.display_name} cura a {target_p.user.display_name} por **{heal_val}** HP.")
+                        damage = 0
+                    
+                    elif action == "resurreccion_parcial":
+                        dead_players = [pl for pl in self.players if pl.is_dead]
+                        if dead_players:
+                            target_dead = dead_players[0]
+                            target_dead.is_dead = False
+                            revive_amt = int(target_dead.max_hp * cfg["revive_hp_pct"]) + p.subclass_extras.get("heal_power", 0)
+                            target_dead.hp = revive_amt
+                            logs.append(f"✝️ **Resurrección Parcial:** ¡{p.user.display_name} revive a {target_dead.user.display_name} con **{revive_amt}** HP!")
+                        else:
+                            if p.anti_heal_turns > 0:
+                                logs.append(f"🚫 **Resurrección Parcial:** {p.user.display_name} se intentó curar, pero tiene anti-cura.")
+                            else:
+                                heal_val = int(p.max_hp * cfg["self_heal_in_duel_pct"]) + p.subclass_extras.get("heal_power", 0)
+                                p.hp = min(p.max_hp, p.hp + heal_val)
+                                logs.append(f"✝️ **Resurrección Parcial:** No hay aliados caídos. ¡{p.user.display_name} se cura **{heal_val}** HP!")
+                        damage = 0
+                    
+                    elif action == "pacto_sangre":
+                        drain_pct = cfg["drain_pct"] + p.subclass_extras.get("extra_drain_pct", 0.0)
+                        target_hp = active_target.hp if hasattr(active_target, 'hp') else active_target["hp"]
+                        steal_amt = max(1, int(target_hp * drain_pct))
+                        
+                        if hasattr(active_target, 'hp'):
+                            active_target.hp = max(0, active_target.hp - steal_amt)
+                            if self.boss_channeling:
+                                self.boss_channeled_damage += steal_amt
+                            total_damage_dealt_this_turn += steal_amt
+                        else:
+                            active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            if active_target["hp"] <= 0:
+                                logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
+                                
+                        if p.anti_heal_turns == 0:
+                            heal_amt = min(p.max_hp - p.hp, steal_amt)
+                            p.hp += heal_amt
+                            logs.append(f"🖤 **Pacto de Sangre:** {p.user.display_name} drena **{steal_amt}** HP de {active_target.name if hasattr(active_target, 'name') else active_target['name']} y se cura **{heal_amt}** HP.")
+                        else:
+                            logs.append(f"🖤 **Pacto de Sangre:** {p.user.display_name} drena **{steal_amt}** HP, pero no puede curarse.")
+                            
+                        if hasattr(active_target, 'anti_heal_turns'):
+                            active_target.anti_heal_turns = cfg["anti_heal_duration"] + 1
+                        else:
+                            active_target["anti_heal_turns"] = cfg["anti_heal_duration"] + 1
+                        damage = 0
+                    
+                    elif action == "consumir_alma":
+                        target_hp = active_target.hp if hasattr(active_target, 'hp') else active_target["hp"]
+                        target_max = active_target.max_hp if hasattr(active_target, 'max_hp') else active_target["max_hp"]
+                        is_low = (target_hp / target_max) < cfg["execute_threshold_pct"]
+                        drain_pct = cfg["execute_drain_pct"] if is_low else cfg["base_drain_pct"]
+                        drain_pct += p.subclass_extras.get("extra_drain_pct", 0.0)
+                        steal_amt = max(1, int(target_hp * drain_pct))
+                        
+                        if hasattr(active_target, 'hp'):
+                            active_target.hp = max(0, active_target.hp - steal_amt)
+                            if self.boss_channeling:
+                                self.boss_channeled_damage += steal_amt
+                            total_damage_dealt_this_turn += steal_amt
+                        else:
+                            active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            if active_target["hp"] <= 0:
+                                logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
+                                
+                        if p.anti_heal_turns == 0:
+                            heal_amt = min(p.max_hp - p.hp, steal_amt)
+                            p.hp += heal_amt
+                            detail = " **(¡Ejecución!)**" if is_low else ""
+                            logs.append(f"👁️ **Consumir Alma:** {p.user.display_name} drena **{steal_amt}** HP de {active_target.name if hasattr(active_target, 'name') else active_target['name']}{detail} y se cura **{heal_amt}** HP.")
+                        else:
+                            detail = " **(¡Ejecución!)**" if is_low else ""
+                            logs.append(f"👁️ **Consumir Alma:** {p.user.display_name} drena **{steal_amt}** HP de {active_target.name if hasattr(active_target, 'name') else active_target['name']}{detail}, pero no puede curarse.")
+                        damage = 0
+                    
+                    elif action == "bendicion_hierro":
+                        target_p = min(alive, key=lambda x: x.hp / x.max_hp)
+                        shield_val = int(p.max_hp * cfg["shield_pct_of_max_hp"])
+                        target_p.shield += shield_val
+                        logs.append(f"🛡️ **Bendición de Hierro:** {p.user.display_name} otorga un escudo de **{shield_val}** HP a {target_p.user.display_name}.")
+                        damage = 0
+                    
+                    elif action == "santuario":
+                        logs.append(f"🏛️ **Santuario:** ¡{p.user.display_name} purifica a todo el grupo y les otorga un escudo!")
+                        for target_p in alive:
+                            target_p.shield += int(p.max_hp * cfg["shield_pct"])
+                            target_p.poison_turns = 0
+                            target_p.atk_debuff_turns = 0
+                            target_p.atk = target_p.base_atk
+                            target_p.stun_turns = 0
+                            target_p.weakness_turns = 0
+                            target_p.fragility_turns = 0
+                            target_p.vulnerability_turns = 0
+                            target_p.anti_heal_turns = 0
+                        damage = 0
+
             # Pasivo: Furia creciente (+10% daño cuando HP < 30%)
             if p.has_fury and (p.hp / p.max_hp) < 0.30 and damage > 0:
                 damage = int(damage * 1.10)
                 logs.append(f"🔥 **Furia Creciente:** ¡{p.user.display_name} inflige un 10% más de daño!")
 
-            # Aplicar modificadores de afijo "Inestabilidad Mágica"
+            # Aplicar modificadores de afijo "Inestabilidad Mágica" y Vulnerability combinados
             if damage > 0:
-                if is_magic:
-                    if self.affix == "Inestabilidad Mágica":
-                        damage = int(damage * 1.4)
-                        logs.append("🌀 **Inestabilidad Mágica:** Daño mágico aumentado un 40%.")
+                amp_pct = 0.0
+                if is_magic and self.affix == "Inestabilidad Mágica":
+                    amp_pct += 0.40
+                    logs.append("🌀 **Inestabilidad Mágica:** Daño mágico aumentado un 40% (base).")
+                
+                # Check target vulnerability
+                active_target = alive_minions[0] if alive_minions else self.boss
+                if isinstance(active_target, dict):
+                    if active_target.get("vulnerability_turns", 0) > 0:
+                        amp_pct += active_target.get("vulnerability_pct", 0.0)
                 else:
-                    if self.affix == "Inestabilidad Mágica":
-                        damage = int(damage * 0.7)
-                        logs.append("🌀 **Inestabilidad Mágica:** Daño físico reducido un 30%.")
+                    if active_target.vulnerability_turns > 0:
+                        amp_pct += active_target.vulnerability_pct
+                
+                amp_pct = min(0.75, amp_pct)
+                damage = int(damage * (1.0 + amp_pct))
+                
+                if not is_magic and self.affix == "Inestabilidad Mágica":
+                    damage = int(damage * 0.7)
+                    logs.append("🌀 **Inestabilidad Mágica:** Daño físico reducido un 30%.")
 
                 # Redirigir a esbirros si están activos
-                alive_minions = [m for m in self.minions if m["hp"] > 0]
                 if alive_minions:
                     target_minion = alive_minions[0]
+                    if target_minion.get("archetype") == "escudo":
+                        damage = max(1, int(damage * 0.5))
+                        logs.append(f"🛡️ **Guardián de Escudo:** ¡{target_minion['name']} reduce el daño recibido un 50%!")
                     target_minion["hp"] = max(0, target_minion["hp"] - damage)
+                    if not is_magic:
+                        target_minion["last_physical_damage_taken"] = damage
                     logs.append(f"   → Daño redirigido a {target_minion['name']}: **{damage}** daño.")
                     if target_minion["hp"] <= 0:
                         logs.append(f"💀 **{target_minion['name']}** ha sido destruido!")
                 else:
                     # Daño al jefe
                     self.boss.hp = max(0, self.boss.hp - damage)
+                    if not is_magic:
+                        self.boss.last_physical_damage_taken = damage
                     total_damage_dealt_this_turn += damage
                     # Acumular daño para la verificación de canalización
                     if self.boss_channeling:
                         self.boss_channeled_damage += damage
-                    crit_text = " **¡CRÍTICO!**" if crit else ""
-                    logs.append(f"   → Daño al jefe: **{damage}** daño{crit_text}.")
+                    
+                    crit_str = crit_text if 'crit_text' in locals() else ""
+                    logs.append(f"   → Daño al jefe: **{damage}** daño{crit_str}.")
 
                 # Pasivo: Vampirismo (cura 8% del daño infligido)
                 if p.has_vampirism:
-                    vamp_heal = max(1, int(damage * 0.08))
-                    p.hp = min(p.max_hp, p.hp + vamp_heal)
-                    logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
+                    if p.anti_heal_turns == 0:
+                        vamp_heal = max(1, int(damage * 0.08))
+                        p.hp = min(p.max_hp, p.hp + vamp_heal)
+                        logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
 
         # 5. ¿Boss derrotado?
         if self.boss.hp <= 0:
@@ -703,9 +1950,24 @@ class RaidCombatView(discord.ui.View):
             return
 
         boss_attacked = False
+        boss_stunned = False
+
+        if getattr(self.boss, "is_intangible", False):
+            logs.append(f"👻 **Espíritu Errante:** {self.boss.name} flota de forma fantasmal y no ataca este turno.")
+            boss_attacked = True
+
+        # Comprobar si el boss está aturdido
+        elif self.boss.stun_turns > 0:
+            self.boss.stun_turns -= 1
+            logs.append(f"💫 **¡{self.boss.name} está aturdido y no puede actuar este turno!**")
+            if self.boss_channeling:
+                self.boss_channeling = False
+                logs.append(f"✨ **¡INTERRUMPIDO!** El aturdimiento de {self.boss.name} interrumpe su ataque definitivo.")
+            boss_attacked = True
+            boss_stunned = True
 
         # Si el boss estaba canalizando su Ultimate, resolver la canalización
-        if self.boss_channeling:
+        if not boss_attacked and self.boss_channeling:
             self.boss_channeling = False
             # Registrar daño acumulado
             if self.boss_channeled_damage >= self.boss_channeling_threshold:
@@ -713,6 +1975,9 @@ class RaidCombatView(discord.ui.View):
             else:
                 logs.append(f"💥 **¡FALLIDO!** El grupo solo infligió {self.boss_channeled_damage}/{self.boss_channeling_threshold} daño. {self.boss.name} desata su golpe definitivo!")
                 ult_dmg = int(self.boss.atk * 2.5)
+                # Weakness on Boss
+                if self.boss.weakness_turns > 0:
+                    ult_dmg = int(ult_dmg * (1.0 - self.boss.weakness_pct))
                 # Daño en área masivo a todos los jugadores
                 for target_p in alive:
                     apply_damage_to_player(target_p, ult_dmg, is_boss_attack=True)
@@ -720,25 +1985,37 @@ class RaidCombatView(discord.ui.View):
 
         # Si no atacó con su Ultimate, realizar su ataque normal / especial
         if not boss_attacked:
-            # Comprobar provocación (taunt)
-            taunters = [p for p in alive if p.is_taunting]
+            # Comprobar provocación (taunt) activa
+            taunters = [p for p in alive if p.taunt_turns > 0 or p.is_taunting]
             if taunters:
                 target = random.choice(taunters)
             else:
                 target = random.choice(alive)
 
-            # Modificador del afijo "Enfurecido"
-            boss_atk_val = self.boss.atk
-            if self.affix == "Enfurecido" and (self.boss.hp / self.boss.max_hp) < 0.35:
-                boss_atk_val = int(boss_atk_val * 1.30)
-                logs.append(f"⚡ **Enfurecido:** ¡{self.boss.name} ruge con furia, aumentando su ATK!")
+            # Comprobar ceguera en Boss
+            if self.boss.blinded_turns > 0:
+                self.boss.blinded_turns -= 1
+                if random.random() < 0.40:
+                    logs.append(f"👁️ **Ceguera:** ¡{self.boss.name} está cegado y falla su ataque!")
+                    boss_attacked = True
 
-            boss_dmg = int(boss_atk_val * random.uniform(0.85, 1.15))
-            logs.append(f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name}:")
-            apply_damage_to_player(target, boss_dmg, is_boss_attack=True)
+            if not boss_attacked:
+                # Modificador del afijo "Enfurecido"
+                boss_atk_val = self.boss.atk
+                if self.affix == "Enfurecido" and (self.boss.hp / self.boss.max_hp) < 0.35:
+                    boss_atk_val = int(boss_atk_val * 1.30)
+                    logs.append(f"⚡ **Enfurecido:** ¡{self.boss.name} ruge con furia, aumentando su ATK!")
 
-            # Habilidad especial del boss (cada 3 turnos, si no está aturdido)
-            if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0:
+                # Weakness on Boss
+                if self.boss.weakness_turns > 0:
+                    boss_atk_val = int(boss_atk_val * (1.0 - self.boss.weakness_pct))
+
+                boss_dmg = int(boss_atk_val * random.uniform(0.85, 1.15))
+                logs.append(f"{self.boss.emoji} {self.boss.name} ataca a {target.user.display_name}:")
+                apply_damage_to_player(target, boss_dmg, is_boss_attack=True)
+
+            # Habilidad especial del boss (cada 3 turnos, si no está aturdido ni intangible)
+            if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0 and not boss_stunned and not getattr(self.boss, "is_intangible", False):
                 special_logs = self._execute_boss_ability()
                 logs.extend(special_logs)
 
@@ -746,6 +2023,8 @@ class RaidCombatView(discord.ui.View):
         if self.boss_poison_turns > 0:
             self.boss.hp = max(0, self.boss.hp - self.boss_poison_damage)
             self.boss_poison_turns -= 1
+            if self.boss_poison_turns == 0:
+                self.boss_poison_damage = 0
             logs.append(f"🧪 **Veneno del Pícaro:** {self.boss.name} sufre **{self.boss_poison_damage}** daño por veneno.")
             if self.boss.hp <= 0:
                 self.game_over = True
@@ -760,10 +2039,137 @@ class RaidCombatView(discord.ui.View):
         for p in self.players:
             p.is_defending = False
             p.is_taunting = False
-            if p.class_ability_cooldown > 0:
-                p.class_ability_cooldown -= 1
+            if p.frozen_turns > 0:
+                # Si está congelado, los cooldowns no se reducen
+                pass
+            else:
+                if p.class_ability_cooldown > 0:
+                    p.class_ability_cooldown -= 1
+                if p.special_cooldown > 0:
+                    p.special_cooldown -= 1
+                if p.skill10_cooldown > 0:
+                    p.skill10_cooldown -= 1
+                if p.skill15_cooldown > 0:
+                    p.skill15_cooldown -= 1
+            if p.taunt_cooldown > 0:
+                p.taunt_cooldown -= 1
+            if p.taunt_turns > 0:
+                p.taunt_turns -= 1
+            if p.damage_reduction_turns > 0:
+                p.damage_reduction_turns -= 1
+            if p.atk_buff_turns > 0:
+                p.atk_buff_turns -= 1
+            if p.juicio_final_turns > 0:
+                p.juicio_final_turns -= 1
+            if p.evasion_buff_turns > 0:
+                p.evasion_buff_turns -= 1
+            if p.anti_heal_turns > 0:
+                p.anti_heal_turns -= 1
+            if p.weakness_turns > 0:
+                p.weakness_turns -= 1
+            if p.fragility_turns > 0:
+                p.fragility_turns -= 1
+            if p.vulnerability_turns > 0:
+                p.vulnerability_turns -= 1
+            if p.blinded_turns > 0:
+                p.blinded_turns -= 1
+            if p.hot_turns > 0:
+                p.hot_turns -= 1
+            if p.stun_turns > 0:
+                p.stun_turns -= 1
+            if p.frozen_turns > 0:
+                p.frozen_turns -= 1
+            if p.silence_turns > 0:
+                p.silence_turns -= 1
+            if p.frenzy_turns > 0:
+                p.frenzy_turns -= 1
+            if p.bleed_turns > 0 and not p.is_dead:
+                b_dmg = max(1, int(p.last_physical_damage_taken * p.bleed_source_pct))
+                p.hp = max(0, p.hp - b_dmg)
+                p.bleed_turns -= 1
+                logs.append(f"🩸 **Sangrado:** {p.user.display_name} sufre **{b_dmg}** HP de daño por sangrado.")
+                if p.hp <= 0:
+                    p.is_dead = True
+                    logs.append(f"💀 **{p.user.display_name}** ha caído por sangrado!")
             if not p.is_dead:
                 p.turns_survived += 1
+
+        # Decrementar debuffs del Boss
+        if self.boss.weakness_turns > 0:
+            self.boss.weakness_turns -= 1
+        if self.boss.fragility_turns > 0:
+            self.boss.fragility_turns -= 1
+        if self.boss.vulnerability_turns > 0:
+            self.boss.vulnerability_turns -= 1
+        if self.boss.frozen_turns > 0:
+            self.boss.frozen_turns -= 1
+        if self.boss.silence_turns > 0:
+            self.boss.silence_turns -= 1
+        if self.boss.bleed_turns > 0 and self.boss.hp > 0:
+            b_dmg = max(1, int(self.boss.last_physical_damage_taken * self.boss.bleed_source_pct))
+            self.boss.hp = max(0, self.boss.hp - b_dmg)
+            self.boss.bleed_turns -= 1
+            logs.append(f"🩸 **Sangrado del Boss:** {self.boss.name} sufre **{b_dmg}** HP de daño por sangrado.")
+            if self.boss.hp <= 0:
+                self.game_over = True
+                logs.append(f"🎉 **¡{self.boss.name} ha caído por sangrado!**")
+                self.action_log.extend(logs)
+                await self._finish_raid(interaction, victory=True)
+                return
+
+        # Decrementar debuffs de los Esbirros
+        for m in self.minions:
+            if m.get("hp", 0) > 0:
+                if m.get("weakness_turns", 0) > 0:
+                    m["weakness_turns"] -= 1
+                if m.get("fragility_turns", 0) > 0:
+                    m["fragility_turns"] -= 1
+                if m.get("vulnerability_turns", 0) > 0:
+                    m["vulnerability_turns"] -= 1
+                if m.get("stun_turns", 0) > 0:
+                    m["stun_turns"] -= 1
+                if m.get("frozen_turns", 0) > 0:
+                    m["frozen_turns"] -= 1
+                if m.get("silence_turns", 0) > 0:
+                    m["silence_turns"] -= 1
+                if m.get("bleed_turns", 0) > 0:
+                    b_dmg = max(1, int(m.get("last_physical_damage_taken", 0) * m.get("bleed_source_pct", 0.06)))
+                    m["hp"] = max(0, m["hp"] - b_dmg)
+                    m["bleed_turns"] -= 1
+                    logs.append(f"🩸 **Sangrado:** {m['name']} sufre **{b_dmg}** HP de daño por sangrado.")
+                    if m["hp"] <= 0:
+                        logs.append(f"💀 **{m['name']}** ha sido destruido por sangrado!")
+
+        # Procesar comportamientos de esbirros al final del turno (healer, explosive)
+        for m in self.minions:
+            if m.get("hp", 0) > 0:
+                # Si está aturdido o congelado, no actúa
+                if m.get("stun_turns", 0) > 0 or m.get("frozen_turns", 0) > 0:
+                    continue
+
+                arch_type = m.get("archetype")
+                if arch_type == "curandero" and self.boss.hp > 0:
+                    # Cura 4% del HP máx del boss
+                    heal_amt = int(self.boss.max_hp * 0.04)
+                    self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal_amt)
+                    logs.append(f"💚 **Espíritu Curandero:** Cura a **{self.boss.name}** por **{heal_amt}** HP.")
+                elif arch_type == "explosivo":
+                    # Incrementar contador
+                    m["fuse_counter"] = m.get("fuse_counter", 0) + 1
+                    if m["fuse_counter"] == 2:
+                        logs.append(f"💣 **¡{m['name']} va a detonar el próximo turno!** ¡Destrúyelo rápido!")
+                    elif m["fuse_counter"] >= 3:
+                        logs.append(f"💥 **¡{m['name']} ha detonado!**")
+                        # Daño: 15% del atk del boss a todos los jugadores
+                        raw_dmg = int(self.boss.atk * 0.15)
+                        alive_players = self._alive_players()
+                        for p in alive_players:
+                            apply_damage_to_player(p, raw_dmg, is_boss_attack=True)
+                            logs.append(f"   → {p.user.display_name} recibe daño por la explosión.")
+                        # Auto-destrucción
+                        m["hp"] = 0
+                        logs.append(f"💀 **{m['name']}** se ha auto-destruido con la explosión!")
+
         self.actions.clear()
 
         # Comprobar si el próximo turno es de canalización (rondas 5, 10, 15...)
@@ -834,103 +2240,94 @@ class RaidCombatView(discord.ui.View):
         ab_type = ability["type"]
         logs.append(f"\n{ability['emoji']} **¡{self.boss.name} usa {ability['name']}!**")
 
-        if ab_type == "aoe_damage":
-            # Daño a todos los jugadores
+        if ab_type == "none":
+            target = random.choice(alive)
+            base = int(self.boss.atk)
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
+            dmg = int(base * random.uniform(0.85, 1.15))
+            logs.append(f"   → Dirigido a {target.user.display_name}:")
+            apply_damage_to_player(target, dmg, is_boss_attack=True)
+
+        elif ab_type == "aoe_damage":
             base = int(self.boss.atk * ability["damage_mult"])
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                if p.is_defending:
-                    dmg = max(1, int(dmg * 0.4))
-                p.hp = max(0, p.hp - dmg)
-                logs.append(f"   → {p.user.display_name}: **{dmg}** daño")
-                if p.hp <= 0:
-                    p.is_dead = True
-                    logs.append(f"   💀 **{p.user.display_name}** ha caído!")
+                apply_damage_to_player(p, dmg, is_boss_attack=True)
 
         elif ab_type == "single_target_dot":
-            # Daño + veneno al jugador con más HP
-            target = max(alive, key=lambda p: p.hp)
+            taunters = [p for p in alive if p.taunt_turns > 0 or p.is_taunting]
+            if taunters:
+                target = random.choice(taunters)
+            else:
+                target = max(alive, key=lambda p: p.hp)
             base = int(self.boss.atk * ability["damage_mult"])
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
             dmg = int(base * random.uniform(0.85, 1.15))
-            if target.is_defending:
-                dmg = max(1, int(dmg * 0.4))
-            target.hp = max(0, target.hp - dmg)
-            target.poison_turns = ability["dot_turns"]
-            target.poison_damage = ability["dot_damage"]
-            logs.append(
-                f"   → Muerde a {target.user.display_name}: **{dmg}** daño "
-                f"+ 🧪 Envenenado ({ability['dot_damage']}/t por {ability['dot_turns']} turnos)"
-            )
-            if target.hp <= 0:
-                target.is_dead = True
-                logs.append(f"   💀 **{target.user.display_name}** ha caído!")
+            logs.append(f"   → Dirigido a {target.user.display_name}:")
+            apply_damage_to_player(target, dmg, is_boss_attack=True)
+            if not target.is_dead:
+                if target.poison_turns == 0:
+                    target.poison_damage = 10
+                else:
+                    target.poison_damage = min(30, target.poison_damage + 10)
+                target.poison_turns = ability["dot_turns"]
+                logs.append(f"   🧪 {target.user.display_name} queda envenenado ({ability['dot_damage']}/t por {ability['dot_turns']} turnos).")
 
         elif ab_type == "aoe_damage_heal":
-            # Daño a todos + boss se cura
             base = int(self.boss.atk * ability["damage_mult"])
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                if p.is_defending:
-                    dmg = max(1, int(dmg * 0.4))
-                p.hp = max(0, p.hp - dmg)
-                logs.append(f"   → {p.user.display_name}: **{dmg}** daño")
-                if p.hp <= 0:
-                    p.is_dead = True
-                    logs.append(f"   💀 **{p.user.display_name}** ha caído!")
+                apply_damage_to_player(p, dmg, is_boss_attack=True)
 
             heal = int(self.boss.max_hp * ability["heal_pct"])
             self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
             logs.append(f"   💚 {self.boss.name} se regenera **{heal}** HP.")
 
         elif ab_type == "aoe_drain":
-            # Roba HP de todos
             total_drained = 0
             for p in alive:
                 drain = max(1, int(p.hp * ability["drain_pct"]))
                 if p.is_defending:
                     drain = max(1, int(drain * 0.5))
-                p.hp = max(0, p.hp - drain)
-                total_drained += drain
-                logs.append(f"   → Drena {p.user.display_name}: **{drain}** HP robado")
-                if p.hp <= 0:
-                    p.is_dead = True
-                    logs.append(f"   💀 **{p.user.display_name}** ha caído!")
+                old_hp = p.hp
+                apply_damage_to_player(p, drain, is_boss_attack=True)
+                actual_lost = max(0, old_hp - p.hp)
+                total_drained += actual_lost
             self.boss.hp = min(self.boss.max_hp, self.boss.hp + total_drained)
             logs.append(f"   💜 {self.boss.name} se cura **{total_drained}** HP con la energía robada.")
 
         elif ab_type == "aoe_debuff":
-            # Daño + reduce ATK de todos
             base = int(self.boss.atk * ability["damage_mult"])
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                if p.is_defending:
-                    dmg = max(1, int(dmg * 0.4))
-                p.hp = max(0, p.hp - dmg)
-                p.atk_debuff_turns = ability["debuff_turns"]
-                p.atk_debuff_pct = ability["atk_reduction_pct"]
-                logs.append(
-                    f"   → {p.user.display_name}: **{dmg}** daño + ❄️ ATK -{int(ability['atk_reduction_pct']*100)}% "
-                    f"por {ability['debuff_turns']} turnos"
-                )
-                if p.hp <= 0:
-                    p.is_dead = True
-                    logs.append(f"   💀 **{p.user.display_name}** ha caído!")
+                apply_damage_to_player(p, dmg, is_boss_attack=True)
+                if not p.is_dead:
+                    p.atk_debuff_turns = ability["debuff_turns"]
+                    p.atk_debuff_pct = ability["atk_reduction_pct"]
+                    logs.append(f"   → ❄️ {p.user.display_name} sufre reducción de ATK -{int(ability['atk_reduction_pct']*100)}% por {ability['debuff_turns']} turnos.")
 
         elif ab_type == "single_nuke":
-            # Daño masivo a 1 jugador aleatorio
-            target = random.choice(alive)
+            taunters = [p for p in alive if p.taunt_turns > 0 or p.is_taunting]
+            if taunters:
+                target = random.choice(taunters)
+            else:
+                target = random.choice(alive)
             base = int(self.boss.atk * ability["damage_mult"])
+            if self.boss.weakness_turns > 0:
+                base = int(base * (1.0 - self.boss.weakness_pct))
             dmg = int(base * random.uniform(0.90, 1.10))
-            if target.is_defending:
-                dmg = max(1, int(dmg * 0.4))
-            target.hp = max(0, target.hp - dmg)
-            logs.append(f"   ⚡ ¡{self.boss.name} lanza un rayo devastador a {target.user.display_name}! **{dmg}** daño")
-            if target.hp <= 0:
-                target.is_dead = True
-                logs.append(f"   💀 **{target.user.display_name}** ha caído!")
+            logs.append(f"   ⚡ ¡{self.boss.name} lanza un rayo devastador a {target.user.display_name}!")
+            apply_damage_to_player(target, dmg, is_boss_attack=True)
 
         elif ab_type == "self_buff":
-            # Muta stats del boss aleatoriamente
             low, high = ability["stat_shuffle_range"]
             atk_mult = random.uniform(low, high)
             def_mult = random.uniform(low, high)
@@ -1041,7 +2438,7 @@ class RaidCombatView(discord.ui.View):
             await asyncio.to_thread(
                 log_raid, self.boss.name, participants_data,
                 "victory" if victory else "defeat",
-                self.turn_count, total_level
+                self.turn_count, total_level, self.difficulty
             )
         except Exception as e:
             logger.error(f"Error al registrar log de raid: {e}", exc_info=True)
@@ -1073,9 +2470,16 @@ class RaidCombatView(discord.ui.View):
         if self.interaction_msg:
             channel = self.interaction_msg.channel
 
+        is_mimic = (victory and getattr(self.boss, "miniboss_key", None) == "cofre_mimetico")
+
         for p in self.players:
             # Determinar tasa de drop y bonus de rareza
-            if victory:
+            if is_mimic:
+                from src.utils.raid_config import MINIBOSS_LOOT_RARITY_BONUS
+                drop_rate = 1.0
+                rarity_bonus = MINIBOSS_LOOT_RARITY_BONUS
+                label = "Victoria (Miniboss)"
+            elif victory:
                 if not p.is_dead:
                     drop_rate = RAID_DROP_RATE_VICTORY_ALIVE
                     rarity_bonus = RAID_RARITY_BONUS_VICTORY
@@ -1545,7 +2949,7 @@ class RaidLootRollView(discord.ui.View):
         await self._resolve()
 
 
-def log_raid(boss_name: str, participants: list, result: str, turns: int, total_level: int):
+def log_raid(boss_name: str, participants: list, result: str, turns: int, total_level: int, difficulty: str = "normal"):
     """Registra una raid completada en la base de datos."""
     import psycopg2.extras
     with db_cursor() as cursor:
@@ -1558,13 +2962,73 @@ def log_raid(boss_name: str, participants: list, result: str, turns: int, total_
                 Result VARCHAR(10),
                 Turns INT,
                 TotalLevel INT,
-                Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                Difficulty VARCHAR(10) DEFAULT 'normal'
             )
         """)
+        cursor.execute("ALTER TABLE RaidLog ADD COLUMN IF NOT EXISTS Difficulty VARCHAR(10) DEFAULT 'normal'")
         cursor.execute("""
-            INSERT INTO RaidLog (BossName, Participants, Result, Turns, TotalLevel)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (boss_name, psycopg2.extras.Json(participants), result, turns, total_level))
+            INSERT INTO RaidLog (BossName, Participants, Result, Turns, TotalLevel, Difficulty)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (boss_name, psycopg2.extras.Json(participants), result, turns, total_level, difficulty))
+
+
+def count_mythic_raids_today(user_id: int) -> int:
+    """Cuenta cuántas raids Míticas ha iniciado o participado un usuario hoy (hora del servidor/DB)."""
+    import psycopg2.extras
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT COUNT(*) FROM RaidLog
+            WHERE Difficulty = 'mitica'
+              AND Timestamp::date = CURRENT_DATE
+              AND Participants @> %s
+        """, (psycopg2.extras.Json([{"user_id": user_id}]),))
+        return cursor.fetchone()[0]
+
+
+def build_minions_from_pool(boss_config: dict) -> list[dict]:
+    import random
+    from src.utils.raid_config import MINION_ARCHETYPES
+
+    pool = boss_config.get("minion_pool")
+    if pool is None:  # Caso Abyssus: 2 random
+        pool = random.sample(list(MINION_ARCHETYPES.keys()), 2)
+    minions = []
+    for key in pool:
+        arch = MINION_ARCHETYPES[key]
+        minions.append({
+            "name": arch["name"], "archetype": key, "hp": arch["hp"], "max_hp": arch["hp"],
+            "def_stat": arch["def_stat"],
+            "stun_turns": 0, "weakness_turns": 0, "weakness_pct": 0.0,
+            "fragility_turns": 0, "fragility_pct": 0.0, "vulnerability_turns": 0, "vulnerability_pct": 0.0,
+            "burn_turns": 0, "poison_turns": 0, "poison_damage": 0,
+            "frozen_turns": 0, "silence_turns": 0, "bleed_turns": 0, "bleed_source_pct": 0.06,
+            "last_physical_damage_taken": 0,
+            "fuse_counter": 0,  # Solo usado por Explosivo
+        })
+    return minions
+
+
+def build_miniboss_config(miniboss_key: str, miniboss_dict: dict) -> dict:
+    return {
+        "name": miniboss_dict["name"],
+        "emoji": miniboss_dict["emoji"],
+        "element": miniboss_dict.get("element", "Neutral"),
+        "color": miniboss_dict.get("color", 0x8B4513),
+        "base_hp": miniboss_dict["hp"],
+        "base_atk": miniboss_dict["atk"],
+        "base_def": miniboss_dict["def_stat"],
+        "hp": miniboss_dict["hp"],
+        "atk": miniboss_dict["atk"],
+        "def_stat": miniboss_dict["def_stat"],
+        "ability": miniboss_dict["ability"],
+        "lore": miniboss_dict["lore"],
+        "minion_pool": [],
+        "is_miniboss": True,
+        "miniboss_key": miniboss_key,
+        "guaranteed_loot": miniboss_dict.get("guaranteed_loot", False),
+        "invisibility_pattern": miniboss_dict.get("invisibility_pattern", False),
+    }
 
 
 # ══════════════════════════════════════════════
@@ -1595,9 +3059,17 @@ class RaidsCog(commands.Cog):
 
         # Cargar stats
         stats = await asyncio.to_thread(get_combat_stats, user_id)
+        equip = await asyncio.to_thread(get_user_equipment, user_id)
 
         # Obtener boss del día
         boss_config = get_today_boss()
+
+        # Roll miniboss
+        import random
+        from src.utils.raid_config import MINIBOSS_CHANCE, MINIBOSSES
+        if random.random() < MINIBOSS_CHANCE:
+            miniboss_key = random.choice(list(MINIBOSSES.keys()))
+            boss_config = build_miniboss_config(miniboss_key, MINIBOSSES[miniboss_key])
 
         # Marcar como activo
         self.active_raids.add(user_id)
@@ -1605,6 +3077,7 @@ class RaidsCog(commands.Cog):
         # Crear lobby
         lobby = RaidLobbyView(user, boss_config, self)
         lobby.player_stats[user_id] = stats
+        lobby.player_equipments[user_id] = equip
 
         embed = lobby._build_lobby_embed()
         await interaction.response.send_message(embed=embed, view=lobby)
@@ -1638,20 +3111,23 @@ class RaidsCog(commands.Cog):
         combatants = []
         for p in lobby.players:
             p_stats = lobby.player_stats.get(p.id, await asyncio.to_thread(get_combat_stats, p.id))
-            p_equip = await asyncio.to_thread(get_user_equipment, p.id)
+            p_equip = lobby.player_equipments.get(p.id, await asyncio.to_thread(get_user_equipment, p.id))
             combatants.append(RaidCombatant(
-                p, p_stats['level'], p_equip, p_stats.get('combat_class')
+                p, p_stats['level'], p_equip,
+                combat_class=p_stats.get('combat_class'),
+                combat_subclass=p_stats.get('combat_subclass')
             ))
 
         # Calcular stats del boss
-        total_level = sum(c.level for c in combatants)
-        boss = RaidBoss(boss_config, total_level)
+        from src.utils.combat_progression import calc_power_level
+        total_power = sum(calc_power_level(c.level, lobby.player_equipments.get(c.user.id, {}), c.combat_subclass) for c in combatants)
+        boss = RaidBoss(boss_config, total_power, lobby.difficulty, is_miniboss=boss_config.get("is_miniboss", False))
 
         # Seleccionar afijo aleatorio de la arena
         affix_name = random.choice(list(RAID_AFFIXES.keys()))
 
         # Crear vista de combate con afijo
-        combat_view = RaidCombatView(combatants, boss, self, affix=affix_name)
+        combat_view = RaidCombatView(combatants, boss, self, affix=affix_name, difficulty=lobby.difficulty)
         combat_embed = combat_view._build_embed()
 
         combat_msg = await interaction.followup.send(embed=combat_embed, view=combat_view)

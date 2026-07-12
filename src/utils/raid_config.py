@@ -103,6 +103,12 @@ BOSS_ABILITIES = {
         "type": "self_buff",           # Cambia stats del boss
         "stat_shuffle_range": (0.8, 1.3),  # Rango de multiplicador aleatorio
     },
+    "none": {
+        "name": "Ataque Normal",
+        "emoji": "⚔️",
+        "desc": "El enemigo ataca normalmente sin usar habilidades especiales.",
+        "type": "none",
+    },
 }
 
 # ──────────────────────────────────────────────
@@ -121,6 +127,7 @@ RAID_BOSSES = {
         "base_def": 18,
         "ability": "raices_estranguladoras",
         "lore": "El ancestral brote del árbol del mundo ha sido infectado por parásitos del abismo, volviéndolo hostil.",
+        "minion_pool": ["curandero", "debilitador"],
     },
     1: {  # Martes
         "name": "Ignis, el Coloso de Magma",
@@ -132,6 +139,7 @@ RAID_BOSSES = {
         "base_def": 10,
         "ability": "erupcion_volcanica",
         "lore": "Un gigante durmiente que emerge del núcleo terrestre cuando la presión volcánica se descontrola.",
+        "minion_pool": ["escudo", "explosivo"],
     },
     2: {  # Miércoles
         "name": "Caelum, la Tempestad Viviente",
@@ -143,6 +151,7 @@ RAID_BOSSES = {
         "base_def": 14,
         "ability": "tempestad_relampago",
         "lore": "Un elemental de viento gigante atrapado en el ojo de un huracán eterno cargado de electricidad.",
+        "minion_pool": ["debilitador", "explosivo"],
     },
     3: {  # Jueves
         "name": "Thanatos, el Segador de Almas",
@@ -154,6 +163,7 @@ RAID_BOSSES = {
         "base_def": 15,
         "ability": "guadaña_vacio",
         "lore": "El guardián espectral del inframundo que busca arrastrar a los intrusos hacia las sombras eternas.",
+        "minion_pool": ["curandero", "escudo"],
     },
     4: {  # Viernes
         "name": "Leviathán de la Fosa Glacial",
@@ -165,6 +175,7 @@ RAID_BOSSES = {
         "base_def": 16,
         "ability": "ventisca_glacial",
         "lore": "Una colosal serpiente marina que acecha bajo los glaciares eternos del norte.",
+        "minion_pool": ["escudo", "debilitador"],
     },
     5: {  # Sábado
         "name": "Aurelius, el Arcángel Caído",
@@ -176,6 +187,7 @@ RAID_BOSSES = {
         "base_def": 12,
         "ability": "juicio_sagrado",
         "lore": "Un antiguo protector celestial que fue desterrado por su soberbia y ahora juzga a los mortales con ira divina.",
+        "minion_pool": ["curandero", "explosivo"],
     },
     6: {  # Domingo
         "name": "Abyssus, el Devorador Estelar",
@@ -187,6 +199,7 @@ RAID_BOSSES = {
         "base_def": 13,
         "ability": "colapso_gravedad",
         "lore": "Un ente cósmico amorfo hecho de materia oscura que colapsa la física a su paso.",
+        "minion_pool": None,
     },
 }
 
@@ -202,29 +215,43 @@ def get_today_boss():
     return RAID_BOSSES[weekday]
 
 
-def calc_boss_stats(boss_config: dict, total_level: int) -> dict:
-    """Calcula los stats del boss escalados según la suma de niveles.
+RAID_LOW_LEVEL_FLOOR_THRESHOLD = 10  # Poder total combinado bajo el cual el boss no escala
 
-    Usa escalado con raíz cuadrada para evitar stats desorbitadas
-    cuando se unen muchos jugadores de nivel alto.
+RAID_DIFFICULTY_COEFS = {
+    "normal":  {"hp": 0.45, "atk": 0.28, "def": 0.22, "flat_mult": 1.0, "hp_flat_mult": 1.0},
+    "dificil": {"hp": 0.65, "atk": 0.40, "def": 0.32, "flat_mult": 1.0, "hp_flat_mult": 1.0},
+    "mitica":  {"hp": 0.90, "atk": 0.55, "def": 0.42, "flat_mult": 1.0, "hp_flat_mult": 1.0},
+}
+
+
+def calc_boss_stats(boss_config: dict, total_power: float = 0.0, difficulty: str = "normal", total_level: float | None = None) -> dict:
+    """Calcula los stats del boss escalados según el Poder de Combate total y la dificultad.
 
     Args:
         boss_config: dict del boss desde RAID_BOSSES
-        total_level: suma de niveles de combate de todos los participantes
+        total_power: suma de niveles equivalentes de combate de todos los participantes
+        difficulty: dificultad elegida ("normal", "dificil", "mitica")
+        total_level: parámetro legacy para retrocompatibilidad con tests y llamadas antiguas
 
     Returns:
         dict con hp, max_hp, atk, def_stat (escalados)
     """
     import math
 
-    # El escalado usa (total_level - 2) para que con 2 jugadores de nivel 1
-    # el boss tenga exactamente sus stats base.
-    # Se usa sqrt para que la curva sea suave y no explote con 4 jugadores.
-    scale_factor = max(0, total_level - 2)
+    if total_level is not None:
+        total_power = total_level
 
-    hp = int(boss_config["base_hp"] * (1 + 0.45 * math.sqrt(scale_factor)))
-    atk = int(boss_config["base_atk"] * (1 + 0.28 * math.sqrt(scale_factor)))
-    def_stat = int(boss_config["base_def"] * (1 + 0.22 * math.sqrt(scale_factor)))
+    coefs = RAID_DIFFICULTY_COEFS.get(difficulty, RAID_DIFFICULTY_COEFS["normal"])
+
+    # Piso: grupos con poder total bajo el umbral quedan casi en stats base
+    if total_power < RAID_LOW_LEVEL_FLOOR_THRESHOLD:
+        scale_factor = 0
+    else:
+        scale_factor = max(0, total_power - 2)
+
+    hp = int(round(boss_config["base_hp"] * (1 + coefs["hp"] * math.sqrt(scale_factor)) * coefs["hp_flat_mult"]))
+    atk = int(round(boss_config["base_atk"] * (1 + coefs["atk"] * math.sqrt(scale_factor)) * coefs["flat_mult"]))
+    def_stat = int(round(boss_config["base_def"] * (1 + coefs["def"] * math.sqrt(scale_factor)) * coefs["flat_mult"]))
 
     return {
         "hp": hp,
@@ -310,5 +337,64 @@ RAID_AFFIXES = {
         "name": "Niebla Venenosa",
         "emoji": "🧪",
         "desc": "Todos los jugadores reciben 5 de daño al inicio de cada ronda.",
+    },
+}
+
+# ──────────────────────────────────────────────
+# ESBIRROS: ARQUETIPOS
+# ──────────────────────────────────────────────
+
+MINION_ARCHETYPES = {
+    "escudo": {
+        "name": "Guardián de Escudo", "emoji": "🛡️",
+        "hp": 30, "def_stat": 15,
+        "role": "shield",  # Reduce 50% el daño que recibe él mismo
+    },
+    "curandero": {
+        "name": "Espíritu Curandero", "emoji": "💚",
+        "hp": 25, "def_stat": 8,
+        "role": "healer",  # Cura 4% HP máx del boss cada turno que sobreviva
+        "heal_pct": 0.04,
+    },
+    "explosivo": {
+        "name": "Núcleo Inestable", "emoji": "💣",
+        "hp": 20, "def_stat": 5,
+        "role": "explosive",  # Detona a los 3 turnos si sigue vivo
+        "fuse_turns": 3,
+        "explosion_pct_of_boss_atk": 0.15,
+    },
+    "debilitador": {
+        "name": "Espectro Debilitante", "emoji": "🌀",
+        "hp": 35, "def_stat": 12,
+        "role": "debuffer",  # Aplica debuff aleatorio a un jugador cada turno vivo
+    },
+}
+
+# ──────────────────────────────────────────────
+# MINIBOSSES ALEATORIOS
+# ──────────────────────────────────────────────
+
+MINIBOSS_CHANCE = 0.12  # 12% de probabilidad al usar /raid
+MINIBOSS_LOOT_RARITY_BONUS = 0.10
+
+MINIBOSSES = {
+    "cofre_mimetico": {
+        "name": "Cofre Mimético", "emoji": "🎁",
+        "element": "Físico",
+        "color": 0x8B4513,
+        "hp": 150, "atk": 15, "def_stat": 8,
+        "lore": "Un cofre que parpadea con un brillo sospechoso... ¡tiene dientes!",
+        "ability": "none",
+        "guaranteed_loot": True,
+    },
+    "espiritu_errante": {
+        "name": "Espíritu Errante", "emoji": "👻",
+        "element": "Espectral",
+        "color": 0xE0FFFF,
+        "hp": 200, "atk": 20, "def_stat": 10,
+        "lore": "Una presencia parpadeante que va y viene entre este mundo y el siguiente.",
+        "ability": "none",
+        "invisibility_pattern": True,  # Invisible cada 2do turno (tangible en turnos impares, intangible en pares)
+        "guaranteed_loot": False,
     },
 }

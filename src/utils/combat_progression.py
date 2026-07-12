@@ -26,6 +26,9 @@ LOOT_TIMEOUT_SECONDS = 120       # Segundos para decidir sobre un drop
 SPECIAL_UNLOCK_LEVEL = 1         # Nivel para desbloquear Especial
 SPECIAL_COOLDOWN_TURNS = 3       # Turnos de enfriamiento del Especial
 MAX_GEAR_BONUS_PCT = 0.40        # Tope de bonus de equipo (40%) por stat
+SOFTCAP_TIER2_EFFICIENCY = 0.50   # 100%-200% del cap
+SOFTCAP_TIER3_EFFICIENCY = 0.20   # 200%+ del cap
+
 
 # Las 4 estadísticas del sistema de combate
 ALL_STATS = ("atk", "mag", "def", "hp")
@@ -608,8 +611,126 @@ def calc_equipment_bonus(equipment_dict):
     return bonus, passives
 
 
+def apply_subclass_equipment_conversion(bonus: dict, subclass_name: str | None) -> tuple[dict, dict]:
+    """Aplica la conversión de equipo de la subclase al bonus base.
+
+    Modifica el dict de bonus in-place según las reglas de la subclase.
+    Retorna (bonus_modificado, extra_attributes) donde extra_attributes
+    contiene stats derivadas como crit_bonus, dodge_chance, heal_power, etc.
+
+    Args:
+        bonus: dict {'atk': N, 'mag': N, 'def': N, 'hp': N} del equipo
+        subclass_name: nombre de la subclase o None
+
+    Returns:
+        tuple (bonus_dict modificado, extra_attrs dict)
+        extra_attrs puede contener: crit_chance_bonus, crit_mult_bonus,
+        dodge_chance_bonus, heal_power, shield_pool, etc.
+    """
+    extra = {}
+    if not subclass_name:
+        return bonus, extra
+
+    from src.utils.subclass_config import SUBCLASSES
+    config = SUBCLASSES.get(subclass_name)
+    if not config:
+        return bonus, extra
+
+    conv = config.get("equipment_conversion")
+    if not conv:
+        return bonus, extra
+
+    conv_type = conv.get("type")
+
+    if conv_type == "effectiveness_bonus":
+        # Stats específicas del equipo rinden un % más
+        # Ej: Centinela → DEF y HP de equipo +12%
+        pct = conv.get("bonus_pct", 0.0)
+        for stat in conv.get("stats", []):
+            if stat in bonus:
+                bonus[stat] = int(bonus[stat] * (1.0 + pct))
+
+    elif conv_type == "convert_stat":
+        # Convierte un % de un stat de equipo en otro
+        from_stat = conv.get("from_stat", "")
+        to_stat = conv.get("to_stat", "")
+        pct = conv.get("convert_pct", 0.0)
+
+        if from_stat in bonus:
+            converted_amount = int(bonus[from_stat] * pct)
+            bonus[from_stat] -= converted_amount
+
+            # Stats normales (atk, mag, def, hp)
+            if to_stat in bonus:
+                bonus[to_stat] += converted_amount
+            # Stats especiales que no van al bonus normal
+            elif to_stat == "shield_pool":
+                extra["shield_pool"] = converted_amount
+            elif to_stat == "dodge_chance":
+                rate = conv.get("conversion_rate", 0.003)
+                extra["dodge_chance_bonus"] = min(0.30, converted_amount * rate)
+            elif to_stat == "heal_power":
+                extra["heal_power"] = converted_amount
+
+    elif conv_type == "special":
+        effect = conv.get("effect", "")
+
+        if effect == "atk_to_crit_chance":
+            # Duelista: ATK de equipo otorga % de probabilidad de crit
+            rate = conv.get("conversion_rate", 0.003)
+            extra["crit_chance_bonus"] = min(0.25, bonus.get("atk", 0) * rate)
+
+        elif effect == "atk_to_crit_multiplier":
+            # Asesino: ATK de equipo mejora multiplicador de crit
+            extra["crit_mult_bonus"] = conv.get("extra_crit_mult", 0.30)
+
+        elif effect == "improve_represalia":
+            # Vengador: mejora Represalia
+            extra["extra_reflect_pct"] = conv.get("extra_reflect_pct", 0.25)
+            extra["less_mitigation_pct"] = conv.get("less_mitigation_pct", 0.15)
+
+        elif effect == "atk_to_aura":
+            # Cruzado: parte del ATK se convierte en aura de buff
+            aura_pct = conv.get("aura_pct", 0.08)
+            extra["aura_atk_buff_pct"] = aura_pct
+
+        elif effect == "extend_debuffs":
+            # Trampero: equipo extiende la duración de debuffs
+            extra["debuff_extension_turns"] = conv.get("extra_turns", 1)
+
+        elif effect == "mag_boosts_burn_dot":
+            # Piromante: MAG de equipo aumenta daño por turno de quemadura
+            bonus_per_mag = conv.get("bonus_per_mag", 0.15)
+            extra["burn_dot_bonus"] = int(bonus.get("mag", 0) * bonus_per_mag)
+
+        elif effect == "mag_reduces_control_cooldowns":
+            # Elementalista: reduce cooldowns de sus habilidades de control
+            extra["cooldown_reduction"] = conv.get("cooldown_reduction", 1)
+
+        elif effect == "boost_lifesteal":
+            # Oscuro: aumenta % de robo de vida
+            extra["extra_drain_pct"] = conv.get("extra_drain_pct", 0.08)
+
+    return bonus, extra
+
+
+def apply_softcap(raw, cap):
+    """Convierte un stat crudo en su valor efectivo aplicando eficiencia decreciente por tramos."""
+    if cap <= 0:
+        return raw
+    if raw <= cap:
+        return raw
+    effective = cap
+    tramo2 = min(raw, cap * 2) - cap
+    effective += tramo2 * SOFTCAP_TIER2_EFFICIENCY
+    if raw > cap * 2:
+        tramo3 = raw - cap * 2
+        effective += tramo3 * SOFTCAP_TIER3_EFFICIENCY
+    return effective
+
+
 def get_effective_bonus(bonus, level):
-    """Aplica el tope de 40% independiente por stat. Retorna bonus efectivo y pct por stat."""
+    """Aplica el softcap por tramos a cada stat. Retorna bonus efectivo y pct de eficiencia por stat."""
     base = calc_base_stats(level)
     max_bonus = {stat: int(base[stat] * MAX_GEAR_BONUS_PCT) for stat in ALL_STATS}
     effective = {}
@@ -618,14 +739,32 @@ def get_effective_bonus(bonus, level):
     for stat in ALL_STATS:
         raw = bonus.get(stat, 0)
         cap = max_bonus[stat]
-        effective[stat] = min(raw, cap)
-        pct_per_stat[stat] = (raw / cap * 100) if cap > 0 else 0
+        effective[stat] = apply_softcap(raw, cap)
+        pct_per_stat[stat] = (effective[stat] / raw * 100) if raw > 0 else 100.0
 
-    # Porcentaje promedio global para la barra de resumen
-    avg_pct = sum(pct_per_stat.values()) / len(ALL_STATS) if ALL_STATS else 0
-    avg_pct = min(100.0, avg_pct)
+    # Porcentaje promedio global para la barra de resumen (eficiencia promedio)
+    avg_pct = sum(pct_per_stat.values()) / len(ALL_STATS) if ALL_STATS else 100.0
 
     return effective, avg_pct, pct_per_stat
+
+
+LEVEL_STAT_WEIGHT = 11  # 3 (atk) + 3 (mag) + 2*1.5 (def) + 20/10 (hp) — mismo ritmo que calc_base_stats
+
+def calc_power_level(level: int, equipment: dict, subclass_name: str | None = None) -> float:
+    """Retorna el 'nivel equivalente' de un jugador: nivel real + bonus de equipo
+    convertido a niveles usando la misma tasa de crecimiento que los stats base."""
+    bonus, passives = calc_equipment_bonus(equipment)
+    # Copiar bonus para evitar modificar el original in-place
+    bonus = bonus.copy()
+    bonus, _ = apply_subclass_equipment_conversion(bonus, subclass_name)
+    effective, _, _ = get_effective_bonus(bonus, level)
+    bonus_levels = (
+        effective.get("atk", 0)
+        + effective.get("mag", 0)
+        + effective.get("def", 0) * 1.5
+        + effective.get("hp", 0) / 10
+    ) / LEVEL_STAT_WEIGHT
+    return level + bonus_levels
 
 
 # ──────────────────────────────────────────────

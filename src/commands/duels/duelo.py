@@ -20,12 +20,13 @@ from src.db import (
     registrar_transaccion, transfer_balance, db_cursor,
     get_combat_stats, update_combat_stats_after_duel,
     log_duel, get_user_equipment, equip_item, get_duel_leaderboard,
-    update_user_class,
+    update_user_class, update_user_subclass, update_user_class_and_subclass,
 )
 from src.utils.combat_progression import (
     calc_base_stats, calc_duel_xp, get_duel_cooldown_minutes,
     calc_attack_damage, calc_special_damage, calc_defend_heal,
     calc_equipment_bonus, get_effective_bonus,
+    apply_subclass_equipment_conversion,
     generate_loot, calc_sell_price,
     format_progress_bar, format_hp_bar, format_stat_type,
     get_combat_rank, get_combat_rank_emoji, calc_combat_xp_needed,
@@ -37,6 +38,12 @@ from src.utils.combat_progression import (
     ALL_STATS, format_item_stats_display,
 )
 from src.utils.combat_config import SKILLS_CONFIG
+from src.utils.subclass_config import (
+    SUBCLASSES, SUBCLASS_TO_CLASS, CLASS_SUBCLASSES,
+    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL,
+    get_subclass_config, get_subclass_skills, get_available_subclasses,
+    get_all_subclass_info_for_display,
+)
 
 
 # ══════════════════════════════════════════════
@@ -46,28 +53,69 @@ from src.utils.combat_config import SKILLS_CONFIG
 class Combatant:
     """Estado de un jugador durante el combate."""
 
-    def __init__(self, user: discord.Member, level: int, equipment: dict, combat_class: str = None):
+    def __init__(self, user: discord.Member, level: int, equipment: dict,
+                 combat_class: str = None, combat_subclass: str = None):
         self.user = user
         self.level = level
         self.combat_class = combat_class
+        self.combat_subclass = combat_subclass
 
         # Stats base
         base = calc_base_stats(level)
         bonus, passives = calc_equipment_bonus(equipment)
+
+        # Aplicar conversión de equipo por subclase (antes del cap)
+        bonus, self.subclass_extras = apply_subclass_equipment_conversion(bonus, combat_subclass)
+
         effective, _, pct_per_stat = get_effective_bonus(bonus, level)
 
-        self.max_hp = base["hp"] + effective.get("hp", 0)
+        self.max_hp = base["hp"] + int(round(effective.get("hp", 0)))
         self.hp = self.max_hp
         self.pre_hit_hp = self.hp
-        self.atk = base["atk"] + effective.get("atk", 0)
-        self.mag = base["mag"] + effective.get("mag", 0)
-        self.def_stat = base["def"] + effective.get("def", 0)
+        self.atk = base["atk"] + int(round(effective.get("atk", 0)))
+        self.base_atk = self.atk  # Para restaurar tras debuffs
+        self.mag = base["mag"] + int(round(effective.get("mag", 0)))
+        self.def_stat = base["def"] + int(round(effective.get("def", 0)))
+
+        # Escudo de absorción de subclase (Guardián Sagrado, Guardián de la Fe)
+        self.shield = self.subclass_extras.get("shield_pool", 0)
 
         # Estado de combate
         self.is_defending = False
         self.special_cooldown = 0  # Turnos restantes de cooldown del Especial
+        self.skill10_cooldown = 0  # Cooldown de habilidad Nv.10
+        self.skill15_cooldown = 0  # Cooldown de habilidad Nv.15 (ultimate)
         self.consecutive_timeouts = 0
-        
+
+        # Estados de subclase (duelos)
+        self.stun_turns = 0                 # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
+        self.frozen_turns = 0               # Turnos congelado
+        self.silence_turns = 0              # Turnos silenciado
+        self.bleed_turns = 0                # Turnos sangrado
+        self.bleed_source_pct = 0.06        # 6% del último daño físico
+        self.last_physical_damage_taken = 0  # Para sangrado
+        self.damage_reduction_turns = 0     # Turnos de -X% daño recibido (Muralla)
+        self.damage_reduction_pct = 0.0
+        self.atk_buff_turns = 0             # Turnos de +X% ATK (Sed de Sangre, Estandarte)
+        self.atk_buff_pct = 0.0
+        self.juicio_final_turns = 0         # Reflejo 150% (Vengador ult)
+        self.juicio_final_reflect_pct = 0.0
+        self.evasion_buff_turns = 0         # Evasión extra (Danza de Cuchillas)
+        self.evasion_buff_pct = 0.0
+        self.guaranteed_dodge_next = False   # Paso Fantasma
+        self.anti_heal_turns = 0            # Impide curación (Pacto de Sangre)
+        self.weakness_turns = 0             # Debilidad: -ATK (Trampa de Acónito)
+        self.weakness_pct = 0.0
+        self.fragility_turns = 0            # Fragilidad: -DEF (Enjambre)
+        self.fragility_pct = 0.0
+        self.vulnerability_turns = 0        # Vulnerabilidad +daño recibido (Singularidad)
+        self.vulnerability_pct = 0.0
+        self.hot_turns = 0                  # Heal over time (Aura de Salvación)
+        self.hot_pct = 0.0
+        self.total_damage_taken = 0         # Acumulador para Castigo Divino
+        self.enhanced_burn_pct = 0.0        # Quemadura mejorada (Cataclismo)
+        self.enhanced_burn_turns = 0
+
         # Efectos pasivos de Legendario
         self.passives = passives
         self.used_second_wind = False
@@ -169,6 +217,28 @@ class ChallengeView(discord.ui.View):
 # VISTA: COMBATE POR TURNOS
 # ══════════════════════════════════════════════
 
+def get_combatant_available_skills(combatant):
+    available = []
+    for skill_id, skill in SKILLS_CONFIG.items():
+        if skill.get("class") is None:
+            # ceguera is only for classless
+            if combatant.combat_class is None:
+                available.append((skill_id, skill))
+        else:
+            # Class-specific skill
+            if combatant.combat_class == skill["class"]:
+                req_subclass = skill.get("subclass")
+                if req_subclass:
+                    # Subclass skill
+                    if combatant.combat_subclass == req_subclass and combatant.level >= skill["min_level"]:
+                        available.append((skill_id, skill))
+                else:
+                    # Base class skill
+                    if combatant.level >= skill["min_level"]:
+                        available.append((skill_id, skill))
+    return available
+
+
 class DuelView(discord.ui.View):
     """Vista principal del combate PvP por turnos simultáneos."""
 
@@ -179,6 +249,42 @@ class DuelView(discord.ui.View):
         self.bet = bet
         self.cog = cog
         
+        # Obtener las habilidades disponibles para ambos jugadores
+        p1_skills = get_combatant_available_skills(p1)
+        p2_skills = get_combatant_available_skills(p2)
+        
+        # Combinar sin duplicados
+        combined_skills = {}
+        for skill_id, skill in p1_skills + p2_skills:
+            combined_skills[skill_id] = skill
+            
+        # Re-poblar las opciones del select_special
+        select_menu = None
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                select_menu = child
+                break
+                
+        if select_menu:
+            if combined_skills:
+                select_menu.options = [
+                    discord.SelectOption(
+                        label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                        value=skill_id,
+                        emoji=skill['emoji'],
+                        description=skill['desc'][:100]
+                    ) for skill_id, skill in combined_skills.items()
+                ]
+            else:
+                select_menu.options = [
+                    discord.SelectOption(
+                        label="Sin habilidades disponibles",
+                        value="none",
+                        description="No tienes habilidades especiales disponibles."
+                    )
+                ]
+                select_menu.disabled = True
+
         # Elecciones de acción de cada jugador en la ronda actual
         self.p1_action = None  # 'attack', 'defend', 'special', 'timeout' o None
         self.p2_action = None
@@ -198,6 +304,8 @@ class DuelView(discord.ui.View):
         self.p2_burn_turns = 0
         self.p1_retribution_active = False
         self.p2_retribution_active = False
+        self.p1_poison_damage = 0
+        self.p2_poison_damage = 0
         
         self.turn_count = 0
         self.game_over = False
@@ -239,21 +347,53 @@ class DuelView(discord.ui.View):
             
             status_icons = ""
             if blind_turns > 0:
-                status_icons += f" 👁️(Cegado {blind_turns}t)"
+                status_icons += f" 👁️({blind_turns}t)"
             if frenzy_turns > 0:
                 status_icons += f" ⚔️(Frenesí {frenzy_turns}t)"
             if poison_turns > 0:
-                status_icons += f" 🧪(Envenenado {poison_turns}t)"
+                status_icons += f" 🧪({poison_turns}t)"
             if burn_turns > 0:
-                status_icons += f" 🔥(Quemado {burn_turns}t)"
+                status_icons += f" 🔥({burn_turns}t)"
+            if p.stun_turns > 0:
+                status_icons += f" 💫(Aturdido {p.stun_turns}t)"
+            if p.damage_reduction_turns > 0:
+                status_icons += f" 🏰(-{int(p.damage_reduction_pct*100)}% daño {p.damage_reduction_turns}t)"
+            if p.atk_buff_turns > 0:
+                status_icons += f" 💪(+{int(p.atk_buff_pct*100)}% ATK {p.atk_buff_turns}t)"
+            if p.juicio_final_turns > 0:
+                status_icons += f" ⚖️(Reflejo {p.juicio_final_turns}t)"
+            if p.evasion_buff_turns > 0:
+                status_icons += f" 💨(Evasión+ {p.evasion_buff_turns}t)"
+            if p.guaranteed_dodge_next:
+                status_icons += " 👻(Esquiva)"
+            if p.anti_heal_turns > 0:
+                status_icons += f" 🚫(Anti-cura {p.anti_heal_turns}t)"
+            if p.weakness_turns > 0:
+                status_icons += f" ❄️(Debil {p.weakness_turns}t)"
+            if p.fragility_turns > 0:
+                status_icons += f" 💔(Frágil {p.fragility_turns}t)"
+            if p.vulnerability_turns > 0:
+                status_icons += f" ⚠️(Vulner. {p.vulnerability_turns}t)"
+            if p.shield > 0:
+                status_icons += f" 🛡️({p.shield})"
             if p.special_cooldown > 0:
                 status_icons += f" ⏳({p.special_cooldown}t)"
+            if p.skill10_cooldown > 0:
+                status_icons += f" ⏳S10({p.skill10_cooldown}t)"
+            if p.skill15_cooldown > 0:
+                status_icons += f" ⏳ULT({p.skill15_cooldown}t)"
             
             passive_icons = ""
             for pass_item in p.passives:
                 passive_icons += f" {pass_item.get('emoji', '✨')}"
 
-            class_tag = f" [{p.combat_class}]" if p.combat_class else ""
+            # Mostrar subclase si la tiene, sino clase
+            if p.combat_subclass:
+                class_tag = f" [{p.combat_subclass}]"
+            elif p.combat_class:
+                class_tag = f" [{p.combat_class}]"
+            else:
+                class_tag = ""
             embed.add_field(
                 name=f"{rank_emoji} {p.user.display_name}{class_tag} (Nv.{p.level}){status_icons}{passive_icons}",
                 value=f"{hp_bar}\n⚔️ {p.atk} ATK · 🔮 {p.mag} MAG · 🛡️ {p.def_stat} DEF",
@@ -289,21 +429,27 @@ class DuelView(discord.ui.View):
             return
 
         user_id = interaction.user.id
+        cp = self.p1 if user_id == self.p1.user.id else self.p2 if user_id == self.p2.user.id else None
+        if cp is None:
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
+            return
+
+        if cp.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            return
+
         if user_id == self.p1.user.id:
             if self.p1_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p1_action = 'attack'
             self.p1.consecutive_timeouts = 0
-        elif user_id == self.p2.user.id:
+        else:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'attack'
             self.p2.consecutive_timeouts = 0
-        else:
-            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
-            return
 
         await self._check_and_resolve(interaction)
 
@@ -314,21 +460,27 @@ class DuelView(discord.ui.View):
             return
 
         user_id = interaction.user.id
+        cp = self.p1 if user_id == self.p1.user.id else self.p2 if user_id == self.p2.user.id else None
+        if cp is None:
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
+            return
+
+        if cp.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            return
+
         if user_id == self.p1.user.id:
             if self.p1_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p1_action = 'defend'
             self.p1.consecutive_timeouts = 0
-        elif user_id == self.p2.user.id:
+        else:
             if self.p2_action is not None:
                 await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
                 return
             self.p2_action = 'defend'
             self.p2.consecutive_timeouts = 0
-        else:
-            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
-            return
 
         await self._check_and_resolve(interaction)
 
@@ -358,12 +510,16 @@ class DuelView(discord.ui.View):
             await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
             return
 
-        if cp.special_cooldown > 0:
-            await interaction.response.send_message(
-                f"❌ Habilidad Especial en enfriamiento ({cp.special_cooldown} turnos restantes).",
-                ephemeral=True
-            )
-            # Re-edit para quitar la selección visual
+        if cp.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
+            return
+
+        if cp.silence_turns > 0:
+            await interaction.response.send_message("❌ Estás silenciado y no puedes usar habilidades especiales.", ephemeral=True)
             try:
                 await interaction.message.edit(view=self)
             except Exception:
@@ -376,6 +532,25 @@ class DuelView(discord.ui.View):
         req = SKILLS_CONFIG.get(selected_value)
         if not req:
             await interaction.response.send_message("❌ Habilidad desconocida.", ephemeral=True)
+            return
+
+        # Verificar cooldown adecuado
+        if req.get("min_level") == 10:
+            cd = cp.skill10_cooldown
+        elif req.get("min_level") == 15:
+            cd = cp.skill15_cooldown
+        else:
+            cd = cp.special_cooldown
+
+        if cd > 0:
+            await interaction.response.send_message(
+                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
             return
             
         if req["class"] is not None:
@@ -393,6 +568,19 @@ class DuelView(discord.ui.View):
             if cp.level >= 5 and cp.combat_class is not None:
                 await interaction.response.send_message(
                     "❌ Ya tienes una clase asignada. Debes usar la habilidad especial de tu clase.",
+                    ephemeral=True
+                )
+                try:
+                    await interaction.message.edit(view=self)
+                except Exception:
+                    pass
+                return
+
+        # Verificar subclase si aplica
+        if req.get("subclass") is not None:
+            if cp.combat_subclass != req["subclass"]:
+                await interaction.response.send_message(
+                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
                     ephemeral=True
                 )
                 try:
@@ -455,6 +643,14 @@ class DuelView(discord.ui.View):
         logs = []
         logs.append(f"🏁 **Ronda {self.turn_count + 1}:**")
 
+        # HoT Heal (Aura de Salvación)
+        for p in (self.p1, self.p2):
+            if p.hot_turns > 0 and p.hp > 0:
+                if p.anti_heal_turns == 0:
+                    hot_heal = int(p.max_hp * p.hot_pct)
+                    p.hp = min(p.max_hp, p.hp + hot_heal)
+                    logs.append(f"💚 **Aura de Salvación:** {p.user.display_name} se cura **{hot_heal}** HP por efecto gradual.")
+
         # 1. Aplicar regeneraciones pasivas de inicio de turno
         for p in (self.p1, self.p2):
             if any(p_item['id'] == 'regen' for p_item in p.passives) and p.hp > 0 and p.hp < p.max_hp:
@@ -485,7 +681,9 @@ class DuelView(discord.ui.View):
             sudden_death_tag = " ⚠️*(Muerte Súbita)*" if is_sudden_death else ""
             
             if p_turns > 0:
-                dot_val = SKILLS_CONFIG["veneno"]["dot_damage"]
+                dot_val = self.p1_poison_damage if defender == self.p1 else self.p2_poison_damage
+                if dot_val == 0:
+                    dot_val = SKILLS_CONFIG["veneno"]["dot_damage"]
                 if is_sudden_death:
                     dot_val = dot_val * 2
                 p_dmg = min(defender.hp, dot_val)
@@ -493,8 +691,11 @@ class DuelView(discord.ui.View):
                 logs.append(f"🧪 **Veneno:** {defender.user.display_name} sufre **{p_dmg}** HP de daño por veneno.{sudden_death_tag}")
                 
             if b_turns > 0:
-                dot_pct = SKILLS_CONFIG["quemadura"]["dot_max_hp_pct"]
+                caster = self.p2 if defender == self.p1 else self.p1
+                dot_pct = 0.08 if defender.enhanced_burn_turns > 0 else SKILLS_CONFIG["quemadura"]["dot_max_hp_pct"]
                 b_dmg_base = max(1, int(defender.max_hp * dot_pct))
+                if caster.combat_subclass == "Piromante":
+                    b_dmg_base += int(caster.mag * 0.15)
                 if is_sudden_death:
                     b_dmg_base = b_dmg_base * 2
                 b_dmg = min(defender.hp, b_dmg_base)
@@ -517,15 +718,38 @@ class DuelView(discord.ui.View):
                 self.p2.hp = min(self.p2.max_hp, self.p2.hp + heal)
                 logs.append(f"🛡️ {self.p2.user.display_name} se defiende y recupera **{heal}** HP.")
 
+        # Comprobar taunt pasivo de tanques al Defender
+        for p in (self.p1, self.p2):
+            if p.is_defending:
+                has_taunt_subclass = p.combat_subclass in ["Centinela", "Guardián Sagrado", "Guardián de la Fe"]
+                if has_taunt_subclass and p.taunt_cooldown == 0:
+                    p.taunt_cooldown = 4 if p.combat_subclass == "Guardián de la Fe" else 3
+                    if p.combat_subclass == "Guardián Sagrado":
+                        shield_amt = int(p.max_hp * 0.05)
+                        p.shield += shield_amt
+                        logs.append(f"🛡️ **Taunt Pasivo:** {p.user.display_name} activa Taunt y obtiene un escudo de **{shield_amt}** HP.")
+                    else:
+                        logs.append(f"🛡️ **Taunt Pasivo:** {p.user.display_name} activa Taunt!")
+
         # 2.5 Procesar lanzamientos de Habilidades Especiales (Buffs/Debuffs)
         for caster, target, act in ((self.p1, self.p2, p1_act), (self.p2, self.p1, p2_act)):
             if act == 'special':
-                # Aplicar cooldown de Especial
-                has_mana_residual = any(p['id'] == 'mana_residual' for p in caster.passives)
-                cooldown = (SPECIAL_COOLDOWN_TURNS - 1) if has_mana_residual else SPECIAL_COOLDOWN_TURNS
-                caster.special_cooldown = cooldown + 1 # +1 porque se decrementa al final de esta ronda
-                
                 special_id = self.p1_special_id if caster == self.p1 else self.p2_special_id
+                cfg = SKILLS_CONFIG.get(special_id) if special_id else SKILLS_CONFIG["ceguera"]
+                
+                # Cooldown calculations
+                has_mana_residual = any(p['id'] == 'mana_residual' for p in caster.passives)
+                skill_cd = cfg.get("cooldown", 3)
+                if has_mana_residual:
+                    skill_cd = max(1, skill_cd - 1)
+                
+                if cfg.get("min_level") == 10:
+                    caster.skill10_cooldown = skill_cd + 1  # +1 porque se decrementa al final de esta ronda
+                elif cfg.get("min_level") == 15:
+                    caster.skill15_cooldown = skill_cd + 1
+                else:
+                    caster.special_cooldown = skill_cd + 1
+                
                 if not special_id or special_id == "ceguera":
                     if target == self.p1:
                         self.p1_blinded_turns = 4 # 3 turnos + 1
@@ -556,33 +780,125 @@ class DuelView(discord.ui.View):
                     if caster == self.p1:
                         self.p1_blinded_turns = 0
                         self.p1_poison_turns = 0
+                        self.p1_poison_damage = 0
                         self.p1_burn_turns = 0
                     else:
                         self.p2_blinded_turns = 0
                         self.p2_poison_turns = 0
+                        self.p2_poison_damage = 0
                         self.p2_burn_turns = 0
                     sudden_death_tag = " ⚠️*(Muerte Súbita)*" if is_sudden_death else ""
                     logs.append(f"⚕️ **Drenaje Sagrado:** {caster.user.display_name} roba **{steal_amt}** HP a {target.user.display_name} y purifica todas sus condiciones!{sudden_death_tag}")
+                
+                # Habilidades Especiales de Subclase (Soporte / Instantáneas)
+                elif special_id == "sed_sangre":
+                    sacrifice = int(caster.hp * 0.25)
+                    caster.hp = max(1, caster.hp - sacrifice)
+                    caster.atk_buff_turns = 4
+                    caster.atk_buff_pct = 0.60
+                    logs.append(f"🩸 **Sed de Sangre:** {caster.user.display_name} sacrifica **{sacrifice}** HP y gana +60% ATK por 3 turnos.")
+                elif special_id == "estandarte_guerra":
+                    caster.atk_buff_turns = 4
+                    caster.atk_buff_pct = 0.20
+                    logs.append(f"🚩 **Estandarte de Guerra:** {caster.user.display_name} coloca un estandarte. ¡Gana +20% ATK por 3 turnos!")
+                elif special_id == "escudo_compartido":
+                    shield_val = int(caster.max_hp * 0.20)
+                    caster.shield += shield_val
+                    logs.append(f"🛡️ **Escudo Compartido:** {caster.user.display_name} obtiene un escudo de **{shield_val}** HP.")
+                elif special_id == "bendicion_hierro":
+                    shield_val = int(caster.max_hp * 0.18)
+                    caster.shield += shield_val
+                    logs.append(f"🛡️ **Bendición de Hierro:** {caster.user.display_name} se protege con un escudo de **{shield_val}** HP.")
+                elif special_id == "paso_fantasma":
+                    caster.guaranteed_dodge_next = True
+                    logs.append(f"👥 **Paso Fantasma:** {caster.user.display_name} se desvanece en las sombras. ¡Esquivará el próximo ataque!")
+                elif special_id == "luz_curativa":
+                    if caster.anti_heal_turns > 0:
+                        logs.append(f"🚫 **Luz Curativa:** {caster.user.display_name} intentó curarse, pero está afectado por anti-cura.")
+                    else:
+                        heal_val = int(caster.max_hp * 0.25) + caster.subclass_extras.get("heal_power", 0)
+                        caster.hp = min(caster.max_hp, caster.hp + heal_val)
+                        logs.append(f"💚 **Luz Curativa:** {caster.user.display_name} se cura **{heal_val}** HP.")
+                elif special_id == "resurreccion_parcial":
+                    if caster.anti_heal_turns > 0:
+                        logs.append(f"🚫 **Resurrección Parcial:** {caster.user.display_name} intentó curarse, pero está afectado por anti-cura.")
+                    else:
+                        heal_val = int(caster.max_hp * 0.40) + caster.subclass_extras.get("heal_power", 0)
+                        caster.hp = min(caster.max_hp, caster.hp + heal_val)
+                        logs.append(f"💚 **Resurrección Parcial:** {caster.user.display_name} se cura **{heal_val}** HP.")
+                elif special_id == "santuario":
+                    shield_val = int(caster.max_hp * 0.15)
+                    caster.shield += shield_val
+                    if caster == self.p1:
+                        self.p1_blinded_turns = 0
+                        self.p1_poison_turns = 0
+                        self.p1_poison_damage = 0
+                        self.p1_burn_turns = 0
+                    else:
+                        self.p2_blinded_turns = 0
+                        self.p2_poison_turns = 0
+                        self.p2_poison_damage = 0
+                        self.p2_burn_turns = 0
+                    caster.stun_turns = 0
+                    caster.frozen_turns = 0
+                    caster.silence_turns = 0
+                    caster.weakness_turns = 0
+                    caster.fragility_turns = 0
+                    caster.vulnerability_turns = 0
+                    caster.anti_heal_turns = 0
+                    logs.append(f"🛡️ **Santuario:** {caster.user.display_name} crea un santuario: Escudo de **{shield_val}** HP y disipa todos sus debuffs.")
+                elif special_id == "muralla_inquebrantable":
+                    caster.damage_reduction_turns = 4
+                    caster.damage_reduction_pct = 0.50
+                    logs.append(f"🏰 **Muralla Inquebrantable:** {caster.user.display_name} se atrinchera. ¡Recibe -50% de daño por 3 turnos!")
+                elif special_id == "aura_salvacion":
+                    shield_val = int(caster.max_hp * 0.15)
+                    caster.shield += shield_val
+                    caster.hot_turns = 4
+                    caster.hot_pct = 0.05
+                    logs.append(f"💛 **Aura de Salvación:** {caster.user.display_name} activa un aura: Escudo de **{shield_val}** HP y curación gradual (+5%/t) por 3 turnos.")
+                elif special_id == "juicio_final":
+                    caster.juicio_final_turns = 3
+                    caster.juicio_final_reflect_pct = 1.50
+                    logs.append(f"⚖️ **Juicio Final:** {caster.user.display_name} emite una luz juzgadora. ¡Reflejará 150% de daño recibido por 2 turnos!")
 
         # 3. Calcular ataque de P1 a P2
         p1_dmg = 0
         p1_log = ""
+        p1_is_magic = False
         if p1_act in ('attack', 'special'):
             p1_dmg, p1_log = self._calculate_action_result(self.p1, self.p2, p1_act)
+            if p1_act == 'special':
+                p1_is_magic = self.p1_special_id in ("drenaje", "quemadura", "onda_escarcha", "sobrecarga_arcana", "tormenta_elemental", "singularidad", "pacto_sangre")
 
         # 4. Calcular ataque de P2 a P1
         p2_dmg = 0
         p2_log = ""
+        p2_is_magic = False
         if p2_act in ('attack', 'special'):
             p2_dmg, p2_log = self._calculate_action_result(self.p2, self.p1, p2_act)
+            if p2_act == 'special':
+                p2_is_magic = self.p2_special_id in ("drenaje", "quemadura", "onda_escarcha", "sobrecarga_arcana", "tormenta_elemental", "singularidad", "pacto_sangre")
 
         # 5. Aplicar daño simultáneamente
         # P1 a P2
         if p1_dmg > 0:
-            if self.p2_retribution_active:
+            if not p1_is_magic:
+                self.p2.last_physical_damage_taken = p1_dmg
+            if self.p2.juicio_final_turns > 0:
+                reflect_dmg = int(p1_dmg * self.p2.juicio_final_reflect_pct)
+                self.p2.hp = max(0, self.p2.hp - p1_dmg)
+                self.p1.hp = max(0, self.p1.hp - reflect_dmg)
+                logs.append(f"⚖️ **Juicio Final:** {self.p2.user.display_name} refleja el golpe devolviendo **{reflect_dmg}** de daño a {self.p1.user.display_name}!")
+            elif self.p2_retribution_active:
                 cfg_rep = SKILLS_CONFIG["represalia"]
                 mitigated = max(1, int(p1_dmg * cfg_rep["mitigation"]))
                 reflect_dmg = int(p1_dmg * cfg_rep["reflect"])
+                # Apply Vengador reflect boost conversion if any (+25% extra reflect, -15% mitigation)
+                extra_reflect = self.p2.subclass_extras.get("extra_reflect_pct", 0.0)
+                less_mitigation = self.p2.subclass_extras.get("less_mitigation_pct", 0.0)
+                reflect_dmg = int(reflect_dmg * (1.0 + extra_reflect))
+                mitigated = max(1, int(p1_dmg * (cfg_rep["mitigation"] + less_mitigation)))
                 self.p2.hp = max(0, self.p2.hp - mitigated)
                 self.p1.hp = max(0, self.p1.hp - reflect_dmg) # Reflejo
                 logs.append(f"🛡️ **Represalia:** {self.p2.user.display_name} mitiga una parte del golpe ({mitigated}) y refleja **{reflect_dmg}** de daño a {self.p1.user.display_name}!")
@@ -600,10 +916,22 @@ class DuelView(discord.ui.View):
 
         # P2 a P1
         if p2_dmg > 0:
-            if self.p1_retribution_active:
+            if not p2_is_magic:
+                self.p1.last_physical_damage_taken = p2_dmg
+            if self.p1.juicio_final_turns > 0:
+                reflect_dmg = int(p2_dmg * self.p1.juicio_final_reflect_pct)
+                self.p1.hp = max(0, self.p1.hp - p2_dmg)
+                self.p2.hp = max(0, self.p2.hp - reflect_dmg)
+                logs.append(f"⚖️ **Juicio Final:** {self.p1.user.display_name} refleja el golpe devolviendo **{reflect_dmg}** de daño a {self.p2.user.display_name}!")
+            elif self.p1_retribution_active:
                 cfg_rep = SKILLS_CONFIG["represalia"]
                 mitigated = max(1, int(p2_dmg * cfg_rep["mitigation"]))
                 reflect_dmg = int(p2_dmg * cfg_rep["reflect"])
+                # Apply Vengador reflect boost conversion if any (+25% extra reflect, -15% mitigation)
+                extra_reflect = self.p1.subclass_extras.get("extra_reflect_pct", 0.0)
+                less_mitigation = self.p1.subclass_extras.get("less_mitigation_pct", 0.0)
+                reflect_dmg = int(reflect_dmg * (1.0 + extra_reflect))
+                mitigated = max(1, int(p2_dmg * (cfg_rep["mitigation"] + less_mitigation)))
                 self.p1.hp = max(0, self.p1.hp - mitigated)
                 self.p2.hp = max(0, self.p2.hp - reflect_dmg) # Reflejo
                 logs.append(f"🛡️ **Represalia:** {self.p1.user.display_name} mitiga una parte del golpe ({mitigated}) y refleja **{reflect_dmg}** de daño a {self.p2.user.display_name}!")
@@ -632,10 +960,57 @@ class DuelView(discord.ui.View):
         if p2_act == 'timeout':
             logs.append(f"⏰ {self.p2.user.display_name} no respondió a tiempo.")
 
+        # Accumulate damage taken
+        for p in (self.p1, self.p2):
+            damage_taken = p.pre_hit_hp - p.hp
+            if damage_taken > 0:
+                p.total_damage_taken += damage_taken
+
         # Decrementar cooldowns de especial y turnos de buffs/debuffs
         for p in (self.p1, self.p2):
-            if p.special_cooldown > 0:
-                p.special_cooldown -= 1
+            if p.frozen_turns > 0:
+                # Si está congelado, los cooldowns no se reducen
+                pass
+            else:
+                if p.special_cooldown > 0:
+                    p.special_cooldown -= 1
+                if p.skill10_cooldown > 0:
+                    p.skill10_cooldown -= 1
+                if p.skill15_cooldown > 0:
+                    p.skill15_cooldown -= 1
+            if p.taunt_cooldown > 0:
+                p.taunt_cooldown -= 1
+            if p.stun_turns > 0:
+                p.stun_turns -= 1
+            if p.frozen_turns > 0:
+                p.frozen_turns -= 1
+            if p.silence_turns > 0:
+                p.silence_turns -= 1
+            if p.bleed_turns > 0 and p.hp > 0:
+                b_dmg = max(1, int(p.last_physical_damage_taken * p.bleed_source_pct))
+                p.hp = max(0, p.hp - b_dmg)
+                p.bleed_turns -= 1
+                logs.append(f"🩸 **Sangrado:** {p.user.display_name} sufre **{b_dmg}** HP de daño por sangrado.")
+            if p.damage_reduction_turns > 0:
+                p.damage_reduction_turns -= 1
+            if p.atk_buff_turns > 0:
+                p.atk_buff_turns -= 1
+            if p.juicio_final_turns > 0:
+                p.juicio_final_turns -= 1
+            if p.evasion_buff_turns > 0:
+                p.evasion_buff_turns -= 1
+            if p.anti_heal_turns > 0:
+                p.anti_heal_turns -= 1
+            if p.weakness_turns > 0:
+                p.weakness_turns -= 1
+            if p.fragility_turns > 0:
+                p.fragility_turns -= 1
+            if p.vulnerability_turns > 0:
+                p.vulnerability_turns -= 1
+            if p.hot_turns > 0:
+                p.hot_turns -= 1
+            if p.enhanced_burn_turns > 0:
+                p.enhanced_burn_turns -= 1
 
         if self.p1_blinded_turns > 0:
             self.p1_blinded_turns -= 1
@@ -649,8 +1024,12 @@ class DuelView(discord.ui.View):
             
         if self.p1_poison_turns > 0:
             self.p1_poison_turns -= 1
+            if self.p1_poison_turns == 0:
+                self.p1_poison_damage = 0
         if self.p2_poison_turns > 0:
             self.p2_poison_turns -= 1
+            if self.p2_poison_turns == 0:
+                self.p2_poison_damage = 0
             
         if self.p1_burn_turns > 0:
             self.p1_burn_turns -= 1
@@ -707,6 +1086,8 @@ class DuelView(discord.ui.View):
             new_view.p2_frenzy_turns = self.p2_frenzy_turns
             new_view.p1_poison_turns = self.p1_poison_turns
             new_view.p2_poison_turns = self.p2_poison_turns
+            new_view.p1_poison_damage = self.p1_poison_damage
+            new_view.p2_poison_damage = self.p2_poison_damage
             new_view.p1_burn_turns = self.p1_burn_turns
             new_view.p2_burn_turns = self.p2_burn_turns
             new_view.p1_special_id = self.p1_special_id
@@ -734,11 +1115,44 @@ class DuelView(discord.ui.View):
             log_line = f"💨 {attacker.user.display_name} tiene los ojos llenos de tierra y **FALLÓ** su ataque!"
             return 0, log_line
 
+        # Evasión y Esquiva
+        dodge_chance = defender.subclass_extras.get("dodge_chance_bonus", 0.0) + (defender.evasion_buff_pct if defender.evasion_buff_turns > 0 else 0.0)
+        has_dodge_passive = any(p['id'] == 'dodge' for p in defender.passives)
+        if has_dodge_passive:
+            dodge_chance += 0.05
+            
+        special_id = self.p1_special_id if attacker == self.p1 else self.p2_special_id
+        if action_type == 'special' and special_id == 'estocada_precisa':
+            # Estocada precisa ignora 50% de la evasión del rival
+            dodge_chance *= 0.5
+
+        if defender.guaranteed_dodge_next:
+            defender.guaranteed_dodge_next = False
+            if action_type == 'special' and special_id == 'estocada_precisa' and random.random() < 0.5:
+                # Estocada Precisa tiene un 50% de chance de atravesar el Paso Fantasma
+                pass
+            else:
+                log_line = f"💨 {defender.user.display_name} **ESQUIVÓ** el ataque de {attacker.user.display_name} gracias a Paso Fantasma!"
+                return 0, log_line
+        elif dodge_chance > 0 and random.random() < dodge_chance:
+            log_line = f"💨 {defender.user.display_name} **ESQUIVÓ** el ataque de {attacker.user.display_name}!"
+            return 0, log_line
+
         # Si el atacante tiene Frenesí activo: +35% ATK
         atk_val = attacker.atk
         if (self.p1_frenzy_turns > 0 and attacker == self.p1) or (self.p2_frenzy_turns > 0 and attacker == self.p2):
             atk_boost = SKILLS_CONFIG["frenesi"]["atk_boost"]
             atk_val = int(atk_val * (1.0 + atk_boost))
+
+        # Buffs / Debuffs de subclase
+        if attacker.atk_buff_turns > 0:
+            atk_val = int(atk_val * (1.0 + attacker.atk_buff_pct))
+        if attacker.weakness_turns > 0:
+            atk_val = int(atk_val * (1.0 - attacker.weakness_pct))
+            
+        defender_def_val = defender.def_stat
+        if defender.fragility_turns > 0:
+            defender_def_val = int(defender_def_val * (1.0 - defender.fragility_pct))
 
         # Si tiene pasiva de parry, no recibe reducción de daño de defender (pero sí cuenta para contraataque en el loop principal)
         defender_has_parry = any(p['id'] == 'parry' for p in defender.passives)
@@ -746,24 +1160,64 @@ class DuelView(discord.ui.View):
 
         # Pasivo: Golpe crítico
         extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
+        # Agregar bonus de crit por subclase (Duelista conversion)
+        extra_crit += attacker.subclass_extras.get("crit_chance_bonus", 0.0)
         
         # Pasivo: Furia creciente
         has_fury = any(p['id'] == 'fury' for p in attacker.passives)
         fury_active = (attacker.hp / attacker.max_hp) < 0.30
 
-        # Pasivo: Esquiva mejorada
-        has_dodge = any(p['id'] == 'dodge' for p in defender.passives)
-        if has_dodge and random.random() < 0.05:
-            log_line = f"💨 {defender.user.display_name} **ESQUIVÓ** el ataque de {attacker.user.display_name}!"
-            return 0, log_line
+        # Helper para aplicar modificadores comunes y formatear log
+        def finalize_damage_and_log(raw_damage, skill_name, skill_emoji, detail_log="", custom_log=None):
+            dmg = raw_damage
+            
+            # Amplificación combinada
+            amp_pct = 0.0
+            if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
+                amp_pct += SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+            if defender.vulnerability_turns > 0:
+                amp_pct += defender.vulnerability_pct
+            
+            amp_pct = min(0.75, amp_pct)
+            dmg = int(dmg * (1.0 + amp_pct))
+                
+            # Damage reduction
+            if defender.damage_reduction_turns > 0:
+                dmg = int(dmg * (1.0 - defender.damage_reduction_pct))
+                
+            # Escudo arcano
+            shield_log = ""
+            if defender.arcane_shield_active:
+                dmg = max(1, int(dmg / 2))
+                defender.arcane_shield_active = False
+                shield_log = " 🔮*(Escudo arcano reduce daño)*"
+                
+            # Muerte súbita (turno 50+)
+            sudden_death_log = ""
+            if (self.turn_count + 1) >= 50:
+                dmg = dmg * 2
+                sudden_death_log = " ⚠️*(Muerte Súbita)*"
+                
+            if custom_log:
+                log_line = custom_log + f"{shield_log}{sudden_death_log}"
+            else:
+                log_line = f"{skill_emoji} {attacker.user.display_name} usa **{skill_name}** → **{dmg}** daño a {defender.user.display_name}!{detail_log}{shield_log}{sudden_death_log}"
+            return dmg, log_line
 
         if action_type == 'attack':
-            damage, crit = calc_attack_damage(atk_val, defender.def_stat, is_defending_for_damage, extra_crit, has_fury, fury_active)
+            damage, crit = calc_attack_damage(atk_val, defender_def_val, is_defending_for_damage, extra_crit, has_fury, fury_active)
             
-            # Si el defensor tiene Frenesí activo: recibe +15% de daño
+            # Amplificación combinada
+            amp_pct = 0.0
             if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
-                damage = int(damage * (1.0 + def_boost))
+                amp_pct += SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+            if defender.vulnerability_turns > 0:
+                amp_pct += defender.vulnerability_pct
+                
+            amp_pct = min(0.75, amp_pct)
+            damage = int(damage * (1.0 + amp_pct))
+            if defender.damage_reduction_turns > 0:
+                damage = int(damage * (1.0 - defender.damage_reduction_pct))
             
             # Pasivo: Escudo arcano
             shield_log = ""
@@ -779,6 +1233,14 @@ class DuelView(discord.ui.View):
                 sudden_death_log = " ⚠️*(Muerte Súbita)*"
 
             crit_text = " **¡CRÍTICO!**" if crit else ""
+            
+            # Aplicar asesino crit_mult_bonus si crítico y atacante es Asesino
+            if crit:
+                extra_mult = attacker.subclass_extras.get("crit_mult_bonus", 0.0)
+                if extra_mult > 0:
+                    damage = int(damage * ((1.5 + extra_mult) / 1.5))
+                    crit_text = f" **¡CRÍTICO BRUTAL!** ({(1.5 + extra_mult):.2f}x)"
+
             defend_text = " *(bloqueado parcialmente)*" if is_defending_for_damage else ""
             log_line = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}{sudden_death_log}"
             
@@ -813,37 +1275,25 @@ class DuelView(discord.ui.View):
             elif special_id == "veneno":
                 turns = cfg["turns"] + 1
                 if defender == self.p1:
+                    if self.p1_poison_turns == 0:
+                        self.p1_poison_damage = 10
+                    else:
+                        self.p1_poison_damage = min(30, self.p1_poison_damage + 10)
                     self.p1_poison_turns = turns
                 else:
+                    if self.p2_poison_turns == 0:
+                        self.p2_poison_damage = 10
+                    else:
+                        self.p2_poison_damage = min(30, self.p2_poison_damage + 10)
                     self.p2_poison_turns = turns
                 
                 raw_dmg = int(atk_val * cfg["damage_mult"])
-                def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
                 if is_defending_for_damage:
-                    def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"] * 2.5)
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
-                
-                # Si el defensor tiene Frenesí activo: recibe +15% de daño
-                if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                    def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
-                    damage = int(damage * (1.0 + def_boost))
-                
-                # Pasivo: Escudo arcano
-                shield_log = ""
-                if defender.arcane_shield_active:
-                    damage = max(1, int(damage / 2))
-                    defender.arcane_shield_active = False
-                    shield_log = " 🔮*(Escudo arcano reduce daño)*"
-                
-                # Muerte súbita (turno 50+)
-                sudden_death_log = ""
-                if (self.turn_count + 1) >= 50:
-                    damage = damage * 2
-                    sudden_death_log = " ⚠️*(Muerte Súbita)*"
-
-                log_line = f"{cfg['emoji']} {attacker.user.display_name} usa **{cfg['name']}** → **{damage}** daño y envenena a {defender.user.display_name}!{shield_log}{sudden_death_log}"
-                return damage, log_line
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" y envenena a {defender.user.display_name}!")
                 
             elif special_id == "quemadura":
                 turns = cfg["turns"] + 1
@@ -853,32 +1303,275 @@ class DuelView(discord.ui.View):
                     self.p2_burn_turns = turns
                 
                 raw_dmg = int(attacker.mag * cfg["damage_mult"])
-                def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
                 if is_defending_for_damage:
-                    def_mitig = int(defender.def_stat * cfg["def_mitigation_factor"] * 2.5)
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" y quema a {defender.user.display_name}!")
+
+            # ── HABILIDADES DE SUBCLASE ──
+            elif special_id == "golpe_escudo":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                if defender.frozen_turns > 0:
+                    defender.frozen_turns += 1
+                    detail = f" y refuerza la congelación activa!"
+                else:
+                    defender.stun_turns = cfg.get("stun_turns", 1) + 1
+                    detail = f" y lo **ATURDE** por 1 turno"
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "golpe_desesperado":
+                raw_dmg = int(atk_val * cfg["base_damage_mult"])
+                hp_ratio = attacker.hp / attacker.max_hp
+                hp_mult = 1.0 / max(0.01, hp_ratio)
+                raw_dmg = int(raw_dmg * hp_mult)
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" *(multiplicador por HP baja: {hp_mult:.2f}x)*")
+
+            elif special_id == "estocada_precisa":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                raw_dmg = int(raw_dmg * 1.5) # Crítico garantizado
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " **¡CRÍTICO GARANTIZADO!** (ignora evasión)")
+
+            elif special_id == "castigo_divino":
+                raw_dmg = int(atk_val * cfg["base_damage_mult"]) + int(attacker.total_damage_taken * cfg["scaling_factor"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" *(daño por golpes acumulados: +{int(attacker.total_damage_taken * cfg['scaling_factor'])} )*")
+
+            elif special_id == "golpe_sombras":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                is_poisoned = (self.p1_poison_turns > 0 if defender == self.p1 else self.p2_poison_turns > 0)
+                detail = ""
+                if is_poisoned:
+                    raw_dmg = int(raw_dmg * 2.0)
+                    detail = " **¡DAÑO DUPLICADO por Veneno!**"
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "trampa_aconito":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                defender.weakness_turns = 4
+                defender.weakness_pct = 0.20
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y aplica **Debilidad** (-20% ATK por 3 turnos)")
+
+            elif special_id == "llamarada":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                if defender == self.p1:
+                    self.p1_burn_turns = 5
+                else:
+                    self.p2_burn_turns = 5
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y aplica **Quemadura** por 4 turnos")
+
+            elif special_id == "onda_escarcha":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                if defender.stun_turns > 0:
+                    defender.stun_turns += 1
+                    detail = " y refuerza el aturdimiento activo!"
+                else:
+                    defender.frozen_turns = 2
+                    detail = " y **CONGELA** al rival por 1 turno"
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "sobrecarga_arcana":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
                 
-                # Si el defensor tiene Frenesí activo: recibe +15% de daño
-                if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
-                    def_boost = SKILLS_CONFIG["frenesi"]["damage_received_boost"]
-                    damage = int(damage * (1.0 + def_boost))
-                
-                # Pasivo: Escudo arcano
-                shield_log = ""
-                if defender.arcane_shield_active:
-                    damage = max(1, int(damage / 2))
-                    defender.arcane_shield_active = False
-                    shield_log = " 🔮*(Escudo arcano reduce daño)*"
-                
-                # Muerte súbita (turno 50+)
-                sudden_death_log = ""
-                if (self.turn_count + 1) >= 50:
-                    damage = damage * 2
-                    sudden_death_log = " ⚠️*(Muerte Súbita)*"
+                self_dmg = int(attacker.hp * 0.10)
+                attacker.hp = max(1, attacker.hp - self_dmg)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" *(sufre **{self_dmg}** HP autodaño por sobrecarga)*")
 
-                log_line = f"{cfg['emoji']} {attacker.user.display_name} lanza **{cfg['name']}** → **{damage}** daño mágico y quema a {defender.user.display_name}!{shield_log}{sudden_death_log}"
-                return damage, log_line
+            elif special_id == "pacto_sangre":
+                drain_pct = cfg["drain_pct"]
+                extra_drain = attacker.subclass_extras.get("extra_drain_pct", 0.0)
+                drain_pct += extra_drain
+                
+                steal_amt = max(1, int(defender.hp * drain_pct))
+                defender.hp = max(0, defender.hp - steal_amt)
+                attacker.hp = min(attacker.max_hp, attacker.hp + steal_amt)
+                defender.anti_heal_turns = 3
+                
+                custom_log = f"{cfg['emoji']} **{cfg['name']}**: {attacker.user.display_name} drena **{steal_amt}** HP de {defender.user.display_name} y aplica **Anti-curación** por 2 turnos!"
+                return finalize_damage_and_log(0, cfg["name"], cfg["emoji"], custom_log=custom_log)
+
+            elif special_id == "ejecucion":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                is_low = (defender.hp / defender.max_hp) < cfg["execute_threshold_pct"]
+                detail = ""
+                if is_low:
+                    raw_dmg = int(raw_dmg * cfg["execute_bonus_mult"])
+                    detail = " **¡EJECUCIÓN EXITOSA! (daño duplicado)**"
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "carga_sagrada":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"])
+
+            elif special_id == "ejecucion_sombria":
+                crit_mult = 1.5 + attacker.subclass_extras.get("crit_mult_bonus", 0.0)
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                
+                extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
+                extra_crit += attacker.subclass_extras.get("crit_chance_bonus", 0.0)
+                crit_chance = 0.10 + extra_crit
+                crit = random.random() < crit_chance
+                
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                
+                detail = ""
+                if crit:
+                    damage = int(damage * crit_mult)
+                    detail = f" **¡CRÍTICO BRUTAL!** ({crit_mult:.2f}x)"
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "danza_cuchillas":
+                total_dmg = 0
+                for _ in range(3):
+                    raw_dmg = int(atk_val * 0.7)
+                    def_mitig = int(defender_def_val * 0.20)
+                    if is_defending_for_damage:
+                        def_mitig = int(defender_def_val * 0.20 * 2.5)
+                        raw_dmg = int(raw_dmg * 0.4)
+                    total_dmg += max(1, raw_dmg - def_mitig)
+                attacker.evasion_buff_turns = 3
+                attacker.evasion_buff_pct = 0.30
+                return finalize_damage_and_log(total_dmg, cfg["name"], cfg["emoji"], " y aumenta su Evasión por 2 turnos")
+
+            elif special_id == "enjambre_trampas":
+                raw_dmg = int(atk_val * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                
+                defender.weakness_turns = 4
+                defender.weakness_pct = 0.20
+                defender.fragility_turns = 4
+                defender.fragility_pct = 0.20
+                if defender == self.p1:
+                    self.p1_poison_turns = 4
+                else:
+                    self.p2_poison_turns = 4
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y aplica **Debilidad, Fragilidad y Veneno** al rival")
+
+            elif special_id == "cataclismo_fuego":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                if defender == self.p1:
+                    self.p1_burn_turns = 6
+                else:
+                    self.p2_burn_turns = 6
+                defender.enhanced_burn_turns = 6
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y desata una **Quemadura reforzada** (8% HP max/t) por 5 turnos")
+
+            elif special_id == "tormenta_elemental":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                if defender == self.p1:
+                    self.p1_burn_turns = 3
+                else:
+                    self.p2_burn_turns = 3
+                if defender.stun_turns > 0:
+                    defender.stun_turns += 1
+                    detail = " y refuerza el aturdimiento activo!"
+                else:
+                    defender.frozen_turns = 2
+                    detail = " y aplica **Quemadura y Congelación**"
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], detail)
+
+            elif special_id == "singularidad":
+                raw_dmg = int(attacker.mag * cfg["damage_mult"])
+                def_mitig = int(defender_def_val * cfg["def_mitigation_factor"])
+                if is_defending_for_damage:
+                    def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
+                    raw_dmg = int(raw_dmg * 0.4)
+                damage = max(1, raw_dmg - def_mitig)
+                
+                self_dmg = int(attacker.hp * 0.15)
+                attacker.hp = max(1, attacker.hp - self_dmg)
+                attacker.vulnerability_turns = 2
+                attacker.vulnerability_pct = 0.30
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" y aplica **Vulnerabilidad** a sí mismo (recibe +30% daño y sufre **{self_dmg}** HP autodaño)")
+
+            elif special_id == "consumir_alma":
+                is_low = (defender.hp / defender.max_hp) < cfg["execute_threshold_pct"]
+                drain_pct = cfg["execute_drain_pct"] if is_low else cfg["base_drain_pct"]
+                extra_drain = attacker.subclass_extras.get("extra_drain_pct", 0.0)
+                drain_pct += extra_drain
+                
+                steal_amt = max(1, int(defender.hp * drain_pct))
+                defender.hp = max(0, defender.hp - steal_amt)
+                attacker.hp = min(attacker.max_hp, attacker.hp + steal_amt)
+                
+                detail = " **¡EJECUCIÓN COMPLETA! (drenaje de 35%+)**" if is_low else ""
+                custom_log = f"{cfg['emoji']} **{cfg['name']}**: {attacker.user.display_name} consume el alma de {defender.user.display_name} drenando **{steal_amt}** HP{detail}."
+                return finalize_damage_and_log(0, cfg["name"], cfg["emoji"], custom_log=custom_log)
+
+        return 0, ""
 
         return 0, ""
 
@@ -1354,7 +2047,7 @@ class LootView(discord.ui.View):
 
 
 # ══════════════════════════════════════════════
-# VISTA: SELECCIÓN DE CLASES (Nivel 5+)
+# VISTA: SELECCIÓN DE CLASES Y SUBCLASES
 # ══════════════════════════════════════════════
 
 class ClassSelectionView(discord.ui.View):
@@ -1383,6 +2076,42 @@ class ClassSelectionView(discord.ui.View):
             return
 
         self.selected_class = self.select.values[0]
+        await interaction.response.defer()
+        self.stop()
+
+
+class SubclassSelectionView(discord.ui.View):
+    """Vista para que un jugador seleccione su subclase de combate."""
+    def __init__(self, user: discord.Member, class_name: str, current_subclass: str | None):
+        super().__init__(timeout=90)
+        self.user = user
+        self.class_name = class_name
+        self.selected_subclass = None
+
+        subclasses = get_available_subclasses(class_name)
+        options = []
+        for sub_name in subclasses:
+            cfg = SUBCLASSES[sub_name]
+            desc_short = cfg['desc'][:100]
+            options.append(
+                discord.SelectOption(
+                    label=f"{cfg['emoji']} {sub_name}",
+                    value=sub_name,
+                    description=desc_short
+                )
+            )
+
+        placeholder = f"Subclase actual: {current_subclass or 'Ninguna'}"
+        self.select = discord.ui.Select(placeholder=placeholder, options=options, min_values=1, max_values=1)
+        self.select.callback = self.select_callback
+        self.add_item(self.select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ No puedes usar este selector.", ephemeral=True)
+            return
+
+        self.selected_subclass = self.select.values[0]
         await interaction.response.defer()
         self.stop()
 
@@ -1519,8 +2248,8 @@ class DuelsCog(commands.Cog):
         c_equip = await asyncio.to_thread(get_user_equipment, challenger_id)
         r_equip = await asyncio.to_thread(get_user_equipment, rival_id)
 
-        p1 = Combatant(challenger, c_stats['level'], c_equip, c_stats.get('combat_class'))
-        p2 = Combatant(rival, r_stats['level'], r_equip, r_stats.get('combat_class'))
+        p1 = Combatant(challenger, c_stats['level'], c_equip, c_stats.get('combat_class'), c_stats.get('combat_subclass'))
+        p2 = Combatant(rival, r_stats['level'], r_equip, r_stats.get('combat_class'), r_stats.get('combat_subclass'))
 
         duel_view = DuelView(p1, p2, apuesta, self)
         embed = duel_view._build_embed()
@@ -1530,7 +2259,7 @@ class DuelsCog(commands.Cog):
 
     # ──────────────────── /clase ────────────────────
 
-    @app_commands.command(name="clase", description="Elige o cambia tu clase de combate (requiere nivel 5)")
+    @app_commands.command(name="clase", description="Elige o cambia tu clase y subclase de combate")
     async def clase_cmd(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         c_stats = await asyncio.to_thread(get_combat_stats, user_id)
@@ -1543,7 +2272,10 @@ class DuelsCog(commands.Cog):
             return
 
         current_class = c_stats.get('combat_class')
+        current_subclass = c_stats.get('combat_subclass')
+        player_level = c_stats['level']
         
+        # ── Paso 1: Elegir clase ──
         embed = discord.Embed(
             title="🎭 Elige tu Clase de Combate",
             description="Al elegir una clase, tu Habilidad Especial en los duelos cambiará y solo podrás equipar armaduras de ciertos materiales y ciertas armas.",
@@ -1551,52 +2283,112 @@ class DuelsCog(commands.Cog):
         )
         embed.add_field(
             name="⚔️ Guerrero",
-            value="**Especial:** `Frenesí de Batalla` (+35% ATK, +15% daño recibido por 2 turnos).\n"
+            value="**Especial Nv.5:** `Frenesí de Batalla` (+35% ATK, +15% daño recibido por 2 turnos).\n"
+                  "**Subclases Nv.10:** Centinela 🛡️ · Berserker 🔥 · Duelista 🎯\n"
                   "**Armadura:** Hierro (Placas) · **Armas:** Arma, Escudo",
             inline=False
         )
         embed.add_field(
             name="🛡️ Paladín",
-            value="**Especial:** `Postura de Represalia` (mitiga 50% de daño y refleja 100% esa ronda).\n"
+            value="**Especial Nv.5:** `Postura de Represalia` (mitiga 50% y refleja 100% esa ronda).\n"
+                  "**Subclases Nv.10:** Guardián Sagrado ✨ · Vengador ⚔️ · Cruzado 🚩\n"
                   "**Armadura:** Hierro (Placas) · **Armas:** Arma, Escudo",
             inline=False
         )
         embed.add_field(
             name="🥷 Pícaro",
-            value="**Especial:** `Daga Envenenada` (daño físico, -25% daño rival y 10 HP/t veneno por 3 turnos).\n"
+            value="**Especial Nv.5:** `Daga Envenenada` (daño físico + veneno 3 turnos).\n"
+                  "**Subclases Nv.10:** Asesino 🗡️ · Sombra 👤 · Trampero 🕸️\n"
                   "**Armadura:** Cuero · **Armas:** Arma",
             inline=False
         )
         embed.add_field(
             name="🔥 Mago",
-            value="**Especial:** `Tormenta de Fuego` (daño mágico, quemadura de -5% HP max por 3 turnos).\n"
+            value="**Especial Nv.5:** `Tormenta de Fuego` (daño mágico + quemadura 3 turnos).\n"
+                  "**Subclases Nv.10:** Piromante 🔥 · Elementalista ❄️ · Arcanista 💥\n"
                   "**Armadura:** Tela · **Armas:** Bastón Mágico",
             inline=False
         )
         embed.add_field(
             name="⚕️ Clérigo",
-            value="**Especial:** `Drenaje Sagrado` (roba 15% HP actual, limpia debuffs propios).\n"
+            value="**Especial Nv.5:** `Drenaje Sagrado` (roba 15% HP actual, limpia debuffs).\n"
+                  "**Subclases Nv.10:** Sanador 💚 · Oscuro 🖤 · Guardián de la Fe 🛡️\n"
                   "**Armadura:** Tela · **Armas:** Bastón Mágico",
             inline=False
         )
         
+        footer_parts = []
         if current_class:
-            embed.set_footer(text=f"Tu clase actual es {current_class}. Si la cambias, tus piezas equipadas que no coincidan serán ignoradas en combate o deberás cambiarlas.")
+            footer_parts.append(f"Clase actual: {current_class}")
+        if current_subclass:
+            footer_parts.append(f"Subclase: {current_subclass}")
+        if footer_parts:
+            embed.set_footer(text=" · ".join(footer_parts))
 
         view = ClassSelectionView(interaction.user, current_class)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         
         await view.wait()
         
-        if view.selected_class:
-            success = await asyncio.to_thread(update_user_class, user_id, view.selected_class)
+        if not view.selected_class:
+            return
+            
+        selected_class = view.selected_class
+
+        # ── Paso 2: Elegir subclase (si tiene nivel 10+) ──
+        if player_level >= SUBCLASS_UNLOCK_LEVEL:
+            # Si cambió de clase, resetear subclase
+            if selected_class != current_class:
+                current_subclass = None
+
+            # Mostrar info de las 3 subclases
+            sub_infos = get_all_subclass_info_for_display(selected_class)
+            sub_embed = discord.Embed(
+                title=f"🎭 Elige tu Subclase de {selected_class}",
+                description=f"Clase seleccionada: **{selected_class}**\nElige tu especialización:",
+                color=discord.Color.purple()
+            )
+            for info in sub_infos:
+                skill_text = f"**Nv.10 — {info['skill_10_name']}:** {info['skill_10_desc']}\n"
+                if player_level >= ULTIMATE_UNLOCK_LEVEL:
+                    skill_text += f"**Nv.15 — {info['skill_15_name']}:** {info['skill_15_desc']}"
+                else:
+                    skill_text += f"*Nv.15 — {info['skill_15_name']}:* 🔒 Se desbloquea a Nv.15"
+                sub_embed.add_field(
+                    name=f"{info['emoji']} {info['name']} ({info['role']})",
+                    value=f"*{info['desc']}*\n{skill_text}",
+                    inline=False
+                )
+
+            sub_view = SubclassSelectionView(interaction.user, selected_class, current_subclass)
+            await interaction.followup.send(embed=sub_embed, view=sub_view, ephemeral=True)
+
+            await sub_view.wait()
+
+            selected_subclass = sub_view.selected_subclass
+            success = await asyncio.to_thread(
+                update_user_class_and_subclass, user_id, selected_class, selected_subclass
+            )
+            if success:
+                msg = f"✅ ¡Clase: **{selected_class}**"
+                if selected_subclass:
+                    msg += f" · Subclase: **{selected_subclass}**"
+                msg += "! Tu configuración de combate ha sido actualizada."
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Hubo un error al guardar en la base de datos.", ephemeral=True)
+        else:
+            # Solo clase (aún no tiene nivel para subclase)
+            success = await asyncio.to_thread(
+                update_user_class_and_subclass, user_id, selected_class, None
+            )
             if success:
                 await interaction.followup.send(
-                    f"✅ ¡Felicidades! Has elegido la clase **{view.selected_class}**. Tu habilidad especial en duelos ha sido actualizada.",
+                    f"✅ ¡Clase: **{selected_class}**! A nivel **{SUBCLASS_UNLOCK_LEVEL}** podrás elegir una subclase.",
                     ephemeral=True
                 )
             else:
-                await interaction.followup.send("❌ Hubo un error al guardar tu clase en la base de datos.", ephemeral=True)
+                await interaction.followup.send("❌ Hubo un error al guardar en la base de datos.", ephemeral=True)
 
     # ──────────────────── /perfil_combate ────────────────────
 
@@ -1619,9 +2411,10 @@ class DuelsCog(commands.Cog):
         effective, pct_used, pct_per_stat = get_effective_bonus(bonus, stats['level'])
 
         class_text = f" · Clase: **{stats['combat_class']}**" if stats.get('combat_class') else ""
+        subclass_text = f" · Subclase: **{stats['combat_subclass']}**" if stats.get('combat_subclass') else ""
         embed = discord.Embed(
             title=f"{rank_emoji} Perfil de Combate — {target.display_name}",
-            description=f"**{rank}** · Nivel **{stats['level']}**{class_text}",
+            description=f"**{rank}** · Nivel **{stats['level']}**{class_text}{subclass_text}",
             color=discord.Color.dark_gold()
         )
 
@@ -1641,10 +2434,10 @@ class DuelsCog(commands.Cog):
         embed.add_field(
             name="📊 Estadísticas Base (+ Equipo)",
             value=(
-                f"❤️ HP: {base['hp']} (+{effective.get('hp', 0)})\n"
-                f"⚔️ ATK: {base['atk']} (+{effective.get('atk', 0)})\n"
-                f"🔮 MAG: {base['mag']} (+{effective.get('mag', 0)})\n"
-                f"🛡️ DEF: {base['def']} (+{effective.get('def', 0)})"
+                f"❤️ HP: {base['hp']} (+{effective.get('hp', 0):.1f} efec. [{bonus.get('hp', 0)} eq., {pct_per_stat.get('hp', 100.0):.0f}% ef.])\n"
+                f"⚔️ ATK: {base['atk']} (+{effective.get('atk', 0):.1f} efec. [{bonus.get('atk', 0)} eq., {pct_per_stat.get('atk', 100.0):.0f}% ef.])\n"
+                f"🔮 MAG: {base['mag']} (+{effective.get('mag', 0):.1f} efec. [{bonus.get('mag', 0)} eq., {pct_per_stat.get('mag', 100.0):.0f}% ef.])\n"
+                f"🛡️ DEF: {base['def']} (+{effective.get('def', 0):.1f} efec. [{bonus.get('def', 0)} eq., {pct_per_stat.get('def', 100.0):.0f}% ef.])"
             ),
             inline=True
         )
@@ -1689,8 +2482,8 @@ class DuelsCog(commands.Cog):
         # Bonus de equipo
         gear_bar = format_progress_bar(int(pct_used), 100, size=10)
         embed.add_field(
-            name="🎒 Bonus de Equipo",
-            value=f"Tope usado: `{gear_bar}` {pct_used:.0f}%/{int(MAX_GEAR_BONUS_PCT * 100)}% (promedio)",
+            name="🎒 Eficiencia de Equipo",
+            value=f"Eficiencia promedio: `{gear_bar}` {pct_used:.0f}% (100% = sin pérdidas por softcap)",
             inline=False
         )
 
@@ -1752,15 +2545,15 @@ class DuelsCog(commands.Cog):
 
         # Bonus total
         bonus_text = (
-            f"⚔️ ATK: +{effective.get('atk', 0)} · "
-            f"🔮 MAG: +{effective.get('mag', 0)} · "
-            f"🛡️ DEF: +{effective.get('def', 0)} · "
-            f"❤️ HP: +{effective.get('hp', 0)}"
+            f"⚔️ ATK: +{effective.get('atk', 0):.1f} · "
+            f"🔮 MAG: +{effective.get('mag', 0):.1f} · "
+            f"🛡️ DEF: +{effective.get('def', 0):.1f} · "
+            f"❤️ HP: +{effective.get('hp', 0):.1f}"
         )
         gear_bar = format_progress_bar(int(pct_used), 100, size=15)
         embed.add_field(
             name="📊 Bonus Total de Equipo",
-            value=f"{bonus_text}\nTope: `{gear_bar}` {pct_used:.0f}%/{int(MAX_GEAR_BONUS_PCT * 100)}%",
+            value=f"{bonus_text}\nEficiencia promedio: `{gear_bar}` {pct_used:.0f}% (100% = sin pérdidas)",
             inline=False
         )
 
