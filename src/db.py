@@ -1895,6 +1895,125 @@ def init_db():
                 )
             """)
             cursor.execute("ALTER TABLE RaidLog ADD COLUMN IF NOT EXISTS Difficulty VARCHAR(10) DEFAULT 'normal'")
+            
+            # Tabla: UniqueItemCatalog (Catálogo de ítems únicos)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UniqueItemCatalog (
+                    ID SERIAL PRIMARY KEY,
+                    ItemKey VARCHAR(50) UNIQUE NOT NULL,
+                    Name VARCHAR(100) NOT NULL,
+                    Slot VARCHAR(20) NOT NULL,
+                    Rarity VARCHAR(20) DEFAULT 'Legendario',
+                    PrimaryStat VARCHAR(10) NOT NULL,
+                    PrimaryValue INT NOT NULL,
+                    Secondaries JSONB DEFAULT '[]'::jsonb,
+                    Passive JSONB DEFAULT NULL,
+                    BossSource VARCHAR(50),
+                    Lore TEXT
+                )
+            """)
+
+            unique_items = [
+                {
+                    "ItemKey": "corona_yggdrasil",
+                    "Name": "Corona del Yggdrasil Corrupto",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "regen_improved", "value": 0.06},
+                    "BossSource": "Yggdrasil Corrupto",
+                    "Lore": "Una corona orgánica que pulsa con una energía oscura y regenerativa."
+                },
+                {
+                    "ItemKey": "nucleo_ignis",
+                    "Name": "Núcleo de Ignis",
+                    "Slot": "Arma",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "mag",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "burn_extend", "value": 50},
+                    "BossSource": "Ignis, el Coloso de Magma",
+                    "Lore": "Un fragmento ardiente del núcleo del coloso, irradia un calor abrasador."
+                },
+                {
+                    "ItemKey": "garra_caelum",
+                    "Name": "Garra de la Tempestad",
+                    "Slot": "Arma",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "atk",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "def", "value": 34}],
+                    "Passive": {"id": "guaranteed_crit_cycle", "value": 4},
+                    "BossSource": "Caelum, la Tempestad Viviente",
+                    "Lore": "Una garra afilada infundida con rayos y vientos huracanados."
+                },
+                {
+                    "ItemKey": "manto_thanatos",
+                    "Name": "Manto del Segador",
+                    "Slot": "Pecho",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 104,
+                    "Secondaries": [{"stat": "def", "value": 41}, {"stat": "atk", "value": 41}],
+                    "Passive": {"id": "vampirism_improved", "value": 0.15},
+                    "BossSource": "Thanatos, el Segador de Almas",
+                    "Lore": "Una túnica oscura que parece absorber la luz de su alrededor."
+                },
+                {
+                    "ItemKey": "escama_leviathan",
+                    "Name": "Escama de Leviathán",
+                    "Slot": "Escudo",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "def",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "special_resist", "value": 0.10},
+                    "BossSource": "Leviathán de la Fosa Glacial",
+                    "Lore": "Una escama helada e impenetrable extraída de las profundidades del océano glacial."
+                },
+                {
+                    "ItemKey": "pluma_aurelius",
+                    "Name": "Pluma de Aurelius Caído",
+                    "Slot": "Hombros",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": [{"id": "regen", "value": 0.03}, {"id": "dodge", "value": 0.05}],
+                    "BossSource": "Aurelius, el Arcángel Caído",
+                    "Lore": "Una pluma de ala angelical que ha perdido su brillo, pero conserva un gran poder divino."
+                },
+                {
+                    "ItemKey": "fragmento_abyssus",
+                    "Name": "Fragmento de Abyssus",
+                    "Slot": "Pantalones",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "def",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "chaos_random"},
+                    "BossSource": "Abyssus, el Devorador Estelar",
+                    "Lore": "Un fragmento de vacío puro que distorsiona la realidad alrededor de quien lo viste."
+                }
+            ]
+
+            import psycopg2.extras
+            for item in unique_items:
+                cursor.execute("""
+                    INSERT INTO UniqueItemCatalog (
+                        ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, BossSource, Lore
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (ItemKey) DO NOTHING
+                """, (
+                    item["ItemKey"], item["Name"], item["Slot"], item["Rarity"],
+                    item["PrimaryStat"], item["PrimaryValue"],
+                    psycopg2.extras.Json(item["Secondaries"]),
+                    psycopg2.extras.Json(item["Passive"]),
+                    item["BossSource"], item["Lore"]
+                ))
             # ─── FIN TABLAS DUELOS PVP ───
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")

@@ -2467,6 +2467,9 @@ class RaidCombatView(discord.ui.View):
 
     async def _resolve_drops(self, victory: bool):
         """Resuelve los drops de ítems para cada participante."""
+        from src.utils.raid_config import RAID_LOOT_DIFFICULTY_CONFIG
+        diff_cfg = RAID_LOOT_DIFFICULTY_CONFIG.get(self.difficulty, RAID_LOOT_DIFFICULTY_CONFIG["normal"])
+
         channel = None
         if self.interaction_msg:
             channel = self.interaction_msg.channel
@@ -2495,7 +2498,8 @@ class RaidCombatView(discord.ui.View):
                 label = "Derrota"
 
             if random.random() < drop_rate:
-                loot = generate_raid_loot(p.level, rarity_bonus)
+                final_rarity_bonus = min(0.75, rarity_bonus + diff_cfg["rarity_bonus"])
+                loot = generate_raid_loot(p.level, final_rarity_bonus, floor_idx=diff_cfg["rarity_floor_idx"], ilvl_bonus=diff_cfg["ilvl_bonus"])
                 equipment = await asyncio.to_thread(get_user_equipment, p.user.id)
                 current_piece = equipment.get(loot["slot"])
 
@@ -2512,39 +2516,79 @@ class RaidCombatView(discord.ui.View):
                         )
                         effective_channel = None
 
-                if effective_channel is None:
-                    logger.warning(
-                        "Drop de raid generado para %s pero no hay canal. Loot: %s",
-                        getattr(p.user, "name", "desconocido"), loot,
-                    )
-                    continue
+                if effective_channel is not None:
+                    # Épico / Legendario → Sistema de Loot Roll grupal
+                    if loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
+                        alive_players = [pl for pl in self.players if not pl.is_dead]
+                        eligible = alive_players if alive_players else self.players
+                        roll_view = RaidLootRollView(loot, eligible, effective_channel)
+                        roll_embed = roll_view.build_embed()
+                        msg = await effective_channel.send(
+                            content=(
+                                f"🎲 **¡Drop {loot['rarity']}!** "
+                                f"{loot['rarity_color']} **{loot['name']}** — "
+                                f"¡Todos los sobrevivientes pueden tirar los dados!"
+                            ),
+                            embed=roll_embed,
+                            view=roll_view,
+                        )
+                        roll_view.message = msg
+                    else:
+                        # Drop individual normal
+                        view = RaidLootView(p.user, loot, current_piece)
+                        loot_embed = view.build_embed()
+                        msg = await effective_channel.send(
+                            content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
+                            embed=loot_embed,
+                            view=view,
+                        )
+                        view.message = msg
 
-                # Épico / Legendario → Sistema de Loot Roll grupal
-                if loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
-                    alive_players = [pl for pl in self.players if not pl.is_dead]
-                    eligible = alive_players if alive_players else self.players
-                    roll_view = RaidLootRollView(loot, eligible, effective_channel)
-                    roll_embed = roll_view.build_embed()
-                    msg = await effective_channel.send(
-                        content=(
-                            f"🎲 **¡Drop {loot['rarity']}!** "
-                            f"{loot['rarity_color']} **{loot['name']}** — "
-                            f"¡Todos los sobrevivientes pueden tirar los dados!"
-                        ),
-                        embed=roll_embed,
-                        view=roll_view,
-                    )
-                    roll_view.message = msg
-                else:
-                    # Drop individual normal
-                    view = RaidLootView(p.user, loot, current_piece)
-                    loot_embed = view.build_embed()
-                    msg = await effective_channel.send(
-                        content=f"🎁 {p.user.mention} — ¡Drop de Raid! ({label})",
-                        embed=loot_embed,
-                        view=view,
-                    )
-                    view.message = msg
+            # Roll para item único en Mítica (sólo en victorias de raids míticas)
+            if victory and self.difficulty == "mitica" and random.random() < diff_cfg["unique_chance"]:
+                unique_loot = roll_unique_item(self.boss.name)
+                if unique_loot:
+                    effective_channel = channel
+                    if effective_channel is None:
+                        try:
+                            if p.user.dm_channel is None:
+                                await p.user.create_dm()
+                            effective_channel = p.user.dm_channel
+                        except Exception as exc:
+                            logger.warning(
+                                "No se pudo resolver canal para enviar drop único de raid a %s: %r",
+                                getattr(p.user, "name", "desconocido"), exc,
+                            )
+                            effective_channel = None
+
+                    if effective_channel is not None:
+                        equipment = await asyncio.to_thread(get_user_equipment, p.user.id)
+                        unique_current_piece = equipment.get(unique_loot["slot"])
+
+                        if unique_loot["rarity"] in ("Épico", "Legendario") and len(self.players) > 1:
+                            alive_players = [pl for pl in self.players if not pl.is_dead]
+                            eligible = alive_players if alive_players else self.players
+                            roll_view = RaidLootRollView(unique_loot, eligible, effective_channel)
+                            roll_embed = roll_view.build_embed()
+                            msg = await effective_channel.send(
+                                content=(
+                                    f"⭐ **¡Drop ÚNICO!** "
+                                    f"{unique_loot['rarity_color']} **{unique_loot['name']}** — "
+                                    f"¡Todos los sobrevivientes pueden tirar los dados!"
+                                ),
+                                embed=roll_embed,
+                                view=roll_view,
+                            )
+                            roll_view.message = msg
+                        else:
+                            view = RaidLootView(p.user, unique_loot, unique_current_piece)
+                            loot_embed = view.build_embed()
+                            msg = await effective_channel.send(
+                                content=f"⭐ {p.user.mention} — ¡Has obtenido un Ítem Único de Raid! ({label})",
+                                embed=loot_embed,
+                                view=view,
+                            )
+                            view.message = msg
 
 
 # ══════════════════════════════════════════════
@@ -3032,6 +3076,53 @@ def build_miniboss_config(miniboss_key: str, miniboss_dict: dict) -> dict:
         "miniboss_key": miniboss_key,
         "guaranteed_loot": miniboss_dict.get("guaranteed_loot", False),
         "invisibility_pattern": miniboss_dict.get("invisibility_pattern", False),
+    }
+
+
+
+def roll_unique_item(boss_name: str) -> dict | None:
+    """8% de probabilidad ya se evalúa antes de llamar esto. Retorna un ítem del catálogo o None."""
+    import random
+    from src.db import db_cursor
+    from src.utils.combat_progression import RARITY_COLORS, calc_sell_price
+
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, Lore
+            FROM UniqueItemCatalog
+            WHERE BossSource = %s OR BossSource IS NULL
+        """, (boss_name,))
+        rows = cursor.fetchall()
+    if not rows:
+        return None
+
+    # Seleccionar uno al azar
+    row = random.choice(rows)
+    item_key, name, slot, rarity, primary_stat, primary_value, secondaries, passive, lore = row
+
+    # Armar stats_summary para que coincida con generate_loot()
+    stats_summary = {primary_stat: primary_value}
+    for sec in secondaries:
+        stats_summary[sec["stat"]] = stats_summary.get(sec["stat"], 0) + sec["value"]
+
+    rarity_hex = RARITY_COLORS.get(rarity, 0xff8800)
+    sell_price = calc_sell_price(rarity, 35)
+
+    return {
+        "slot": slot,
+        "name": name,
+        "rarity": rarity,
+        "rarity_color": "🟧",  # Color de Legendario
+        "rarity_hex": rarity_hex,
+        "item_level": 35,
+        "primary_stat": primary_stat,
+        "primary_value": primary_value,
+        "secondaries": secondaries,
+        "passive": passive,
+        "sell_price": sell_price,
+        "stats_summary": stats_summary,
+        "item_key": item_key,  # Guardar referencia
+        "lore": lore
     }
 
 

@@ -469,7 +469,7 @@ def _pick_secondary_stats(primary_stat, count, material=None):
     return chosen
 
 
-def generate_loot(player_level):
+def generate_loot(player_level, ilvl=None, floor_idx=0):
     """Genera un ítem de loot aleatorio con el sistema completo.
 
     Returns:
@@ -478,8 +478,9 @@ def generate_loot(player_level):
                   passive (dict or None), sell_price, stats_summary (dict), material
     """
     slot = random.choice(EQUIPMENT_SLOTS)
-    rarity = _roll_rarity()
-    ilvl = player_level
+    rarity = _roll_rarity(floor_idx=floor_idx)
+    if ilvl is None:
+        ilvl = player_level
     
     is_armor = slot in ("Cabeza", "Hombros", "Pecho", "Pantalones", "Botas")
     material = None
@@ -543,15 +544,25 @@ def generate_loot(player_level):
     }
 
 
-def _roll_rarity():
+def _roll_rarity(floor_idx=0):
     """Elige rareza basándose en las probabilidades definidas."""
     roll = random.random()
     cumulative = 0.0
+    rolled = None
     for rarity in RARITIES:
         cumulative += rarity["prob"]
         if roll <= cumulative:
-            return rarity
-    return RARITIES[0]
+            rolled = rarity
+            break
+    if rolled is None:
+        rolled = RARITIES[0]
+
+    # Enforce rarity floor by name comparison index
+    rarity_names = [r["name"] for r in RARITIES]
+    rolled_idx = rarity_names.index(rolled["name"])
+    if rolled_idx < floor_idx:
+        rolled = RARITIES[floor_idx]
+    return rolled
 
 
 def calc_sell_price(rarity_name, item_level):
