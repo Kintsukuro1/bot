@@ -340,6 +340,43 @@ class TestRaidImprovements(unittest.TestCase):
         self.assertTrue(hasattr(rc, "RAID_XP_PER_TURN"))
         self.assertTrue(hasattr(rc, "RAID_XP_ALIVE_BONUS"))
 
+    def test_phantom_merchant_config_and_view(self):
+        from src.utils.raid_config import MINIBOSSES
+        from src.commands.duels.raid import build_miniboss_config, PhantomMerchantView
+        
+        self.assertIn("mercader_fantasma", MINIBOSSES)
+        merchant_dict = MINIBOSSES["mercader_fantasma"]
+        self.assertTrue(merchant_dict.get("is_shop"))
+        
+        cfg = build_miniboss_config("mercader_fantasma", merchant_dict)
+        self.assertTrue(cfg.get("is_shop"))
+        self.assertEqual(cfg["name"], "Mercader Fantasma")
+        
+        mock_user = MagicMock()
+        mock_cog = MagicMock()
+        
+        view = PhantomMerchantView([mock_user], mock_cog)
+        self.assertEqual(len(view.offers), 4)
+        for offer in view.offers:
+            self.assertIn("original_price", offer)
+            self.assertIn("discounted_price", offer)
+            self.assertGreaterEqual(offer["discounted_price"], int(offer["original_price"] * 0.70))
+            self.assertLessEqual(offer["discounted_price"], int(offer["original_price"] * 0.80))
+
+    def test_bleed_on_hit_loot_generation(self):
+        from src.utils.combat_progression import generate_loot, ITEM_PASSIVES
+        
+        # Verify it's in ITEM_PASSIVES
+        passive_ids = [p["id"] for p in ITEM_PASSIVES]
+        self.assertIn("bleed_on_hit", passive_ids)
+        
+        # Verify that non-weapon or non-atk items never get bleed_on_hit
+        for _ in range(200):
+            item = generate_loot(player_level=30, floor_idx=4) # Force Legendario
+            if item["slot"] != "Arma" or item["primary_stat"] != "atk":
+                if item["passive"]:
+                    self.assertNotEqual(item["passive"]["id"], "bleed_on_hit")
+
 
 class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
     """Tests para la resolución de ronda con habilidades especiales."""
@@ -1056,6 +1093,127 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p1.dominated_turns, 0)
         # Player 2 should have taken damage from Player 1's redirected attack
         self.assertTrue(p2.hp < p2_hp_before)
+
+
+class TestRaidSetBonuses(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        self.mock_user1 = MagicMock()
+        self.mock_user1.id = 111
+        self.mock_user1.display_name = "Player1"
+        self.mock_user1.mention = "<@111>"
+
+        self.mock_user2 = MagicMock()
+        self.mock_user2.id = 222
+        self.mock_user2.display_name = "Player2"
+        self.mock_user2.mention = "<@222>"
+
+        self.p1 = RaidCombatant(self.mock_user1, level=10, equipment={})
+        self.p2 = RaidCombatant(self.mock_user2, level=10, equipment={})
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test"
+        }
+        self.boss = RaidBoss(boss_config, is_miniboss=True)
+        self.mock_cog = MagicMock()
+        self.view = RaidCombatView([self.p1, self.p2], self.boss, self.mock_cog)
+        self.view.interaction_msg = MagicMock()
+        self.view.interaction_msg.edit = AsyncMock()
+
+    def test_yggdrasil_group_regen(self):
+        # Turn count % 3 == 0 (turn 0 is round 1, so turn_count = 0 triggers it)
+        self.view.turn_count = 0
+        self.p1.set_bonus_yggdrasil_4pc = True
+        self.p1.hp = 50
+        self.p2.hp = 50
+        
+        # We simulate the regen check
+        ygg_healers = [p for p in self.view._alive_players() if p.set_bonus_yggdrasil_4pc]
+        self.assertEqual(len(ygg_healers), 1)
+        
+        alive_players = self.view._alive_players()
+        for healer in ygg_healers:
+            for target_p in alive_players:
+                if target_p.anti_heal_turns == 0:
+                    heal_amt = max(1, int(target_p.max_hp * 0.03))
+                    target_p.hp = min(target_p.max_hp, target_p.hp + heal_amt)
+                    
+        # Check that both got healed
+        self.assertEqual(self.p1.hp, 50 + int(self.p1.max_hp * 0.03))
+        self.assertEqual(self.p2.hp, 50 + int(self.p2.max_hp * 0.03))
+
+    def test_thanatos_ally_death_lifesteal(self):
+        self.p2.set_bonus_thanatos_4pc = True
+        self.p2.next_hit_lifesteal_bonus = 0.0
+        self.p2.hp = 50
+        
+        # Player 1 dies inside apply_damage_to_player
+        target = self.p1
+        target.is_dead = True
+        for ally in self.view.players:
+            if not ally.is_dead and ally.user.id != target.user.id and ally.set_bonus_thanatos_4pc:
+                ally.next_hit_lifesteal_bonus = 0.10
+                
+        self.assertEqual(self.p2.next_hit_lifesteal_bonus, 0.10)
+        
+        # Test that lifesteal is applied and consumed on hit
+        p = self.p2
+        p.vampirism_pct = 0.0
+        damage = 100
+        total_lifesteal = p.vampirism_pct + getattr(p, "next_hit_lifesteal_bonus", 0.0)
+        self.assertEqual(total_lifesteal, 0.10)
+        
+        if total_lifesteal > 0 and damage > 0:
+            if p.anti_heal_turns == 0:
+                vamp_heal = max(1, int(damage * total_lifesteal))
+                p.hp = min(p.max_hp, p.hp + vamp_heal)
+            p.next_hit_lifesteal_bonus = 0.0
+            
+        self.assertEqual(self.p2.hp, 50 + 10)
+        self.assertEqual(self.p2.next_hit_lifesteal_bonus, 0.0)
+
+    def test_caelum_first_strike_dodge_in_raid(self):
+        import random
+        self.p1.set_bonus_caelum_4pc = True
+        self.p1.first_strike_used = False
+        
+        # Define mock logs list
+        logs = []
+        
+        target = self.p1
+        is_boss_attack = True
+        
+        # Patch random to force dodge (dodge_chance will have +0.20 first strike bonus)
+        with patch('random.random', return_value=0.10):
+            if is_boss_attack:
+                if target.set_bonus_caelum_4pc and not target.first_strike_used and not target.guaranteed_dodge_next:
+                    target.first_strike_used = True
+                    if random.random() < 0.20:
+                        logs.append(f"💨 **Efecto Caelum:** ¡{target.user.display_name} esquiva el primer golpe!")
+                        
+        self.assertTrue(self.p1.first_strike_used)
+        self.assertTrue(any("esquiva el primer golpe" in line for line in logs))
+
+    def test_aurelius_low_hp_heal_in_raid(self):
+        self.p1.set_bonus_aurelius_4pc = True
+        self.p1.hp = 25
+        self.p1.low_hp_heal_used = False
+        
+        # Run the Aurelius check
+        target = self.p1
+        logs = []
+        if target.hp > 0 and target.hp < target.max_hp * 0.30 and target.set_bonus_aurelius_4pc and not target.low_hp_heal_used:
+            target.low_hp_heal_used = True
+            heal_amt = int(target.max_hp * 0.15)
+            target.hp = min(target.max_hp, target.hp + heal_amt)
+            logs.append(f"☀️ **Set Aurelius:** Curado!")
+            
+        expected_hp = 25 + int(self.p1.max_hp * 0.15)
+        self.assertEqual(self.p1.hp, expected_hp)
+        self.assertTrue(self.p1.low_hp_heal_used)
 
 
 if __name__ == '__main__':

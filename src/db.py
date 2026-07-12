@@ -2192,6 +2192,286 @@ def init_db():
                     "BossSource": "Abyssus, el Devorador Estelar",
                     "Lore": "Un fragmento de vacío puro que distorsiona la realidad alrededor de quien lo viste.",
                     "SetKey": "set_abyssus"
+                },
+                # --- YGGDRASIL SET ---
+                {
+                    "ItemKey": "hombros_yggdrasil",
+                    "Name": "Manto del Yggdrasil Corrupto",
+                    "Slot": "Hombros",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "regen", "value": 0.03},
+                    "BossSource": "Yggdrasil Corrupto",
+                    "Lore": "Hombreras hechas de corteza podrida que supuran savia con propiedades curativas.",
+                    "SetKey": "set_yggdrasil"
+                },
+                {
+                    "ItemKey": "pecho_yggdrasil",
+                    "Name": "Corteza del Yggdrasil Corrupto",
+                    "Slot": "Pecho",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 104,
+                    "Secondaries": [{"stat": "def", "value": 41}, {"stat": "mag", "value": 41}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Yggdrasil Corrupto",
+                    "Lore": "Una coraza pesada tejida de raíces milenarias infestadas por la plaga.",
+                    "SetKey": "set_yggdrasil"
+                },
+                {
+                    "ItemKey": "botas_yggdrasil",
+                    "Name": "Raíces del Yggdrasil Corrupto",
+                    "Slot": "Botas",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "regen", "value": 0.03},
+                    "BossSource": "Yggdrasil Corrupto",
+                    "Lore": "Grebas orgánicas que se aferran al suelo, absorbiendo nutrientes de la tierra.",
+                    "SetKey": "set_yggdrasil"
+                },
+                # --- IGNIS SET ---
+                {
+                    "ItemKey": "cabeza_ignis",
+                    "Name": "Yelmo del Coloso de Magma",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "atk", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "fury"},
+                    "BossSource": "Ignis, el Coloso de Magma",
+                    "Lore": "Una corona de obsidiana ardiente que calienta la sangre del portador con furia volcánica.",
+                    "SetKey": "set_ignis"
+                },
+                {
+                    "ItemKey": "pecho_ignis",
+                    "Name": "Coraza del Coloso de Magma",
+                    "Slot": "Pecho",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 104,
+                    "Secondaries": [{"stat": "atk", "value": 41}, {"stat": "mag", "value": 41}],
+                    "Passive": {"id": "vampirism", "value": 0.08},
+                    "BossSource": "Ignis, el Coloso de Magma",
+                    "Lore": "Una armadura forjada en el núcleo del volcán, capaz de derretir el acero enemigo.",
+                    "SetKey": "set_ignis"
+                },
+                {
+                    "ItemKey": "botas_ignis",
+                    "Name": "Paso del Coloso de Magma",
+                    "Slot": "Botas",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "atk", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Ignis, el Coloso de Magma",
+                    "Lore": "Botas de piedra volcánica que dejan un rastro de ceniza y ascuas a cada paso.",
+                    "SetKey": "set_ignis"
+                },
+                # --- CAELUM SET ---
+                {
+                    "ItemKey": "hombros_caelum",
+                    "Name": "Hombreras de la Tempestad",
+                    "Slot": "Hombros",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Caelum, la Tempestad Viviente",
+                    "Lore": "Hombreras livianas como la brisa y cargadas de electricidad estática.",
+                    "SetKey": "set_caelum"
+                },
+                {
+                    "ItemKey": "botas_caelum",
+                    "Name": "Sandalias de la Tempestad",
+                    "Slot": "Botas",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Caelum, la Tempestad Viviente",
+                    "Lore": "Calzado que parece flotar sobre el suelo, permitiendo movimientos rápidos como el rayo.",
+                    "SetKey": "set_caelum"
+                },
+                {
+                    "ItemKey": "escudo_caelum",
+                    "Name": "Baluarte de la Tempestad",
+                    "Slot": "Escudo",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "def",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "parry"},
+                    "BossSource": "Caelum, la Tempestad Viviente",
+                    "Lore": "Un escudo redondo formado por vientos densos y relámpagos condensados.",
+                    "SetKey": "set_caelum"
+                },
+                # --- THANATOS SET ---
+                {
+                    "ItemKey": "cabeza_thanatos",
+                    "Name": "Máscara del Segador",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "vampirism", "value": 0.08},
+                    "BossSource": "Thanatos, el Segador de Almas",
+                    "Lore": "Una máscara de hueso frío que oculta la humanidad de quien la porta.",
+                    "SetKey": "set_thanatos"
+                },
+                {
+                    "ItemKey": "pantalones_thanatos",
+                    "Name": "Musleras del Segador",
+                    "Slot": "Pantalones",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "bleed_on_hit"},
+                    "BossSource": "Thanatos, el Segador de Almas",
+                    "Lore": "Musleras sombrías que irradian una fría neblina espectral.",
+                    "SetKey": "set_thanatos"
+                },
+                {
+                    "ItemKey": "botas_thanatos",
+                    "Name": "Senderos del Segador",
+                    "Slot": "Botas",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "second_wind"},
+                    "BossSource": "Thanatos, el Segador de Almas",
+                    "Lore": "Calzado de cuero negro que amortigua todo sonido, como el paso de la muerte.",
+                    "SetKey": "set_thanatos"
+                },
+                # --- LEVIATHAN SET ---
+                {
+                    "ItemKey": "cabeza_leviathan",
+                    "Name": "Corona del Leviathán",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "regen", "value": 0.03},
+                    "BossSource": "Leviathán de la Fosa Glacial",
+                    "Lore": "Un yelmo forjado con huesos del gran monstruo marino y hielo eterno.",
+                    "SetKey": "set_leviathan"
+                },
+                {
+                    "ItemKey": "hombros_leviathan",
+                    "Name": "Placas del Leviathán",
+                    "Slot": "Hombros",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "special_resist", "value": 0.10},
+                    "BossSource": "Leviathán de la Fosa Glacial",
+                    "Lore": "Hombreras cubiertas de picos de escarcha que congelan el aire a su alrededor.",
+                    "SetKey": "set_leviathan"
+                },
+                {
+                    "ItemKey": "pantalones_leviathan",
+                    "Name": "Quillas del Leviathán",
+                    "Slot": "Pantalones",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "atk", "value": 34}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Leviathán de la Fosa Glacial",
+                    "Lore": "Pantalones de malla escamosa que repelen el agua y el frío más extremo.",
+                    "SetKey": "set_leviathan"
+                },
+                # --- AURELIUS SET ---
+                {
+                    "ItemKey": "cabeza_aurelius",
+                    "Name": "Aureola del Arcángel Caído",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "regen", "value": 0.03},
+                    "BossSource": "Aurelius, el Arcángel Caído",
+                    "Lore": "Una aureola quebrada y corrupta que aún emana fragmentos de luz celestial.",
+                    "SetKey": "set_aurelius"
+                },
+                {
+                    "ItemKey": "pecho_aurelius",
+                    "Name": "Coraza del Arcángel Caído",
+                    "Slot": "Pecho",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 104,
+                    "Secondaries": [{"stat": "def", "value": 41}, {"stat": "mag", "value": 41}],
+                    "Passive": {"id": "arcane_shield"},
+                    "BossSource": "Aurelius, el Arcángel Caído",
+                    "Lore": "Peto dorado ornamentado con relieves celestiales profanados por la caída.",
+                    "SetKey": "set_aurelius"
+                },
+                {
+                    "ItemKey": "pantalones_aurelius",
+                    "Name": "Grebas del Arcángel Caído",
+                    "Slot": "Pantalones",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "dodge", "value": 0.05},
+                    "BossSource": "Aurelius, el Arcángel Caído",
+                    "Lore": "Protección de piernas forjada en plata sagrada, ahora opacada por la impureza del abismo.",
+                    "SetKey": "set_aurelius"
+                },
+                # --- ABYSSUS SET ---
+                {
+                    "ItemKey": "cabeza_abyssus",
+                    "Name": "Mirada del Devorador Estelar",
+                    "Slot": "Cabeza",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "chaos_random"},
+                    "BossSource": "Abyssus, el Devorador Estelar",
+                    "Lore": "Un vacío sin rostro que parece devorar la luz misma de las estrellas.",
+                    "SetKey": "set_abyssus"
+                },
+                {
+                    "ItemKey": "botas_abyssus",
+                    "Name": "Pasos del Devorador Estelar",
+                    "Slot": "Botas",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "hp",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "chaos_random"},
+                    "BossSource": "Abyssus, el Devorador Estelar",
+                    "Lore": "Botas que distorsionan el espacio bajo los pies de quien las lleva.",
+                    "SetKey": "set_abyssus"
+                },
+                {
+                    "ItemKey": "escudo_abyssus",
+                    "Name": "Falla del Devorador Estelar",
+                    "Slot": "Escudo",
+                    "Rarity": "Legendario",
+                    "PrimaryStat": "def",
+                    "PrimaryValue": 87,
+                    "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "mag", "value": 34}],
+                    "Passive": {"id": "chaos_random"},
+                    "BossSource": "Abyssus, el Devorador Estelar",
+                    "Lore": "Una grieta espacial sostenida por pura fuerza de voluntad que absorbe golpes enemigos.",
+                    "SetKey": "set_abyssus"
                 }
             ]
 
@@ -2801,4 +3081,58 @@ def use_consumable(user_id, consumable_key):
         """, (user_id, consumable_key))
         row = cursor.fetchone()
         return row is not None
+
+
+def buy_consumable_discounted(user_id, consumable_key, discounted_price):
+    """Cobra discounted_price con spend_combat_currency de forma atómica y añade 1 consumable."""
+    from src.utils.combat_progression import format_currency
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Name FROM ConsumableCatalog WHERE ConsumableKey = %s", (consumable_key,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "El consumible especificado no existe."
+        name = row[0]
+
+    # Cobrar
+    success, current_balance = spend_combat_currency(user_id, discounted_price)
+    if not success:
+        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
+            VALUES (%s, %s, 1)
+            ON CONFLICT (UserID, ConsumableKey)
+            DO UPDATE SET Quantity = UserConsumables.Quantity + EXCLUDED.Quantity
+        """, (user_id, consumable_key))
+        return True, f"Compraste 1x **{name}** por {format_currency(discounted_price)}."
+
+
+def insert_gem_discounted(user_id, slot, gem_key, discounted_price):
+    """Verifica el slot y gem_key, cobra discounted_price y realiza la inserción de la gema."""
+    from src.utils.combat_progression import format_currency
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Name FROM GemCatalog WHERE GemKey = %s", (gem_key,))
+        gem_row = cursor.fetchone()
+        if not gem_row:
+            return False, "La gema especificada no existe."
+        gem_name = gem_row[0]
+
+        cursor.execute("SELECT GemKey FROM UserEquipment WHERE UserID = %s AND Slot = %s", (user_id, slot))
+        eq_row = cursor.fetchone()
+        if not eq_row:
+            return False, "No tienes ninguna pieza equipada en este slot."
+        
+        if eq_row[0] is not None:
+            return False, "Este slot ya tiene una gema equipada. Remuévela primero."
+
+    # Cobrar
+    success, current_balance = spend_combat_currency(user_id, discounted_price)
+    if not success:
+        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+
+    with db_cursor() as cursor:
+        cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
+        return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}** por {format_currency(discounted_price)}."
+
 

@@ -307,6 +307,131 @@ class TestDueloMuerteSubita(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_embed.title, "📖 Glosario de Estados de Combate")
         self.assertTrue(len(sent_embed.fields) == 4)
 
+    def test_bleed_on_hit_passive_proc(self):
+        self.p1.has_bleed_on_hit = True
+        self.p2.bleed_turns = 0
+        self.p2.bleed_source_pct = 0.0
+
+        # Caso 1: Se activa el Filo Sangrante (segunda llamada a random.random devuelve < 0.15)
+        with patch('random.random', side_effect=[0.5, 0.10]), \
+             patch('random.uniform', return_value=1.0):
+            damage, log = self.view._calculate_action_result(self.p1, self.p2, "attack")
+            self.assertGreater(damage, 0)
+            self.assertEqual(self.p2.bleed_turns, 3 + 1)
+            self.assertEqual(self.p2.bleed_source_pct, 0.06)
+            self.assertIn("El Filo Sangrante corta profundo", log)
+
+        # Restablecer
+        self.p2.bleed_turns = 0
+        self.p2.bleed_source_pct = 0.0
+
+        # Caso 2: No se activa el Filo Sangrante (segunda llamada devuelve >= 0.15)
+        with patch('random.random', side_effect=[0.5, 0.50]), \
+             patch('random.uniform', return_value=1.0):
+            damage, log = self.view._calculate_action_result(self.p1, self.p2, "attack")
+            self.assertGreater(damage, 0)
+            self.assertEqual(self.p2.bleed_turns, 0)
+            self.assertEqual(self.p2.bleed_source_pct, 0.0)
+            self.assertNotIn("El Filo Sangrante corta profundo", log)
+
+
+class TestDueloSetBonuses(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        self.mock_user1 = MagicMock()
+        self.mock_user1.id = 111
+        self.mock_user1.display_name = "Player1"
+        self.mock_user1.mention = "<@111>"
+
+        self.mock_user2 = MagicMock()
+        self.mock_user2.id = 222
+        self.mock_user2.display_name = "Player2"
+        self.mock_user2.mention = "<@222>"
+
+        self.mock_cog = MagicMock()
+        self.mock_cog.active_duels = set()
+
+        self.p1 = Combatant(self.mock_user1, level=10, equipment={}, combat_class="Mago")
+        self.p2 = Combatant(self.mock_user2, level=10, equipment={}, combat_class="Pícaro")
+        self.view = DuelView(self.p1, self.p2, bet=100, cog=self.mock_cog)
+
+    def test_leviathan_cc_reduction(self):
+        # Without leviathan
+        self.p1.set_bonus_leviathan_4pc = False
+        self.p1.stun_turns = 4
+        self.assertEqual(self.p1.stun_turns, 4)
+
+        # With leviathan
+        self.p1.set_bonus_leviathan_4pc = True
+        self.p1.stun_turns = 0 # Reset first so value > _stun_turns evaluates to True
+        self.p1.stun_turns = 4
+        self.assertEqual(self.p1.stun_turns, 3) # 4 * 0.85 = 3.4 -> 3
+
+        # Minimum CC duration is 1
+        self.p1.stun_turns = 0
+        self.p1.stun_turns = 1
+        self.assertEqual(self.p1.stun_turns, 1)
+
+        # Verify frozen and silence
+        self.p1.frozen_turns = 0
+        self.p1.frozen_turns = 4
+        self.assertEqual(self.p1.frozen_turns, 3)
+        self.p1.silence_turns = 0
+        self.p1.silence_turns = 4
+        self.assertEqual(self.p1.silence_turns, 3)
+
+    def test_caelum_first_strike_dodge(self):
+        self.p2.set_bonus_caelum_4pc = True
+        self.p2.first_strike_used = False
+
+        # Mock random to force a dodge (dodge_chance will be 0.20, so random < 0.20 procs dodge)
+        with patch('random.random', return_value=0.10):
+            damage, log = self.view._calculate_action_result(self.p1, self.p2, "attack")
+            self.assertEqual(damage, 0)
+            self.assertTrue(self.p2.first_strike_used)
+            self.assertIn("ESQUIVÓ", log)
+
+    def test_ignis_burn_extension(self):
+        self.p1.set_bonus_ignis_4pc = True
+        self.view.p1_special_id = "quemadura"
+        self.view.p1_action = "special"
+        self.view.p2_action = "attack"
+        
+        # Call the calculation method
+        self.view._calculate_action_result(self.p1, self.p2, "special")
+        self.assertEqual(self.view.p2_burn_turns, SKILLS_CONFIG["quemadura"]["turns"] + 1 + 2)
+
+    def test_aurelius_low_hp_heal_after_dots(self):
+        self.p1.set_bonus_aurelius_4pc = True
+        self.p1.hp = 25
+        self.p1.low_hp_heal_used = False
+        
+        # Simulate round resolution Aurelius check after DoTs
+        for p in (self.view.p1, self.view.p2):
+            if p.hp > 0 and p.hp < p.max_hp * 0.30 and p.set_bonus_aurelius_4pc and not p.low_hp_heal_used:
+                p.low_hp_heal_used = True
+                heal_amt = int(p.max_hp * 0.15)
+                p.hp = min(p.max_hp, p.hp + heal_amt)
+                
+        expected_hp = 25 + int(self.p1.max_hp * 0.15)
+        self.assertEqual(self.p1.hp, expected_hp)
+        self.assertTrue(self.p1.low_hp_heal_used)
+
+    def test_abyssus_random_activation(self):
+        mock_user = MagicMock()
+        mock_user.id = 333
+        mock_user.display_name = "AbyssusPlayer"
+        mock_user.mention = "<@333>"
+        
+        # Patch random to choose caelum and mock get_equipped_set_pieces to bypass equipment dictionary lookup
+        with patch('src.commands.duels.duelo.get_equipped_set_pieces', return_value={"set_abyssus": 4}), \
+             patch('random.choice', return_value="caelum_first_strike_dodge"):
+            p = Combatant(mock_user, level=10, equipment={}, combat_class="Mago")
+            self.assertTrue(p.set_bonus_abyssus_4pc)
+            self.assertTrue(p.set_bonus_caelum_4pc)
+            self.assertFalse(p.set_bonus_ignis_4pc)
+            self.assertIn("Caelum", p.abyssus_log)
+
 
 if __name__ == '__main__':
     unittest.main()

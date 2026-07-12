@@ -21,7 +21,7 @@ from src.db import (
     get_combat_stats, update_combat_stats_after_duel,
     log_duel, get_user_equipment, equip_item, get_duel_leaderboard,
     update_user_class, update_user_subclass, update_user_class_and_subclass,
-    get_combat_wallet, get_gem_catalog, insert_gem, remove_gem,
+    get_combat_wallet, add_combat_currency, get_gem_catalog, insert_gem, remove_gem,
     get_consumable_catalog, buy_consumable, get_user_consumables, use_consumable,
 )
 from src.utils.combat_progression import (
@@ -101,6 +101,9 @@ class Combatant:
         self.set_bonus_leviathan_4pc = False
         self.set_bonus_aurelius_4pc = False
         self.set_bonus_abyssus_4pc = False
+        self.first_strike_used = False
+        self.low_hp_heal_used = False
+        self.next_hit_lifesteal_bonus = 0.0
 
         # Cargar cache de sets si está vacío
         if not EQUIPMENT_SETS_CACHE:
@@ -172,6 +175,22 @@ class Combatant:
                     ]
                     self.abyssus_rolled_4pc_effect = random.choice(possible_effects)
 
+        # Abyssus random set effect activation
+        if getattr(self, "set_bonus_abyssus_4pc", False):
+            effect_map = {
+                "yggdrasil_group_regen": ("set_bonus_yggdrasil_4pc", "Regeneración de Grupo (Yggdrasil)"),
+                "ignis_burn_extension": ("set_bonus_ignis_4pc", "Extensión de Quemadura (Ignis)"),
+                "caelum_first_strike_dodge": ("set_bonus_caelum_4pc", "Esquiva Inicial (Caelum)"),
+                "thanatos_ally_death_lifesteal": ("set_bonus_thanatos_4pc", "Robo de Vida por Aliado Caído (Thanatos)"),
+                "leviathan_cc_reduction": ("set_bonus_leviathan_4pc", "Reducción de CC (Leviathán)"),
+                "aurelius_low_hp_heal": ("set_bonus_aurelius_4pc", "Curación al HP Crítico (Aurelius)"),
+            }
+            effect_id = getattr(self, "abyssus_rolled_4pc_effect", None)
+            if effect_id in effect_map:
+                flag, name = effect_map[effect_id]
+                setattr(self, flag, True)
+                self.abyssus_log = f"🌀 **Efecto Abyssus:** ¡{self.user.display_name} obtiene el bonus del set **{name}**!"
+
         # Actualizar pre_hit_hp por si HP cambió debido a Yggdrasil
         self.pre_hit_hp = self.hp
 
@@ -183,12 +202,13 @@ class Combatant:
         self.special_cooldown = 0  # Turnos restantes de cooldown del Especial
         self.skill10_cooldown = 0  # Cooldown de habilidad Nv.10
         self.skill15_cooldown = 0  # Cooldown de habilidad Nv.15 (ultimate)
+        self.taunt_cooldown = 0 
         self.consecutive_timeouts = 0
 
         # Estados de subclase (duelos)
-        self.stun_turns = 0                 # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
-        self.frozen_turns = 0               # Turnos congelado
-        self.silence_turns = 0              # Turnos silenciado
+        self._stun_turns = 0                # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
+        self._frozen_turns = 0              # Turnos congelado
+        self._silence_turns = 0             # Turnos silenciado
         self.bleed_turns = 0                # Turnos sangrado
         self.bleed_source_pct = 0.06        # 6% del último daño físico
         self.last_physical_damage_taken = 0  # Para sangrado
@@ -218,6 +238,37 @@ class Combatant:
         self.passives = passives
         self.used_second_wind = False
         self.arcane_shield_active = any(p['id'] == 'arcane_shield' for p in passives)
+        self.has_bleed_on_hit = any(p['id'] == 'bleed_on_hit' for p in passives)
+
+    @property
+    def stun_turns(self) -> int:
+        return self._stun_turns
+
+    @stun_turns.setter
+    def stun_turns(self, value: int):
+        if value > getattr(self, "_stun_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._stun_turns = value
+
+    @property
+    def frozen_turns(self) -> int:
+        return self._frozen_turns
+
+    @frozen_turns.setter
+    def frozen_turns(self, value: int):
+        if value > getattr(self, "_frozen_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._frozen_turns = value
+
+    @property
+    def silence_turns(self) -> int:
+        return self._silence_turns
+
+    @silence_turns.setter
+    def silence_turns(self, value: int):
+        if value > getattr(self, "_silence_turns", 0) and self.set_bonus_leviathan_4pc:
+            value = max(1, int(value * 0.85))
+        self._silence_turns = value
 
 
 # ══════════════════════════════════════════════
@@ -524,6 +575,11 @@ class DuelView(discord.ui.View):
         self._payout_done = False
         self.action_log = []  # Registro de acciones recientes
         self.interaction_msg = None  # Referencia al mensaje del duelo
+
+        # Check Abyssus sets logs
+        for p in (self.p1, self.p2):
+            if hasattr(p, "abyssus_log"):
+                self.action_log.append(p.abyssus_log)
 
     def _build_embed(self):
         """Construye el embed de estado del combate."""
@@ -925,8 +981,16 @@ class DuelView(discord.ui.View):
                 if is_sudden_death:
                     b_dmg_base = b_dmg_base * 2
                 b_dmg = min(defender.hp, b_dmg_base)
-                defender.hp = max(0, defender.hp - b_dmg)
                 logs.append(f"🔥 **Quemadura:** {defender.user.display_name} sufre **{b_dmg}** HP de daño por quemadura.{sudden_death_tag}")
+
+        # Check Aurelius set bonus after DoTs
+        for p in (self.p1, self.p2):
+            if p.hp > 0 and p.hp < p.max_hp * 0.30 and p.set_bonus_aurelius_4pc and not p.low_hp_heal_used:
+                p.low_hp_heal_used = True
+                heal_amt = int(p.max_hp * 0.15)
+                heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                p.hp = min(p.max_hp, p.hp + heal_amt)
+                logs.append(f"☀️ **Set Aurelius:** ¡{p.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP!")
 
         # 2. Aplicar curación/defensa activa si eligieron Defender
         if self.p1.is_defending:
@@ -1180,6 +1244,15 @@ class DuelView(discord.ui.View):
         if p2_log:
             logs.append(p2_log)
 
+        # Check Aurelius set bonus after damage phase
+        for p in (self.p1, self.p2):
+            if p.hp > 0 and p.hp < p.max_hp * 0.30 and p.set_bonus_aurelius_4pc and not p.low_hp_heal_used:
+                p.low_hp_heal_used = True
+                heal_amt = int(p.max_hp * 0.15)
+                heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                p.hp = min(p.max_hp, p.hp + heal_amt)
+                logs.append(f"☀️ **Set Aurelius:** ¡{p.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP!")
+
         # 6. Procesar pasivos post-daño (como Segundo Aliento)
         for attacker, defender in ((self.p1, self.p2), (self.p2, self.p1)):
             if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
@@ -1363,6 +1436,11 @@ class DuelView(discord.ui.View):
         if has_dodge_passive:
             dodge_chance += 0.05
             
+        # Caelum 4pc first strike dodge check (20% dodge, once per combat)
+        if defender.set_bonus_caelum_4pc and not defender.first_strike_used and not defender.guaranteed_dodge_next:
+            defender.first_strike_used = True
+            dodge_chance += 0.20
+            
         special_id = self.p1_special_id if attacker == self.p1 else self.p2_special_id
         if action_type == 'special' and special_id == 'estocada_precisa':
             # Estocada precisa ignora 50% de la evasión del rival
@@ -1493,6 +1571,12 @@ class DuelView(discord.ui.View):
                 attacker.hp = min(attacker.max_hp, attacker.hp + heal)
                 log_line += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
                 
+            # Pasivo: Filo Sangrante
+            if attacker.has_bleed_on_hit and damage > 0 and random.random() < 0.15:
+                defender.bleed_turns = 3 + 1
+                defender.bleed_source_pct = 0.06
+                log_line += f"\n🩸 El Filo Sangrante corta profundo — Sangrado aplicado a {defender.user.display_name}."
+
             return damage, log_line
 
         elif action_type == 'special':
@@ -1540,6 +1624,8 @@ class DuelView(discord.ui.View):
                 
             elif special_id == "quemadura":
                 turns = cfg["turns"] + 1
+                if attacker.set_bonus_ignis_4pc:
+                    turns += 2
                 if defender == self.p1:
                     self.p1_burn_turns = turns
                 else:
@@ -1632,10 +1718,13 @@ class DuelView(discord.ui.View):
                     def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
+                burn_duration = 5
+                if attacker.set_bonus_ignis_4pc:
+                    burn_duration += 2
                 if defender == self.p1:
-                    self.p1_burn_turns = 5
+                    self.p1_burn_turns = burn_duration
                 else:
-                    self.p2_burn_turns = 5
+                    self.p2_burn_turns = burn_duration
                 return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y aplica **Quemadura** por 4 turnos")
 
             elif special_id == "onda_escarcha":
@@ -1760,12 +1849,15 @@ class DuelView(discord.ui.View):
                     def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
+                burn_duration = 6
+                if attacker.set_bonus_ignis_4pc:
+                    burn_duration += 2
                 if defender == self.p1:
-                    self.p1_burn_turns = 6
+                    self.p1_burn_turns = burn_duration
                 else:
-                    self.p2_burn_turns = 6
-                defender.enhanced_burn_turns = 6
-                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], " y desata una **Quemadura reforzada** (8% HP max/t) por 5 turnos")
+                    self.p2_burn_turns = burn_duration
+                defender.enhanced_burn_turns = burn_duration
+                return finalize_damage_and_log(damage, cfg["name"], cfg["emoji"], f" y desata una **Quemadura reforzada** (8% HP max/t) por {burn_duration - 1} turnos")
 
             elif special_id == "tormenta_elemental":
                 raw_dmg = int(attacker.mag * cfg["damage_mult"])
@@ -1774,10 +1866,13 @@ class DuelView(discord.ui.View):
                     def_mitig = int(defender_def_val * cfg["def_mitigation_factor"] * 2.5)
                     raw_dmg = int(raw_dmg * 0.4)
                 damage = max(1, raw_dmg - def_mitig)
+                burn_duration = 3
+                if attacker.set_bonus_ignis_4pc:
+                    burn_duration += 2
                 if defender == self.p1:
-                    self.p1_burn_turns = 3
+                    self.p1_burn_turns = burn_duration
                 else:
-                    self.p2_burn_turns = 3
+                    self.p2_burn_turns = burn_duration
                 if defender.stun_turns > 0:
                     defender.stun_turns += 1
                     detail = " y refuerza el aturdimiento activo!"
@@ -2239,10 +2334,8 @@ class LootView(discord.ui.View):
         sell_msg = ""
         if old:
             old_sell = calc_sell_price(old['rarity'], old['item_level'])
-            await asyncio.to_thread(add_balance, self.user.id, old_sell)
-            await asyncio.to_thread(registrar_transaccion, self.user.id, old_sell,
-                                    f"Venta equipo: {old['item_name']}")
-            sell_msg = f"\n💰 Vendiste **{old['item_name']}** por **{old_sell:,}** monedas."
+            await asyncio.to_thread(add_combat_currency, self.user.id, old_sell)
+            sell_msg = f"\n💰 Vendiste **{old['item_name']}** por **{format_currency(old_sell)}**."
 
         for item in self.children:
             item.disabled = True
@@ -2270,16 +2363,14 @@ class LootView(discord.ui.View):
     async def _sell(self, interaction=None):
         """Vende el drop."""
         loot = self.loot
-        await asyncio.to_thread(add_balance, self.user.id, loot['sell_price'])
-        await asyncio.to_thread(registrar_transaccion, self.user.id, loot['sell_price'],
-                                f"Venta drop: {loot['name']}")
+        await asyncio.to_thread(add_combat_currency, self.user.id, loot['sell_price'])
 
         for item in self.children:
             item.disabled = True
 
         embed = discord.Embed(
             title="💰 Vendido",
-            description=f"Vendiste **{loot['name']}** por **{loot['sell_price']:,}** monedas.",
+            description=f"Vendiste **{loot['name']}** por **{format_currency(loot['sell_price'])}**.",
             color=discord.Color.light_grey()
         )
 

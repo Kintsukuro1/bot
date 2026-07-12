@@ -317,6 +317,12 @@ ITEM_PASSIVES = [
         "emoji": "⚔️",
         "desc": "Al Defender, contraatacas por el 75% del daño recibido y te curas un 30% del mismo, pero no reduces daño ni te curas de forma normal.",
     },
+    {
+        "id": "bleed_on_hit",
+        "name": "Filo Sangrante",
+        "emoji": "🩸",
+        "desc": "15% de probabilidad de aplicar Sangrado (3 turnos) al golpear con esta arma",
+    },
 ]
 
 PASSIVE_LOOKUP = {p["id"]: p for p in ITEM_PASSIVES}
@@ -517,7 +523,10 @@ def generate_loot(player_level, ilvl=None, floor_idx=0):
     # Pasivos: se otorgan a partir de rareza "Raro" en adelante
     passive = None
     if rarity["name"] in ("Raro", "Épico", "Legendario"):
-        passive = random.choice(ITEM_PASSIVES).copy()
+        candidates = ITEM_PASSIVES
+        if slot != "Arma" or primary_stat != "atk":
+            candidates = [p for p in ITEM_PASSIVES if p["id"] != "bleed_on_hit"]
+        passive = random.choice(candidates).copy()
 
     # Precio de venta
     sell_price = calc_sell_price(rarity["name"], ilvl)
