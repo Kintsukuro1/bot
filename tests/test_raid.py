@@ -840,5 +840,36 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         mock_register.assert_called_once_with(mock_interaction, "quemadura", is_ephemeral=True)
 
 
+    @patch('src.commands.duels.raid.get_user_equipment')
+    async def test_resolve_round_timeout_retains_difficulty(self, mock_get_equip):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.difficulty = "mitica"
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Simular timeout con interacción = None
+        await view._resolve_round(None)
+        
+        # Verificar que se llamó a edit con una nueva vista que tiene dificultad "mitica"
+        view.interaction_msg.edit.assert_called_once()
+        args, kwargs = view.interaction_msg.edit.call_args
+        sent_view = kwargs.get("view")
+        self.assertIsNotNone(sent_view)
+        self.assertEqual(sent_view.difficulty, "mitica")
+
+
 if __name__ == '__main__':
     unittest.main()

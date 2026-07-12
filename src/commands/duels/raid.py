@@ -2220,7 +2220,7 @@ class RaidCombatView(discord.ui.View):
 
         if interaction is None:
             # Timeout — recrear vista
-            new_view = RaidCombatView(self.players, self.boss, self.cog, self.affix)
+            new_view = RaidCombatView(self.players, self.boss, self.cog, self.affix, difficulty=self.difficulty)
             new_view.turn_count = self.turn_count
             new_view.action_log = self.action_log
             new_view.interaction_msg = self.interaction_msg
@@ -2231,6 +2231,7 @@ class RaidCombatView(discord.ui.View):
             new_view.boss_channeling_threshold = self.boss_channeling_threshold
             new_view.boss_poison_turns = self.boss_poison_turns
             new_view.boss_poison_damage = self.boss_poison_damage
+            new_view._rewards_done = self._rewards_done
             try:
                 if self.interaction_msg:
                     await self.interaction_msg.edit(embed=embed, view=new_view)
