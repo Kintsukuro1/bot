@@ -90,6 +90,12 @@ class RaidBoss:
         self.is_miniboss = is_miniboss
         self.minion_pool = boss_config.get("minion_pool")
 
+        # Progresión de fases
+        self.phase = 1
+        self.phase2_ability_id = boss_config.get("phase2_ability")
+        self.phase3_ability_id = boss_config.get("phase3_ability")
+        self.fury_phase_triggered = False
+
         # Stats base guardados para mutación
         self._base_atk = self.atk
         self._base_def = self.def_stat
@@ -212,6 +218,10 @@ class RaidCombatant:
         self.enhanced_burn_turns = 0
         self.burn_turns = 0                 # Turnos de quemadura
         self.frenzy_turns = 0               # Turnos de Frenesí
+
+        # Mecánicas de Fase de Furia
+        self.dominated_turns = 0
+        self.fury_stun_pending = False
         self.retribution_active = False     # Postura de Represalia activa
         self.blinded_turns = 0              # Ceguera
         self.turns_survived = 0    # Turnos sobrevividos (para XP)
@@ -485,32 +495,32 @@ class PersonalSkillSelectView(discord.ui.View):
         self.add_item(select)
 
     async def select_callback(self, interaction: discord.Interaction):
-        # Deshabilitar para evitar dobles clics
+        # Deshabilitar el select para evitar dobles clics, pero NO respondemos todavía —
+        # esperamos a saber el resultado final para editar una sola vez.
         for child in self.children:
             if isinstance(child, discord.ui.Select):
                 child.disabled = True
-        await interaction.response.edit_message(view=self)
 
-        # 1. Comprobar condiciones de nuevo (defensa en profundidad)
+        # 1. Comprobar condiciones (defensa en profundidad)
         if self.raid_view.game_over:
-            await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ La raid ya terminó.", view=self)
             return
 
         user_id = self.player.user.id
         if user_id in self.raid_view.actions:
-            await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Ya elegiste tu acción.", view=self)
             return
 
         selected_value = interaction.data["values"][0]
         if selected_value == "none":
-            await interaction.followup.send("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ No tienes habilidades especiales disponibles.", view=self)
             return
 
         # 2. Validar cooldown, clase, nivel y subclase
         from src.utils.combat_config import SKILLS_CONFIG
         req = SKILLS_CONFIG.get(selected_value)
         if not req:
-            await interaction.followup.send("❌ Habilidad desconocida.", ephemeral=True)
+            await interaction.response.edit_message(content="❌ Habilidad desconocida.", view=self)
             return
 
         if req.get("min_level") == 10:
@@ -521,38 +531,62 @@ class PersonalSkillSelectView(discord.ui.View):
             cd = self.player.special_cooldown
 
         if cd > 0:
-            await interaction.followup.send(
-                f"❌ Habilidad en enfriamiento ({cd} turnos restantes).",
-                ephemeral=True
+            await interaction.response.edit_message(
+                content=f"❌ Habilidad en enfriamiento ({cd} turnos restantes).", view=self
             )
             return
 
         if req["class"] is not None:
             if self.player.level < req["min_level"] or self.player.combat_class != req["class"]:
-                await interaction.followup.send(
-                    f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo los **{req['class']}** de nivel **{req['min_level']}+** pueden usar esta habilidad.",
+                    view=self
                 )
                 return
 
         if req.get("subclass") is not None:
             if self.player.combat_subclass != req["subclass"]:
-                await interaction.followup.send(
-                    f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.",
-                    ephemeral=True
+                await interaction.response.edit_message(
+                    content=f"❌ Solo la subclase **{req['subclass']}** puede usar esta habilidad.", view=self
                 )
                 return
 
-        # 3. Registrar la acción
-        # Mostramos mensaje efímero de confirmación al jugador
-        await interaction.followup.send(f"✅ Habilidad especial registrada: **{req['name']}**", ephemeral=True)
-        # Llamar a _register_action de la vista de la raid pasándole is_ephemeral=True
+        # 3. Todo válido — editar el mismo mensaje con la confirmación final
+        await interaction.response.edit_message(content=f"✅ Habilidad especial registrada: **{req['name']}**", view=self)
+
+        # 4. Registrar la acción
         await self.raid_view._register_action(interaction, selected_value, is_ephemeral=True)
 
 
 # ══════════════════════════════════════════════
 # VISTA: COMBATE DE RAID
 # ══════════════════════════════════════════════
+
+def trigger_fury_phase(view, logs: list[str]):
+    from src.utils.raid_config import MINION_ARCHETYPES
+    view.boss.fury_phase_triggered = True
+
+    # 1. Oleada de refuerzos (1 esbirro del pool, no 2)
+    if view.boss.minion_pool:
+        pool = view.boss.minion_pool if isinstance(view.boss.minion_pool, list) else list(MINION_ARCHETYPES.keys())
+        key = random.choice(pool)
+        new_minion = build_minions_from_pool({"minion_pool": [key]})[0]
+        view.minions.append(new_minion)
+        logs.append(f"\n👾 **¡Refuerzos de Furia!** Aparece **{new_minion['name']}** para proteger al jefe.")
+
+    # 2. Dominación
+    alive = view._alive_players()
+    num_dominated = 2 if len(view.players) >= 4 else 1
+    dominated = random.sample(alive, min(num_dominated, len(alive)))
+    for p in dominated:
+        p.dominated_turns = 1
+        logs.append(f"😵 **¡Dominación!** {p.user.display_name} ha sido dominado por el abismo. ¡Su próximo ataque golpeará a un aliado!")
+
+    # 3. Marcar el stun grupal pendiente para la próxima ronda
+    for p in alive:
+        p.fury_stun_pending = True
+    logs.append("⚠️ **¡Advertencia!** El jefe acumula energía sísmica... El grupo será aturdido el próximo turno. ¡Prepárense!")
+
 
 class RaidCombatView(discord.ui.View):
     """Vista principal del combate cooperativo contra el boss."""
@@ -631,7 +665,7 @@ class RaidCombatView(discord.ui.View):
             boss_status += f" 🧪(Veneno {self.boss_poison_turns}t)"
 
         embed.add_field(
-            name=f"{self.boss.emoji} {self.boss.name} — Nv. ∞{boss_status}",
+            name=f"{self.boss.emoji} {self.boss.name} (Fase {self.boss.phase}/3) — Nv. ∞{boss_status}",
             value=(
                 f"{boss_hp_bar}\n"
                 f"⚔️ {self.boss.atk} ATK · 🛡️ {self.boss.def_stat} DEF\n"
@@ -850,6 +884,13 @@ class RaidCombatView(discord.ui.View):
     async def _resolve_round(self, interaction=None):
         """Resuelve la ronda: acciones de jugadores → IA del boss."""
         logs = [f"🏁 **Ronda {self.turn_count + 1}:**"]
+
+        # 0. Aplicar el stun grupal pendiente de Fase de Furia al inicio del turno
+        for p in self._alive_players():
+            if p.fury_stun_pending:
+                p.fury_stun_pending = False
+                p.stun_turns = max(p.stun_turns, 1)
+                logs.append(f"😵 **Furia del Jefe:** ¡{p.user.display_name} es aturdido por la onda de choque!")
         
         # Configurar intangibilidad para Espíritu Errante (Ronda 2, 4, 6... -> turn_count % 2 == 1)
         if getattr(self.boss, "miniboss_key", None) == "espiritu_errante" and (self.turn_count % 2 == 1):
@@ -1080,6 +1121,24 @@ class RaidCombatView(discord.ui.View):
                     p.hp = min(p.max_hp, p.hp + regen_heal)
                     logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
 
+        # 2.6. Progresión de Fases del Boss
+        hp_pct = self.boss.hp / self.boss.max_hp if self.boss.max_hp > 0 else 0
+        new_phase = 3 if hp_pct <= 0.33 else (2 if hp_pct <= 0.66 else 1)
+
+        if new_phase != self.boss.phase:
+            self.boss.phase = new_phase
+            if new_phase == 2 and self.boss.phase2_ability_id:
+                self.boss.ability_id = self.boss.phase2_ability_id
+                self.boss.ability = BOSS_ABILITIES[self.boss.ability_id]
+                logs.append(f"\n⚡ **¡{self.boss.name} entra en su segunda fase!** Su patrón de ataque cambia.")
+            elif new_phase == 3:
+                if self.boss.phase3_ability_id:
+                    self.boss.ability_id = self.boss.phase3_ability_id
+                    self.boss.ability = BOSS_ABILITIES[self.boss.ability_id]
+                logs.append(f"\n🔥 **¡{self.boss.name} entra en su fase final!**")
+                if not self.boss.fury_phase_triggered:
+                    trigger_fury_phase(self, logs)
+
         # 3. Comprobar si esbirros deben aparecer por primera vez (< 50% HP)
         if self.boss.hp < (self.boss.max_hp * 0.5) and not self.minions_summoned:
             self.minions_summoned = True
@@ -1132,37 +1191,98 @@ class RaidCombatView(discord.ui.View):
                     continue
 
             if action == 'attack':
-                # Ataque normal (daño físico)
-                effective_atk = p.atk
-                if p.atk_buff_turns > 0:
-                    effective_atk = int(effective_atk * (1.0 + p.atk_buff_pct))
-                if p.weakness_turns > 0:
-                    effective_atk = int(effective_atk * (1.0 - p.weakness_pct))
+                if p.dominated_turns > 0:
+                    p.dominated_turns -= 1
+                    ally_targets = [ally for ally in self._alive_players() if ally.user.id != p.user.id]
+                    if ally_targets:
+                        victim = random.choice(ally_targets)
+                        effective_atk = p.atk
+                        if p.atk_buff_turns > 0:
+                            effective_atk = int(effective_atk * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            effective_atk = int(effective_atk * (1.0 - p.weakness_pct))
 
-                base_dmg = effective_atk * random.uniform(0.85, 1.15)
-                
-                # Obtener la defensa del objetivo y aplicar Fragilidad si tiene
-                target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
-                if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
-                    target_def = int(target_def * (1.0 - active_target.fragility_pct))
-                elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
-                    target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+                        base_dmg = effective_atk * random.uniform(0.85, 1.15)
+                        victim_def = victim.def_stat
+                        if victim.fragility_turns > 0:
+                            victim_def = int(victim_def * (1.0 - victim.fragility_pct))
 
-                damage = max(1, int(base_dmg - target_def * 0.35))
+                        damage_to_ally = max(1, int(base_dmg - victim_def * 0.35))
 
-                # Crítico 10% (o más con crit_boost y crit_chance_bonus de Duelista)
-                crit_chance = 0.10
-                if p.has_crit_boost:
-                    crit_chance += 0.10
-                crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
-                
-                crit = random.random() < crit_chance
-                if crit:
-                    crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
-                    damage = int(damage * crit_mult)
-                    crit_text = " **¡CRÍTICO BRUTAL!**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **¡CRÍTICO!**"
+                        crit_chance = 0.10
+                        if p.has_crit_boost:
+                            crit_chance += 0.10
+                        crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
+
+                        crit = random.random() < crit_chance
+                        if crit:
+                            crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
+                            damage_to_ally = int(damage_to_ally * crit_mult)
+                            crit_text = " **¡CRÍTICO!**"
+                        else:
+                            crit_text = ""
+
+                        logs.append(f"😵 **Dominado:** ¡{p.user.display_name} ataca a su aliado {victim.user.display_name} en vez del enemigo!{crit_text}")
+                        apply_damage_to_player(victim, damage_to_ally)
+                        damage = 0
+                    else:
+                        # Ataque normal si no hay aliados
+                        effective_atk = p.atk
+                        if p.atk_buff_turns > 0:
+                            effective_atk = int(effective_atk * (1.0 + p.atk_buff_pct))
+                        if p.weakness_turns > 0:
+                            effective_atk = int(effective_atk * (1.0 - p.weakness_pct))
+
+                        base_dmg = effective_atk * random.uniform(0.85, 1.15)
+                        target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                        if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                            target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                        elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                            target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+
+                        damage = max(1, int(base_dmg - target_def * 0.35))
+
+                        crit_chance = 0.10
+                        if p.has_crit_boost:
+                            crit_chance += 0.10
+                        crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
+
+                        crit = random.random() < crit_chance
+                        if crit:
+                            crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
+                            damage = int(damage * crit_mult)
+                            crit_text = " **¡CRÍTICO BRUTAL!**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **¡CRÍTICO!**"
+                        else:
+                            crit_text = ""
                 else:
-                    crit_text = ""
+                    # Ataque normal sin dominación
+                    effective_atk = p.atk
+                    if p.atk_buff_turns > 0:
+                        effective_atk = int(effective_atk * (1.0 + p.atk_buff_pct))
+                    if p.weakness_turns > 0:
+                        effective_atk = int(effective_atk * (1.0 - p.weakness_pct))
+
+                    base_dmg = effective_atk * random.uniform(0.85, 1.15)
+                    target_def = active_target.def_stat if hasattr(active_target, 'def_stat') else active_target.get("def_stat", 10)
+                    if hasattr(active_target, 'fragility_turns') and active_target.fragility_turns > 0:
+                        target_def = int(target_def * (1.0 - active_target.fragility_pct))
+                    elif isinstance(active_target, dict) and active_target.get("fragility_turns", 0) > 0:
+                        target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
+
+                    damage = max(1, int(base_dmg - target_def * 0.35))
+
+                    crit_chance = 0.10
+                    if p.has_crit_boost:
+                        crit_chance += 0.10
+                    crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
+
+                    crit = random.random() < crit_chance
+                    if crit:
+                        crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
+                        damage = int(damage * crit_mult)
+                        crit_text = " **¡CRÍTICO BRUTAL!**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **¡CRÍTICO!**"
+                    else:
+                        crit_text = ""
 
             elif action == 'defend':
                 p.is_defending = True
@@ -2220,7 +2340,7 @@ class RaidCombatView(discord.ui.View):
 
         if interaction is None:
             # Timeout — recrear vista
-            new_view = RaidCombatView(self.players, self.boss, self.cog, self.affix)
+            new_view = RaidCombatView(self.players, self.boss, self.cog, self.affix, difficulty=self.difficulty)
             new_view.turn_count = self.turn_count
             new_view.action_log = self.action_log
             new_view.interaction_msg = self.interaction_msg
@@ -2231,6 +2351,7 @@ class RaidCombatView(discord.ui.View):
             new_view.boss_channeling_threshold = self.boss_channeling_threshold
             new_view.boss_poison_turns = self.boss_poison_turns
             new_view.boss_poison_damage = self.boss_poison_damage
+            new_view._rewards_done = self._rewards_done
             try:
                 if self.interaction_msg:
                     await self.interaction_msg.edit(embed=embed, view=new_view)

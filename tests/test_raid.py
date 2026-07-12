@@ -594,8 +594,9 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         boss.hp = 190
         self.assertEqual(boss.hp, 190)
 
+    @patch('random.random', return_value=0.5)
     @patch('random.uniform', return_value=1.0)
-    async def test_shield_minion_damage_mitigation(self, mock_uniform):
+    async def test_shield_minion_damage_mitigation(self, mock_uniform, mock_random):
         from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
         
         mock_user = MagicMock()
@@ -637,7 +638,6 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         # damage before shield = 40 - 5 = 35
         # Shield mitigates 50% -> 35 * 0.5 = 17.5 -> 17
         await view._resolve_round(mock_interaction)
-        
         self.assertEqual(view.minions[0]["hp"], 13) # 30 - 17 = 13
 
     @patch('src.commands.duels.raid.generate_raid_loot')
@@ -835,9 +835,226 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         await personal_view.select_callback(mock_interaction)
         
         mock_interaction.response.edit_message.assert_called_once()
-        mock_interaction.followup.send.assert_called_once()
         # Verify it calls _register_action with is_ephemeral=True
         mock_register.assert_called_once_with(mock_interaction, "quemadura", is_ephemeral=True)
+
+
+    @patch('src.commands.duels.raid.get_user_equipment')
+    async def test_resolve_round_timeout_retains_difficulty(self, mock_get_equip):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test",
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.difficulty = "mitica"
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Simular timeout con interacción = None
+        await view._resolve_round(None)
+        
+        # Verificar que se llamó a edit con una nueva vista que tiene dificultad "mitica"
+        view.interaction_msg.edit.assert_called_once()
+        args, kwargs = view.interaction_msg.edit.call_args
+        sent_view = kwargs.get("view")
+        self.assertIsNotNone(sent_view)
+        self.assertEqual(sent_view.difficulty, "mitica")
+
+
+    def test_boss_phases_init(self):
+        from src.commands.duels.raid import RaidBoss
+        
+        boss_config = {
+            "name": "Ignis", "emoji": "🌋", "element": "Fuego", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": "juicio_sagrado", "phase3_ability": "tempestad_relampago",
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.phase2_ability_id, "juicio_sagrado")
+        self.assertEqual(boss.phase3_ability_id, "tempestad_relampago")
+
+    async def test_boss_phase_transitions(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Ignis", "emoji": "🌋", "element": "Fuego", "color": 0x000,
+            "hp": 100, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": "juicio_sagrado", "phase3_ability": "tempestad_relampago",
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Fase 1: HP al 100% (100 HP)
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica")
+        
+        # Transición a Fase 2: Reducir HP a 60% (60 HP)
+        boss.hp = 60
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 2)
+        self.assertEqual(boss.ability_id, "juicio_sagrado")
+        
+        # Transición a Fase 3: Reducir HP a 30% (30 HP)
+        boss.hp = 30
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 3)
+        self.assertEqual(boss.ability_id, "tempestad_relampago")
+
+    async def test_boss_phases_retrocompatibility(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        
+        boss_config = {
+            "name": "Normal Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 100, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": None, "phase3_ability": None,
+            "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Fase 1
+        self.assertEqual(boss.phase, 1)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica")
+        
+        # Reducir HP a 60%
+        boss.hp = 60
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 2)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica") # Mantiene la de Fase 1
+        
+        # Reducir HP a 30%
+        boss.hp = 30
+        await view._resolve_round(MagicMock())
+        self.assertEqual(boss.phase, 3)
+        self.assertEqual(boss.ability_id, "erupcion_volcanica") # Mantiene la de Fase 1
+
+
+    async def test_boss_fury_phase_trigger(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView, trigger_fury_phase
+        
+        mock_user1 = MagicMock()
+        mock_user1.id = 111
+        p1 = RaidCombatant(mock_user1, 15, {})
+        mock_user2 = MagicMock()
+        mock_user2.id = 222
+        p2 = RaidCombatant(mock_user2, 15, {})
+        
+        boss_config = {
+            "name": "Ignis", "emoji": "🌋", "element": "Fuego", "color": 0x000,
+            "hp": 100, "atk": 10, "def_stat": 5, "ability": "erupcion_volcanica",
+            "phase2_ability": "juicio_sagrado", "phase3_ability": "tempestad_relampago",
+            "minion_pool": ["curandero"], "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p1, p2], boss, mock_cog)
+        
+        logs = []
+        trigger_fury_phase(view, logs)
+        
+        self.assertTrue(boss.fury_phase_triggered)
+        self.assertEqual(len(view.minions), 1) # 1 reinforcement minion spawned
+        self.assertEqual(view.minions[0]["archetype"], "curandero")
+        
+        # Check that 1 player is dominated (since players count is 2)
+        dominated_count = sum(1 for p in view.players if p.dominated_turns > 0)
+        self.assertEqual(dominated_count, 1)
+        
+        # Both players should have fury_stun_pending
+        self.assertTrue(p1.fury_stun_pending)
+        self.assertTrue(p2.fury_stun_pending)
+
+    async def test_fury_group_stun_application(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user = MagicMock()
+        mock_user.id = 111
+        p = RaidCombatant(mock_user, 15, {})
+        p.fury_stun_pending = True
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        await view._resolve_round(MagicMock())
+        
+        # Check stun_turns applied and fury_stun_pending reset
+        self.assertFalse(p.fury_stun_pending)
+        self.assertEqual(p.stun_turns, 0) # Wore off at end of turn
+        self.assertTrue(any("es aturdido por la onda de choque" in line for line in view.action_log))
+
+    async def test_dominated_player_redirection(self):
+        from src.commands.duels.raid import RaidCombatant, RaidBoss, RaidCombatView
+        
+        mock_user1 = MagicMock()
+        mock_user1.id = 111
+        p1 = RaidCombatant(mock_user1, 15, {})
+        mock_user2 = MagicMock()
+        mock_user2.id = 222
+        p2 = RaidCombatant(mock_user2, 15, {})
+        
+        # Player 1 is dominated
+        p1.dominated_turns = 1
+        
+        boss_config = {
+            "name": "Dummy Boss", "emoji": "👾", "element": "Neutral", "color": 0x000,
+            "hp": 500, "atk": 10, "def_stat": 5, "ability": "none", "lore": "test"
+        }
+        boss = RaidBoss(boss_config, is_miniboss=True)
+        
+        mock_cog = MagicMock()
+        view = RaidCombatView([p1, p2], boss, mock_cog)
+        view.interaction_msg = MagicMock()
+        view.interaction_msg.edit = AsyncMock()
+        
+        # Player 1 attacks
+        view.actions[p1.user.id] = 'attack'
+        
+        # We record p2's HP before the round
+        p2_hp_before = p2.hp
+        
+        await view._resolve_round(MagicMock())
+        
+        # Player 1 should have 0 dominated turns remaining
+        self.assertEqual(p1.dominated_turns, 0)
+        # Player 2 should have taken damage from Player 1's redirected attack
+        self.assertTrue(p2.hp < p2_hp_before)
 
 
 if __name__ == '__main__':
