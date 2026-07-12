@@ -21,12 +21,15 @@ from src.db import (
     get_combat_stats, update_combat_stats_after_duel,
     log_duel, get_user_equipment, equip_item, get_duel_leaderboard,
     update_user_class, update_user_subclass, update_user_class_and_subclass,
+    get_combat_wallet, get_gem_catalog, insert_gem, remove_gem,
+    get_consumable_catalog, buy_consumable, get_user_consumables, use_consumable,
 )
 from src.utils.combat_progression import (
     calc_base_stats, calc_duel_xp, get_duel_cooldown_minutes,
     calc_attack_damage, calc_special_damage, calc_defend_heal,
     calc_equipment_bonus, get_effective_bonus,
     apply_subclass_equipment_conversion,
+    get_equipped_set_pieces, EQUIPMENT_SETS_CACHE, load_equipment_sets_cache,
     generate_loot, calc_sell_price,
     format_progress_bar, format_hp_bar, format_stat_type,
     get_combat_rank, get_combat_rank_emoji, calc_combat_xp_needed,
@@ -35,7 +38,7 @@ from src.utils.combat_progression import (
     TURN_TIMEOUT_SECONDS, CHALLENGE_TIMEOUT_SECONDS, LOOT_TIMEOUT_SECONDS,
     SPECIAL_UNLOCK_LEVEL, SPECIAL_COOLDOWN_TURNS, MAX_GEAR_BONUS_PCT,
     DROP_RATE_WINNER, DROP_RATE_LOSER,
-    ALL_STATS, format_item_stats_display,
+    ALL_STATS, format_item_stats_display, format_currency,
 )
 from src.utils.combat_config import SKILLS_CONFIG
 from src.utils.subclass_config import (
@@ -62,10 +65,19 @@ class Combatant:
 
         # Stats base
         base = calc_base_stats(level)
-        bonus, passives = calc_equipment_bonus(equipment)
+        bonus, passives, secondary_bonus = calc_equipment_bonus(equipment)
 
         # Aplicar conversión de equipo por subclase (antes del cap)
         bonus, self.subclass_extras = apply_subclass_equipment_conversion(bonus, combat_subclass)
+
+        # Sumar secondary_bonus a dodge_chance_bonus/crit_chance_bonus antes de aplicar el tope
+        dodge_bonus_from_gem = secondary_bonus.get("dodge", 0.0)
+        subclass_dodge = self.subclass_extras.get("dodge_chance_bonus", 0.0)
+        self.subclass_extras["dodge_chance_bonus"] = min(0.30, subclass_dodge + dodge_bonus_from_gem)
+
+        crit_bonus_from_gem = secondary_bonus.get("crit", 0.0)
+        subclass_crit = self.subclass_extras.get("crit_chance_bonus", 0.0)
+        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem)
 
         effective, _, pct_per_stat = get_effective_bonus(bonus, level)
 
@@ -76,6 +88,92 @@ class Combatant:
         self.base_atk = self.atk  # Para restaurar tras debuffs
         self.mag = base["mag"] + int(round(effective.get("mag", 0)))
         self.def_stat = base["def"] + int(round(effective.get("def", 0)))
+
+        # Inicializar variables de bonus de sets
+        self.vampirism_pct = 0.08 if any(p['id'] == 'vampirism' for p in passives) else 0.0
+        if any(p['id'] == 'vampirism_improved' for p in passives):
+            self.vampirism_pct += 0.15
+        self.healing_bonus_pct = 0.0
+        self.set_bonus_yggdrasil_4pc = False
+        self.set_bonus_ignis_4pc = False
+        self.set_bonus_caelum_4pc = False
+        self.set_bonus_thanatos_4pc = False
+        self.set_bonus_leviathan_4pc = False
+        self.set_bonus_aurelius_4pc = False
+        self.set_bonus_abyssus_4pc = False
+
+        # Cargar cache de sets si está vacío
+        if not EQUIPMENT_SETS_CACHE:
+            load_equipment_sets_cache()
+
+        # Detección de piezas de set
+        set_pieces = get_equipped_set_pieces(equipment)
+        for set_key, count in set_pieces.items():
+            set_config = EQUIPMENT_SETS_CACHE.get(set_key)
+            if not set_config:
+                continue
+            if count >= 2:
+                # Aplicar Bonus 2pc
+                if set_key == "set_yggdrasil":
+                    self.max_hp = int(self.max_hp * 1.08)
+                    self.hp = self.max_hp
+                elif set_key == "set_ignis":
+                    self.atk = int(self.atk * 1.08)
+                    self.base_atk = self.atk
+                elif set_key == "set_caelum":
+                    self.subclass_extras["crit_chance_bonus"] = min(0.25, self.subclass_extras.get("crit_chance_bonus", 0.0) + 0.08)
+                elif set_key == "set_thanatos":
+                    self.vampirism_pct += 0.08
+                elif set_key == "set_leviathan":
+                    self.def_stat = int(self.def_stat * 1.08)
+                elif set_key == "set_aurelius":
+                    self.healing_bonus_pct += 0.08
+                elif set_key == "set_abyssus":
+                    import random
+                    possible_abyssus_stats = ["hp", "atk", "crit", "vamp", "def"]
+                    ab_stat = random.choice(possible_abyssus_stats)
+                    if ab_stat == "hp":
+                        self.max_hp = int(self.max_hp * 1.08)
+                        self.hp = self.max_hp
+                    elif ab_stat == "atk":
+                        self.atk = int(self.atk * 1.08)
+                        self.base_atk = self.atk
+                    elif ab_stat == "crit":
+                        self.subclass_extras["crit_chance_bonus"] = min(0.25, self.subclass_extras.get("crit_chance_bonus", 0.0) + 0.08)
+                    elif ab_stat == "vamp":
+                        self.vampirism_pct += 0.08
+                    elif ab_stat == "def":
+                        self.def_stat = int(self.def_stat * 1.08)
+
+            if count >= 4:
+                # Activar Flags de 4pc
+                if set_key == "set_yggdrasil":
+                    self.set_bonus_yggdrasil_4pc = True
+                elif set_key == "set_ignis":
+                    self.set_bonus_ignis_4pc = True
+                elif set_key == "set_caelum":
+                    self.set_bonus_caelum_4pc = True
+                elif set_key == "set_thanatos":
+                    self.set_bonus_thanatos_4pc = True
+                elif set_key == "set_leviathan":
+                    self.set_bonus_leviathan_4pc = True
+                elif set_key == "set_aurelius":
+                    self.set_bonus_aurelius_4pc = True
+                elif set_key == "set_abyssus":
+                    self.set_bonus_abyssus_4pc = True
+                    import random
+                    possible_effects = [
+                        "yggdrasil_group_regen",
+                        "ignis_burn_extension",
+                        "caelum_first_strike_dodge",
+                        "thanatos_ally_death_lifesteal",
+                        "leviathan_cc_reduction",
+                        "aurelius_low_hp_heal",
+                    ]
+                    self.abyssus_rolled_4pc_effect = random.choice(possible_effects)
+
+        # Actualizar pre_hit_hp por si HP cambió debido a Yggdrasil
+        self.pre_hit_hp = self.hp
 
         # Escudo de absorción de subclase (Guardián Sagrado, Guardián de la Fe)
         self.shield = self.subclass_extras.get("shield_pool", 0)
@@ -328,6 +426,62 @@ class PersonalDuelSkillSelectView(discord.ui.View):
 
         # Todo válido — editar el mismo mensaje con la confirmación final
         await interaction.response.edit_message(content=f"✅ Habilidad especial registrada: **{req['name']}**", view=self)
+        await self.duel_view._check_and_resolve(interaction, is_ephemeral=True)
+
+
+class PersonalDuelConsumableSelectView(discord.ui.View):
+    """Menú efímero de un solo select para que un jugador elija su consumible en un duelo."""
+    def __init__(self, duel_view, player, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.duel_view = duel_view
+        self.player = player
+
+        select = discord.ui.Select(
+            placeholder="🧪 Seleccionar Consumible...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        if self.duel_view.game_over:
+            await interaction.response.edit_message(content="❌ El duelo ya terminó.", view=self)
+            return
+
+        current_action = self.duel_view.p1_action if self.player == self.duel_view.p1 else self.duel_view.p2_action
+        if current_action is not None:
+            await interaction.response.edit_message(content="❌ Ya has elegido tu acción para esta ronda.", view=self)
+            return
+
+        selected_value = interaction.data["values"][0]
+
+        # Descontar el consumible
+        success = await asyncio.to_thread(use_consumable, self.player.user.id, selected_value)
+        if not success:
+            await interaction.response.edit_message(content="❌ No tienes suficiente cantidad de este consumible.", view=self)
+            return
+
+        # Registrar la acción
+        if self.player == self.duel_view.p1:
+            self.duel_view.p1_action = f"consumable:{selected_value}"
+            self.duel_view.p1.consecutive_timeouts = 0
+        else:
+            self.duel_view.p2_action = f"consumable:{selected_value}"
+            self.duel_view.p2.consecutive_timeouts = 0
+
+        # Obtener nombre del consumible para confirmación
+        from src.db import get_consumable_catalog
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        c_info = next((item for item in catalog if item['consumable_key'] == selected_value), None)
+        c_name = c_info['name'] if c_info else selected_value
+
+        await interaction.response.edit_message(content=f"✅ Consumible registrado: **{c_name}**", view=self)
         await self.duel_view._check_and_resolve(interaction, is_ephemeral=True)
 
 
@@ -584,6 +738,49 @@ class DuelView(discord.ui.View):
         view = PersonalDuelSkillSelectView(duel_view=self, player=cp, options=options)
         await interaction.response.send_message("Elige tu habilidad especial:", view=view, ephemeral=True)
 
+    @discord.ui.button(label="🧪 Usar Consumible", style=discord.ButtonStyle.success, row=1)
+    async def consumable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ El duelo ya terminó.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        cp = self.p1 if user_id == self.p1.user.id else self.p2 if user_id == self.p2.user.id else None
+        if cp is None:
+            await interaction.response.send_message("❌ No estás participando en este duelo.", ephemeral=True)
+            return
+
+        if cp.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            return
+
+        current_action = self.p1_action if cp == self.p1 else self.p2_action
+        if current_action is not None:
+            await interaction.response.send_message("❌ Ya has elegido tu acción para esta ronda.", ephemeral=True)
+            return
+
+        user_consumables = await asyncio.to_thread(get_user_consumables, user_id)
+        if not user_consumables:
+            await interaction.response.send_message("❌ No tienes consumibles. Cómpralos con `/consumibles`.", ephemeral=True)
+            return
+
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        options = []
+        for key, qty in user_consumables.items():
+            c_info = next((item for item in catalog if item['consumable_key'] == key), None)
+            name = c_info['name'] if c_info else key
+            desc = c_info['description'] if c_info else ""
+            options.append(
+                discord.SelectOption(
+                    label=f"{name} (Tienes: {qty})",
+                    value=key,
+                    description=desc[:100]
+                )
+            )
+
+        view = PersonalDuelConsumableSelectView(duel_view=self, player=cp, options=options)
+        await interaction.response.send_message("Elige tu consumible:", view=view, ephemeral=True)
+
     async def _check_and_resolve(self, interaction: discord.Interaction, is_ephemeral: bool = False):
         """Verifica si ambos jugadores han votado y resuelve el turno."""
         if self.p1_action is not None and self.p2_action is not None:
@@ -626,11 +823,56 @@ class DuelView(discord.ui.View):
         logs = []
         logs.append(f"🏁 **Ronda {self.turn_count + 1}:**")
 
+        # Procesar consumibles en Duelo
+        for caster, target, act in ((self.p1, self.p2, p1_act), (self.p2, self.p1, p2_act)):
+            if act and act.startswith("consumable:"):
+                ckey = act.split(":")[1]
+                if ckey == "pocion_curacion":
+                    if caster.anti_heal_turns == 0:
+                        heal_amt = int(caster.max_hp * 0.25)
+                        heal_amt = int(heal_amt * (1.0 + caster.healing_bonus_pct))
+                        caster.hp = min(caster.max_hp, caster.hp + heal_amt)
+                        logs.append(f"🧪 **Poción de Curación:** {caster.user.display_name} usa una poción y se cura **{heal_amt}** HP. ({caster.hp}/{caster.max_hp} HP)")
+                    else:
+                        logs.append(f"🧪 **Poción de Curación:** {caster.user.display_name} usa una poción, pero tiene anti-curación y no se cura.")
+                elif ckey == "pergamino_purificacion":
+                    # Limpiar todos los debuffs del caster
+                    caster.stun_turns = 0
+                    caster.frozen_turns = 0
+                    caster.silence_turns = 0
+                    caster.weakness_turns = 0
+                    caster.weakness_pct = 0.0
+                    caster.fragility_turns = 0
+                    caster.fragility_pct = 0.0
+                    caster.vulnerability_turns = 0
+                    caster.vulnerability_pct = 0.0
+                    caster.bleed_turns = 0
+                    caster.anti_heal_turns = 0
+                    caster.enhanced_burn_turns = 0
+                    if caster == self.p1:
+                        self.p1_blinded_turns = 0
+                        self.p1_poison_turns = 0
+                        self.p1_poison_damage = 0
+                        self.p1_burn_turns = 0
+                    else:
+                        self.p2_blinded_turns = 0
+                        self.p2_poison_turns = 0
+                        self.p2_poison_damage = 0
+                        self.p2_burn_turns = 0
+                    logs.append(f"📜 **Pergamino de Purificación:** {caster.user.display_name} usa un pergamino y limpia todos sus estados alterados.")
+                elif ckey == "bomba_humo":
+                    caster.guaranteed_dodge_next = True
+                    logs.append(f"💨 **Bomba de Humo:** {caster.user.display_name} lanza una bomba de humo y se oculta. ¡Garantiza esquivar el próximo golpe!")
+                elif ckey == "frasco_silencio":
+                    target.silence_turns = 3
+                    logs.append(f"🤫 **Frasco de Silencio:** {caster.user.display_name} lanza un frasco a {target.user.display_name}. ¡Lo silencia por 2 turnos!")
+
         # HoT Heal (Aura de Salvación)
         for p in (self.p1, self.p2):
             if p.hot_turns > 0 and p.hp > 0:
                 if p.anti_heal_turns == 0:
                     hot_heal = int(p.max_hp * p.hot_pct)
+                    hot_heal = int(hot_heal * (1.0 + p.healing_bonus_pct))
                     p.hp = min(p.max_hp, p.hp + hot_heal)
                     logs.append(f"💚 **Aura de Salvación:** {p.user.display_name} se cura **{hot_heal}** HP por efecto gradual.")
 
@@ -638,6 +880,7 @@ class DuelView(discord.ui.View):
         for p in (self.p1, self.p2):
             if any(p_item['id'] == 'regen' for p_item in p.passives) and p.hp > 0 and p.hp < p.max_hp:
                 heal = max(1, int(p.max_hp * 0.03))
+                heal = int(heal * (1.0 + p.healing_bonus_pct))
                 p.hp = min(p.max_hp, p.hp + heal)
                 logs.append(f"💚 **Regen:** {p.user.display_name} se cura **{heal}** HP.")
 
@@ -691,6 +934,7 @@ class DuelView(discord.ui.View):
                 logs.append(f"🛡️ {self.p1.user.display_name} se prepara para hacer un **Parry**.")
             else:
                 heal = calc_defend_heal(self.p1.max_hp)
+                heal = int(heal * (1.0 + self.p1.healing_bonus_pct))
                 self.p1.hp = min(self.p1.max_hp, self.p1.hp + heal)
                 logs.append(f"🛡️ {self.p1.user.display_name} se defiende y recupera **{heal}** HP.")
         if self.p2.is_defending:
@@ -698,6 +942,7 @@ class DuelView(discord.ui.View):
                 logs.append(f"🛡️ {self.p2.user.display_name} se prepara para hacer un **Parry**.")
             else:
                 heal = calc_defend_heal(self.p2.max_hp)
+                heal = int(heal * (1.0 + self.p2.healing_bonus_pct))
                 self.p2.hp = min(self.p2.max_hp, self.p2.hp + heal)
                 logs.append(f"🛡️ {self.p2.user.display_name} se defiende y recupera **{heal}** HP.")
 
@@ -758,7 +1003,8 @@ class DuelView(discord.ui.View):
                         drain_pct = 0.30
                     steal_amt = max(1, int(target.hp * drain_pct))
                     target.hp = max(0, target.hp - steal_amt)
-                    caster.hp = min(caster.max_hp, caster.hp + steal_amt)
+                    caster_heal = int(steal_amt * (1.0 + caster.healing_bonus_pct))
+                    caster.hp = min(caster.max_hp, caster.hp + caster_heal)
                     # Limpiar debuffs propios
                     if caster == self.p1:
                         self.p1_blinded_turns = 0
@@ -800,6 +1046,7 @@ class DuelView(discord.ui.View):
                         logs.append(f"🚫 **Luz Curativa:** {caster.user.display_name} intentó curarse, pero está afectado por anti-cura.")
                     else:
                         heal_val = int(caster.max_hp * 0.25) + caster.subclass_extras.get("heal_power", 0)
+                        heal_val = int(heal_val * (1.0 + caster.healing_bonus_pct))
                         caster.hp = min(caster.max_hp, caster.hp + heal_val)
                         logs.append(f"💚 **Luz Curativa:** {caster.user.display_name} se cura **{heal_val}** HP.")
                 elif special_id == "resurreccion_parcial":
@@ -807,6 +1054,7 @@ class DuelView(discord.ui.View):
                         logs.append(f"🚫 **Resurrección Parcial:** {caster.user.display_name} intentó curarse, pero está afectado por anti-cura.")
                     else:
                         heal_val = int(caster.max_hp * 0.40) + caster.subclass_extras.get("heal_power", 0)
+                        heal_val = int(heal_val * (1.0 + caster.healing_bonus_pct))
                         caster.hp = min(caster.max_hp, caster.hp + heal_val)
                         logs.append(f"💚 **Resurrección Parcial:** {caster.user.display_name} se cura **{heal_val}** HP.")
                 elif special_id == "santuario":
@@ -889,6 +1137,7 @@ class DuelView(discord.ui.View):
                 self.p2.hp = max(0, self.p2.hp - p1_dmg)
                 parry_dmg = int(p1_dmg * 0.75)
                 parry_heal = int(p1_dmg * 0.30)
+                parry_heal = int(parry_heal * (1.0 + self.p2.healing_bonus_pct))
                 self.p1.hp = max(0, self.p1.hp - parry_dmg)
                 self.p2.hp = min(self.p2.max_hp, self.p2.hp + parry_heal)
                 logs.append(f"⚡ **¡PARRY!** {self.p2.user.display_name} recibe el golpe pero contraataca por **{parry_dmg}** de daño y se cura **{parry_heal}** HP!")
@@ -922,6 +1171,7 @@ class DuelView(discord.ui.View):
                 self.p1.hp = max(0, self.p1.hp - p2_dmg)
                 parry_dmg = int(p2_dmg * 0.75)
                 parry_heal = int(p2_dmg * 0.30)
+                parry_heal = int(parry_heal * (1.0 + self.p1.healing_bonus_pct))
                 self.p2.hp = max(0, self.p2.hp - parry_dmg)
                 self.p1.hp = min(self.p1.max_hp, self.p1.hp + parry_heal)
                 logs.append(f"⚡ **¡PARRY!** {self.p1.user.display_name} recibe el golpe pero contraataca por **{parry_dmg}** de daño y se cura **{parry_heal}** HP!")
@@ -1237,8 +1487,9 @@ class DuelView(discord.ui.View):
             log_line = f"⚔️ {attacker.user.display_name} ataca → **{damage}** daño{crit_text}{defend_text}{shield_log}{sudden_death_log}"
             
             # Pasivo: Vampirismo
-            if any(p['id'] == 'vampirism' for p in attacker.passives) and damage > 0:
-                heal = max(1, int(damage * 0.08))
+            if attacker.vampirism_pct > 0 and damage > 0:
+                heal = max(1, int(damage * attacker.vampirism_pct))
+                heal = int(heal * (1.0 + attacker.healing_bonus_pct))
                 attacker.hp = min(attacker.max_hp, attacker.hp + heal)
                 log_line += f"\n🧛 Vampirismo: {attacker.user.display_name} se cura **{heal}** HP."
                 
@@ -2048,6 +2299,249 @@ class LootView(discord.ui.View):
             await self._sell()
 
 
+class GemShopView(discord.ui.View):
+    """Vista interactiva para comprar, insertar y remover gemas."""
+    def __init__(self, user: discord.Member, catalog: list, equipment: dict):
+        super().__init__(timeout=120)
+        self.user = user
+        self.catalog = catalog
+        self.equipment = equipment
+        self.selected_slot = None
+        self.selected_gem_key = None
+
+        # Dropdown for Slot
+        slot_options = []
+        for slot in EQUIPMENT_SLOTS:
+            piece = equipment.get(slot)
+            piece_name = piece["item_name"] if piece else "Ninguno"
+            gem_text = ""
+            if piece and piece.get("gem"):
+                gem_text = f" (💎 {piece['gem']['name']})"
+            slot_options.append(
+                discord.SelectOption(
+                    label=f"{SLOT_EMOJIS.get(slot, '🔹')} {slot}",
+                    value=slot,
+                    description=f"Equipo: {piece_name}{gem_text}"
+                )
+            )
+
+        self.slot_select = discord.ui.Select(
+            placeholder="🛡️ Selecciona el Slot de Equipo...",
+            options=slot_options,
+            min_values=1,
+            max_values=1,
+            row=0
+        )
+        self.slot_select.callback = self.slot_callback
+        self.add_item(self.slot_select)
+
+        # Dropdown for Gem selection
+        gem_options = []
+        for g in catalog:
+            val_str = f"+{int(g['bonus_value'])}" if not g["is_percentage"] else f"+{int(g['bonus_value'] * 100)}%"
+            price_str = f"{g['price']} Bronce"
+            gem_options.append(
+                discord.SelectOption(
+                    label=f"{g['name']} ({val_str})",
+                    value=g['gem_key'],
+                    description=f"Precio: {price_str} · Stat: {g['stat_target'].upper()}"
+                )
+            )
+
+        self.gem_select = discord.ui.Select(
+            placeholder="💎 Selecciona la Gema a comprar...",
+            options=gem_options,
+            min_values=1,
+            max_values=1,
+            row=1
+        )
+        self.gem_select.callback = self.gem_callback
+        self.add_item(self.gem_select)
+
+        # Action Buttons
+        self.buy_btn = discord.ui.Button(label="🛒 Comprar e Insertar", style=discord.ButtonStyle.success, row=2, disabled=True)
+        self.buy_btn.callback = self.buy_callback
+        self.add_item(self.buy_btn)
+
+        self.remove_btn = discord.ui.Button(label="🗑️ Remover Gema", style=discord.ButtonStyle.danger, row=2, disabled=True)
+        self.remove_btn.callback = self.remove_callback
+        self.add_item(self.remove_btn)
+
+    async def slot_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        self.selected_slot = self.slot_select.values[0]
+        piece = self.equipment.get(self.selected_slot)
+        if piece:
+            if piece.get("gem"):
+                self.remove_btn.disabled = False
+                self.buy_btn.disabled = True
+            else:
+                self.remove_btn.disabled = True
+                self.buy_btn.disabled = (self.selected_gem_key is None)
+        else:
+            self.remove_btn.disabled = True
+            self.buy_btn.disabled = True
+
+        await interaction.response.edit_message(view=self)
+
+    async def gem_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+
+        self.selected_gem_key = self.gem_select.values[0]
+        piece = self.equipment.get(self.selected_slot) if self.selected_slot else None
+        if piece and not piece.get("gem"):
+            self.buy_btn.disabled = False
+        else:
+            self.buy_btn.disabled = True
+
+        await interaction.response.edit_message(view=self)
+
+    async def buy_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        await interaction.response.defer()
+        
+        success, message = await asyncio.to_thread(insert_gem, self.user.id, self.selected_slot, self.selected_gem_key)
+        if success:
+            for item in self.children:
+                item.disabled = True
+            embed = discord.Embed(
+                title="✅ Gema Insertada",
+                description=message,
+                color=discord.Color.green()
+            )
+            await interaction.edit_original_response(embed=embed, view=self)
+            self.stop()
+        else:
+            await interaction.followup.send(f"❌ Error: {message}", ephemeral=True)
+
+    async def remove_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        await interaction.response.defer()
+        
+        success, message = await asyncio.to_thread(remove_gem, self.user.id, self.selected_slot)
+        if success:
+            for item in self.children:
+                item.disabled = True
+            embed = discord.Embed(
+                title="✅ Gema Removida",
+                description=message,
+                color=discord.Color.orange()
+            )
+            await interaction.edit_original_response(embed=embed, view=self)
+            self.stop()
+        else:
+            await interaction.followup.send(f"❌ Error: {message}", ephemeral=True)
+
+
+class ConsumableShopView(discord.ui.View):
+    """Vista interactiva para comprar consumibles."""
+    def __init__(self, user: discord.Member, catalog: list):
+        super().__init__(timeout=120)
+        self.user = user
+        self.catalog = catalog
+        self.selected_key = None
+        self.selected_qty = 1
+
+        # Dropdown to choose consumable
+        options = []
+        for c in catalog:
+            price_str = f"{c['price']} Bronce"
+            options.append(
+                discord.SelectOption(
+                    label=c['name'],
+                    value=c['consumable_key'],
+                    description=f"Precio: {price_str} · {c['description'][:50]}"
+                )
+            )
+        
+        self.consumable_select = discord.ui.Select(
+            placeholder="🧪 Selecciona el Consumible...",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=0
+        )
+        self.consumable_select.callback = self.select_callback
+        self.add_item(self.consumable_select)
+
+        # Dropdown to choose quantity (1, 2, 3, 5, 10)
+        qty_options = [
+            discord.SelectOption(label="1 unidad", value="1"),
+            discord.SelectOption(label="2 unidades", value="2"),
+            discord.SelectOption(label="3 unidades", value="3"),
+            discord.SelectOption(label="5 unidades", value="5"),
+            discord.SelectOption(label="10 unidades", value="10"),
+        ]
+        self.qty_select = discord.ui.Select(
+            placeholder="🔢 Selecciona la Cantidad...",
+            options=qty_options,
+            min_values=1,
+            max_values=1,
+            row=1
+        )
+        self.qty_select.callback = self.qty_callback
+        self.add_item(self.qty_select)
+
+        # Buy Button
+        self.buy_btn = discord.ui.Button(
+            label="🛒 Comprar",
+            style=discord.ButtonStyle.success,
+            row=2,
+            disabled=True
+        )
+        self.buy_btn.callback = self.buy_callback
+        self.add_item(self.buy_btn)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        self.selected_key = self.consumable_select.values[0]
+        self.buy_btn.disabled = False
+        await interaction.response.edit_message(view=self)
+
+    async def qty_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        self.selected_qty = int(self.qty_select.values[0])
+        await interaction.response.edit_message(view=self)
+
+    async def buy_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es para ti.", ephemeral=True)
+            return
+        
+        await interaction.response.defer()
+        
+        success, message = await asyncio.to_thread(buy_consumable, self.user.id, self.selected_key, self.selected_qty)
+        if success:
+            for item in self.children:
+                item.disabled = True
+            embed = discord.Embed(
+                title="✅ Compra Exitosa",
+                description=message,
+                color=discord.Color.green()
+            )
+            await interaction.edit_original_response(embed=embed, view=self)
+            self.stop()
+        else:
+            await interaction.followup.send(f"❌ Error: {message}", ephemeral=True)
+
+
 # ══════════════════════════════════════════════
 # VISTA: SELECCIÓN DE CLASES Y SUBCLASES
 # ══════════════════════════════════════════════
@@ -2409,7 +2903,7 @@ class DuelsCog(commands.Cog):
         rank_emoji = get_combat_rank_emoji(stats['level'])
         base = calc_base_stats(stats['level'])
 
-        bonus, passives = calc_equipment_bonus(equipment)
+        bonus, passives, _ = calc_equipment_bonus(equipment)
         effective, pct_used, pct_per_stat = get_effective_bonus(bonus, stats['level'])
 
         class_text = f" · Clase: **{stats['combat_class']}**" if stats.get('combat_class') else ""
@@ -2495,6 +2989,93 @@ class DuelsCog(commands.Cog):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    # ──────────────────── /monedas_combate ────────────────────
+
+    @app_commands.command(name="monedas_combate", description="Consulta tu saldo de monedas de combate (Bronce, Plata, Oro)")
+    @app_commands.describe(usuario="Usuario a consultar (opcional)")
+    async def monedas_combate_cmd(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        await interaction.response.defer(ephemeral=True)
+
+        target = usuario or interaction.user
+        await asyncio.to_thread(ensure_user, target.id, target.name)
+
+        bronze_balance = await asyncio.to_thread(get_combat_wallet, target.id)
+        
+        # Get rank emoji for visual consistency (same style as perfil_combate)
+        stats = await asyncio.to_thread(get_combat_stats, target.id)
+        rank_emoji = get_combat_rank_emoji(stats['level'])
+
+        formatted_balance = format_currency(bronze_balance)
+
+        embed = discord.Embed(
+            title=f"{rank_emoji} Billetera de Combate — {target.display_name}",
+            description=f"Saldo actual: **{formatted_balance}**",
+            color=discord.Color.dark_gold()
+        )
+        embed.set_footer(text=f"Total: {bronze_balance:,} Bronce")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ──────────────────── /gemas ────────────────────
+
+    @app_commands.command(name="gemas", description="Tienda de gemas de combate y gestión de inserciones/remociones")
+    async def gemas_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        # Obtener catálogo de gemas y equipo del usuario
+        catalog = await asyncio.to_thread(get_gem_catalog)
+        equipment = await asyncio.to_thread(get_user_equipment, interaction.user.id)
+
+        # Agrupar catálogo de gemas por estadística de destino para mostrar
+        groups = {}
+        for g in catalog:
+            stat_name = format_stat_type(g['stat_target'])
+            if stat_name not in groups:
+                groups[stat_name] = []
+            groups[stat_name].append(g)
+
+        embed = discord.Embed(
+            title="💎 Tienda de Gemas de Combate",
+            description="Elige un slot de tu equipo y una gema para comprar e insertar. Remover una gema cuesta el 50% de su precio original.",
+            color=discord.Color.blue()
+        )
+
+        for stat_name, gems in groups.items():
+            lines = []
+            for g in gems:
+                val_str = f"+{int(g['bonus_value'])}" if not g["is_percentage"] else f"+{int(g['bonus_value'] * 100)}%"
+                lines.append(f"• **Tier {g['tier'].capitalize()}**: {val_str} ({format_currency(g['price'])})")
+            embed.add_field(name=f"Gemas de {stat_name}", value="\n".join(lines), inline=True)
+
+        view = GemShopView(interaction.user, catalog, equipment)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    # ──────────────────── /consumibles ────────────────────
+
+    @app_commands.command(name="consumibles", description="Tienda de consumibles de combate")
+    async def consumibles_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        user_consumables = await asyncio.to_thread(get_user_consumables, interaction.user.id)
+
+        embed = discord.Embed(
+            title="🧪 Tienda de Consumibles de Combate",
+            description="Elige un consumible para comprar. Los consumibles ocupan tu acción de turno durante el combate.",
+            color=discord.Color.green()
+        )
+
+        for c in catalog:
+            qty = user_consumables.get(c['consumable_key'], 0)
+            embed.add_field(
+                name=f"{c['name']} (Tienes: {qty})",
+                value=f"**Precio**: {format_currency(c['price'])}\n*{c['description']}*",
+                inline=False
+            )
+
+        view = ConsumableShopView(interaction.user, catalog)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
     # ──────────────────── /estados ────────────────────
 
     @app_commands.command(name="estados", description="Muestra qué hace cada buff, debuff y estado de combate")
@@ -2561,7 +3142,7 @@ class DuelsCog(commands.Cog):
         equipment = await asyncio.to_thread(get_user_equipment, target.id)
         stats = await asyncio.to_thread(get_combat_stats, target.id)
 
-        bonus, passives = calc_equipment_bonus(equipment)
+        bonus, passives, _ = calc_equipment_bonus(equipment)
         effective, pct_used, pct_per_stat = get_effective_bonus(bonus, stats['level'])
 
         embed = discord.Embed(

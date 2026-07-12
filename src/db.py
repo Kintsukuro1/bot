@@ -129,6 +129,46 @@ def deduct_balance(user_id, amount):
             return True, row[0]
         return False, 0
 
+def get_combat_wallet(user_id):
+    """Retorna el saldo en Bronce de un usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+def add_combat_currency(user_id, bronze_amount, cursor=None):
+    """Añade (o resta, si bronze_amount es negativo) Bronce de forma atómica."""
+    query = """
+            INSERT INTO CombatWallet (UserID, Bronze) VALUES (%s, %s)
+            ON CONFLICT (UserID) DO UPDATE SET Bronze = CombatWallet.Bronze + EXCLUDED.Bronze
+            """
+    if cursor is not None:
+        cursor.execute(query, (user_id, bronze_amount))
+    else:
+        with db_cursor() as cursor:
+            cursor.execute(query, (user_id, bronze_amount))
+
+def spend_combat_currency(user_id, bronze_amount):
+    """Intenta gastar Bronce. Retorna (True, nuevo_saldo) si alcanzaba, (False, saldo_actual) si no.
+    Debe ser atómico (verificar saldo y descontar en la misma transacción, evitar condiciones de
+    carrera si dos compras ocurren casi al mismo tiempo) — seguir el mismo patrón de `deduct_balance`
+    adaptado a esta tabla."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE CombatWallet 
+            SET Bronze = Bronze - %s 
+            WHERE UserID = %s AND Bronze >= %s
+            RETURNING Bronze
+        """, (bronze_amount, user_id, bronze_amount))
+        row = cursor.fetchone()
+        if row:
+            return True, row[0]
+        
+        # Si no alcanzó, obtenemos el saldo actual para retornarlo
+        cursor.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
+        row = cursor.fetchone()
+        return False, row[0] if row else 0
+
 def ensure_user(user_id, user_name=None):
     """Verifica si el usuario existe en la base de datos y lo crea si no."""
     from datetime import datetime
@@ -1864,6 +1904,79 @@ def init_db():
                     CONSTRAINT uq_user_slot UNIQUE (UserID, Slot)
                 )
             """)
+            cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS GemKey VARCHAR(40) DEFAULT NULL")
+
+            # Tabla: GemCatalog (Gemas y Encantamientos)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GemCatalog (
+                    GemKey VARCHAR(40) PRIMARY KEY,
+                    Name VARCHAR(60) NOT NULL,
+                    StatTarget VARCHAR(10) NOT NULL,
+                    Tier VARCHAR(10) NOT NULL,
+                    BonusValue NUMERIC NOT NULL,
+                    IsPercentage BOOLEAN DEFAULT FALSE,
+                    Price INT NOT NULL
+                )
+            """)
+
+            gemas = [
+                ('gema_menor_vida', 'Gema de Vida (Menor)', 'hp', 'menor', 3, False, 300),
+                ('gema_mayor_vida', 'Gema de Vida (Mayor)', 'hp', 'mayor', 6, False, 1200),
+                ('gema_perfecta_vida', 'Gema de Vida (Perfecta)', 'hp', 'perfecta', 10, False, 10000),
+                ('gema_menor_fuerza', 'Gema de Fuerza (Menor)', 'atk', 'menor', 3, False, 300),
+                ('gema_mayor_fuerza', 'Gema de Fuerza (Mayor)', 'atk', 'mayor', 6, False, 1200),
+                ('gema_perfecta_fuerza', 'Gema de Fuerza (Perfecta)', 'atk', 'perfecta', 10, False, 10000),
+                ('gema_menor_poder', 'Gema de Poder (Menor)', 'mag', 'menor', 3, False, 300),
+                ('gema_mayor_poder', 'Gema de Poder (Mayor)', 'mag', 'mayor', 6, False, 1200),
+                ('gema_perfecta_poder', 'Gema de Poder (Perfecta)', 'mag', 'perfecta', 10, False, 10000),
+                ('gema_menor_resistencia', 'Gema de Resistencia (Menor)', 'def', 'menor', 3, False, 300),
+                ('gema_mayor_resistencia', 'Gema de Resistencia (Mayor)', 'def', 'mayor', 6, False, 1200),
+                ('gema_perfecta_resistencia', 'Gema de Resistencia (Perfecta)', 'def', 'perfecta', 10, False, 10000),
+                ('gema_menor_agilidad', 'Gema de Agilidad (Menor)', 'dodge', 'menor', 0.01, True, 400),
+                ('gema_mayor_agilidad', 'Gema de Agilidad (Mayor)', 'dodge', 'mayor', 0.02, True, 1600),
+                ('gema_perfecta_agilidad', 'Gema de Agilidad (Perfecta)', 'dodge', 'perfecta', 0.04, True, 13000),
+                ('gema_menor_letalidad', 'Gema de Letalidad (Menor)', 'crit', 'menor', 0.01, True, 400),
+                ('gema_mayor_letalidad', 'Gema de Letalidad (Mayor)', 'crit', 'mayor', 0.02, True, 1600),
+                ('gema_perfecta_letalidad', 'Gema de Letalidad (Perfecta)', 'crit', 'perfecta', 0.04, True, 13000),
+            ]
+            for g in gemas:
+                cursor.execute("""
+                    INSERT INTO GemCatalog (GemKey, Name, StatTarget, Tier, BonusValue, IsPercentage, Price)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (GemKey) DO NOTHING
+                """, g)
+
+            # Tablas: Consumibles de combate
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ConsumableCatalog (
+                    ConsumableKey VARCHAR(30) PRIMARY KEY,
+                    Name VARCHAR(60) NOT NULL,
+                    Description VARCHAR(200) NOT NULL,
+                    Price INT NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserConsumables (
+                    UserID BIGINT NOT NULL,
+                    ConsumableKey VARCHAR(30) NOT NULL,
+                    Quantity INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (UserID, ConsumableKey)
+                )
+            """)
+
+            consumables = [
+                ('pocion_curacion', 'Poción de Curación', 'Cura 25% del HP máximo propio', 20),
+                ('pergamino_purificacion', 'Pergamino de Purificación', 'Limpia todos los debuffs propios activos', 35),
+                ('bomba_humo', 'Bomba de Humo', 'Garantiza esquivar el próximo golpe recibido (1 turno)', 25),
+                ('frasco_silencio', 'Frasco de Silencio', 'Aplica Silencio (2 turnos) a un enemigo (rival en duelo, o boss/esbirro elegido en raid)', 40),
+            ]
+            for c in consumables:
+                cursor.execute("""
+                    INSERT INTO ConsumableCatalog (ConsumableKey, Name, Description, Price)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (ConsumableKey) DO NOTHING
+                """, c)
 
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_combatlog_challenger
@@ -1879,6 +1992,14 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS IgnoredUsers (
                     UserID BIGINT PRIMARY KEY,
                     AddedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Tabla: CombatWallet (Moneda de combate)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS CombatWallet (
+                    UserID BIGINT PRIMARY KEY,
+                    Bronze BIGINT NOT NULL DEFAULT 0
                 )
             """)
             
@@ -1912,6 +2033,73 @@ def init_db():
                     Lore TEXT
                 )
             """)
+            cursor.execute("ALTER TABLE UniqueItemCatalog ADD COLUMN IF NOT EXISTS SetKey VARCHAR(30) DEFAULT NULL")
+
+            # Tabla: EquipmentSets (Sets de equipo y sus bonus)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS EquipmentSets (
+                    SetKey VARCHAR(30) PRIMARY KEY,
+                    SetName VARCHAR(100) NOT NULL,
+                    Bonus2pc JSONB NOT NULL,
+                    Bonus4pc JSONB NOT NULL
+                )
+            """)
+
+            equipment_sets_data = [
+                (
+                    "set_yggdrasil",
+                    "Manto del Bosque Corrupto",
+                    {"type": "flat_pct", "stat": "hp", "value": 0.08},
+                    {"type": "passive", "effect_id": "yggdrasil_group_regen"}
+                ),
+                (
+                    "set_ignis",
+                    "Armadura del Coloso",
+                    {"type": "flat_pct", "stat": "atk", "value": 0.08},
+                    {"type": "passive", "effect_id": "ignis_burn_extension"}
+                ),
+                (
+                    "set_caelum",
+                    "Vestimenta de Tormenta",
+                    {"type": "flat_pct", "stat": "crit", "value": 0.08},
+                    {"type": "passive", "effect_id": "caelum_first_strike_dodge"}
+                ),
+                (
+                    "set_thanatos",
+                    "Ropaje del Segador",
+                    {"type": "flat_pct", "stat": "vamp", "value": 0.08},
+                    {"type": "passive", "effect_id": "thanatos_ally_death_lifesteal"}
+                ),
+                (
+                    "set_leviathan",
+                    "Escamas Glaciales",
+                    {"type": "flat_pct", "stat": "def", "value": 0.08},
+                    {"type": "passive", "effect_id": "leviathan_cc_reduction"}
+                ),
+                (
+                    "set_aurelius",
+                    "Vestidura Celestial",
+                    {"type": "flat_pct", "stat": "heal_power", "value": 0.08},
+                    {"type": "passive", "effect_id": "aurelius_low_hp_heal"}
+                ),
+                (
+                    "set_abyssus",
+                    "Fragmentos del Caos",
+                    {"type": "flat_pct", "stat": "random_stat", "value": 0.08},
+                    {"type": "passive", "effect_id": "abyssus_random_4pc"}
+                )
+            ]
+            
+            import psycopg2.extras
+            for skey, sname, b2, b4 in equipment_sets_data:
+                cursor.execute("""
+                    INSERT INTO EquipmentSets (SetKey, SetName, Bonus2pc, Bonus4pc)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (SetKey) DO UPDATE 
+                    SET SetName = EXCLUDED.SetName,
+                        Bonus2pc = EXCLUDED.Bonus2pc,
+                        Bonus4pc = EXCLUDED.Bonus4pc
+                """, (skey, sname, psycopg2.extras.Json(b2), psycopg2.extras.Json(b4)))
 
             unique_items = [
                 {
@@ -1924,7 +2112,8 @@ def init_db():
                     "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
                     "Passive": {"id": "regen_improved", "value": 0.06},
                     "BossSource": "Yggdrasil Corrupto",
-                    "Lore": "Una corona orgánica que pulsa con una energía oscura y regenerativa."
+                    "Lore": "Una corona orgánica que pulsa con una energía oscura y regenerativa.",
+                    "SetKey": "set_yggdrasil"
                 },
                 {
                     "ItemKey": "nucleo_ignis",
@@ -1936,7 +2125,8 @@ def init_db():
                     "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "atk", "value": 34}],
                     "Passive": {"id": "burn_extend", "value": 50},
                     "BossSource": "Ignis, el Coloso de Magma",
-                    "Lore": "Un fragmento ardiente del núcleo del coloso, irradia un calor abrasador."
+                    "Lore": "Un fragmento ardiente del núcleo del coloso, irradia un calor abrasador.",
+                    "SetKey": "set_ignis"
                 },
                 {
                     "ItemKey": "garra_caelum",
@@ -1948,7 +2138,8 @@ def init_db():
                     "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "def", "value": 34}],
                     "Passive": {"id": "guaranteed_crit_cycle", "value": 4},
                     "BossSource": "Caelum, la Tempestad Viviente",
-                    "Lore": "Una garra afilada infundida con rayos y vientos huracanados."
+                    "Lore": "Una garra afilada infundida con rayos y vientos huracanados.",
+                    "SetKey": "set_caelum"
                 },
                 {
                     "ItemKey": "manto_thanatos",
@@ -1960,7 +2151,8 @@ def init_db():
                     "Secondaries": [{"stat": "def", "value": 41}, {"stat": "atk", "value": 41}],
                     "Passive": {"id": "vampirism_improved", "value": 0.15},
                     "BossSource": "Thanatos, el Segador de Almas",
-                    "Lore": "Una túnica oscura que parece absorber la luz de su alrededor."
+                    "Lore": "Una túnica oscura que parece absorber la luz de su alrededor.",
+                    "SetKey": "set_thanatos"
                 },
                 {
                     "ItemKey": "escama_leviathan",
@@ -1972,7 +2164,8 @@ def init_db():
                     "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "atk", "value": 34}],
                     "Passive": {"id": "special_resist", "value": 0.10},
                     "BossSource": "Leviathán de la Fosa Glacial",
-                    "Lore": "Una escama helada e impenetrable extraída de las profundidades del océano glacial."
+                    "Lore": "Una escama helada e impenetrable extraída de las profundidades del océano glacial.",
+                    "SetKey": "set_leviathan"
                 },
                 {
                     "ItemKey": "pluma_aurelius",
@@ -1984,7 +2177,8 @@ def init_db():
                     "Secondaries": [{"stat": "def", "value": 34}, {"stat": "mag", "value": 34}],
                     "Passive": [{"id": "regen", "value": 0.03}, {"id": "dodge", "value": 0.05}],
                     "BossSource": "Aurelius, el Arcángel Caído",
-                    "Lore": "Una pluma de ala angelical que ha perdido su brillo, pero conserva un gran poder divino."
+                    "Lore": "Una pluma de ala angelical que ha perdido su brillo, pero conserva un gran poder divino.",
+                    "SetKey": "set_aurelius"
                 },
                 {
                     "ItemKey": "fragmento_abyssus",
@@ -1996,23 +2190,33 @@ def init_db():
                     "Secondaries": [{"stat": "hp", "value": 34}, {"stat": "mag", "value": 34}],
                     "Passive": {"id": "chaos_random"},
                     "BossSource": "Abyssus, el Devorador Estelar",
-                    "Lore": "Un fragmento de vacío puro que distorsiona la realidad alrededor de quien lo viste."
+                    "Lore": "Un fragmento de vacío puro que distorsiona la realidad alrededor de quien lo viste.",
+                    "SetKey": "set_abyssus"
                 }
             ]
 
-            import psycopg2.extras
             for item in unique_items:
                 cursor.execute("""
                     INSERT INTO UniqueItemCatalog (
-                        ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, BossSource, Lore
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ItemKey) DO NOTHING
+                        ItemKey, Name, Slot, Rarity, PrimaryStat, PrimaryValue, Secondaries, Passive, BossSource, Lore, SetKey
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (ItemKey) DO UPDATE
+                    SET SetKey = EXCLUDED.SetKey,
+                        Name = EXCLUDED.Name,
+                        Slot = EXCLUDED.Slot,
+                        Rarity = EXCLUDED.Rarity,
+                        PrimaryStat = EXCLUDED.PrimaryStat,
+                        PrimaryValue = EXCLUDED.PrimaryValue,
+                        Secondaries = EXCLUDED.Secondaries,
+                        Passive = EXCLUDED.Passive,
+                        BossSource = EXCLUDED.BossSource,
+                        Lore = EXCLUDED.Lore
                 """, (
                     item["ItemKey"], item["Name"], item["Slot"], item["Rarity"],
                     item["PrimaryStat"], item["PrimaryValue"],
                     psycopg2.extras.Json(item["Secondaries"]),
                     psycopg2.extras.Json(item["Passive"]),
-                    item["BossSource"], item["Lore"]
+                    item["BossSource"], item["Lore"], item["SetKey"]
                 ))
             # ─── FIN TABLAS DUELOS PVP ───
 
@@ -2135,18 +2339,32 @@ def log_duel(challenger_id, rival_id, winner_id, bet, turns, c_level, r_level):
 
 
 def get_user_equipment(user_id):
-    """Obtiene todo el equipo de un usuario.
+    """Obtiene todo el equipo de un usuario con su gema equipada si existe.
 
     Returns:
-        dict de slot -> {item_name, rarity, item_level, primary_stat, primary_value, secondaries, passive}
+        dict de slot -> {item_name, rarity, item_level, primary_stat, primary_value, secondaries, passive, gem_key, gem, set_key}
     """
     with db_cursor() as cursor:
         cursor.execute("""
-            SELECT Slot, ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive
-            FROM UserEquipment WHERE UserID = %s
+            SELECT ue.Slot, ue.ItemName, ue.Rarity, ue.ItemLevel, ue.PrimaryStat, ue.PrimaryValue, ue.Secondaries, ue.Passive, ue.GemKey,
+                   gc.StatTarget, gc.BonusValue, gc.IsPercentage, gc.Name,
+                   uic.SetKey
+            FROM UserEquipment ue
+            LEFT JOIN GemCatalog gc ON ue.GemKey = gc.GemKey
+            LEFT JOIN UniqueItemCatalog uic ON ue.ItemName = uic.Name
+            WHERE ue.UserID = %s
         """, (user_id,))
         equipment = {}
         for row in cursor.fetchall():
+            gem_key = row[8]
+            gem_data = None
+            if gem_key:
+                gem_data = {
+                    'stat_target': row[9],
+                    'bonus_value': float(row[10]) if row[10] is not None else 0.0,
+                    'is_percentage': row[11] if row[11] is not None else False,
+                    'name': row[12],
+                }
             equipment[row[0]] = {
                 'item_name': row[1],
                 'rarity': row[2],
@@ -2155,8 +2373,89 @@ def get_user_equipment(user_id):
                 'primary_value': row[5],
                 'secondaries': row[6] if isinstance(row[6], list) else [],
                 'passive': row[7] if isinstance(row[7], dict) else None,
+                'gem_key': gem_key,
+                'gem': gem_data,
+                'set_key': row[13],
             }
         return equipment
+
+
+def get_gem_catalog():
+    """Retorna todas las gemas disponibles, para mostrar en tienda."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT GemKey, Name, StatTarget, Tier, BonusValue, IsPercentage, Price FROM GemCatalog ORDER BY Price ASC")
+        catalog = []
+        for row in cursor.fetchall():
+            catalog.append({
+                'gem_key': row[0],
+                'name': row[1],
+                'stat_target': row[2],
+                'tier': row[3],
+                'bonus_value': float(row[4]),
+                'is_percentage': row[5],
+                'price': row[6]
+            })
+        return catalog
+
+
+def insert_gem(user_id, slot, gem_key):
+    """Verifica que el usuario tenga equipada una pieza en ese slot, cobra el precio de la gema
+    con spend_combat_currency, y si alcanza, hace UPDATE UserEquipment SET GemKey = %s WHERE
+    UserID = %s AND Slot = %s. Retorna (True, mensaje) o (False, motivo del fallo)."""
+    from src.utils.combat_progression import format_currency
+    with db_cursor() as cursor:
+        # Verificar gema y equipamiento
+        cursor.execute("SELECT Price, Name FROM GemCatalog WHERE GemKey = %s", (gem_key,))
+        gem_row = cursor.fetchone()
+        if not gem_row:
+            return False, "La gema especificada no existe."
+        gem_price, gem_name = gem_row[0], gem_row[1]
+
+        cursor.execute("SELECT GemKey FROM UserEquipment WHERE UserID = %s AND Slot = %s", (user_id, slot))
+        eq_row = cursor.fetchone()
+        if not eq_row:
+            return False, "No tienes ninguna pieza equipada en este slot."
+        
+        if eq_row[0] is not None:
+            return False, "Este slot ya tiene una gema equipada. Remuévela primero."
+
+    # Cobrar el precio de la gema
+    success, current_balance = spend_combat_currency(user_id, gem_price)
+    if not success:
+        return False, f"No tienes suficiente Bronce. Requieres {format_currency(gem_price)} (tienes {format_currency(current_balance)})."
+
+    # Realizar UPDATE
+    with db_cursor() as cursor:
+        cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
+        return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}**."
+
+
+def remove_gem(user_id, slot):
+    """Cobra la mitad del precio de la gema actualmente puesta (leer su Price desde GemCatalog
+    antes de cobrar), luego pone GemKey = NULL. Si no tiene gema puesta en ese slot, retorna error."""
+    from src.utils.combat_progression import format_currency
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT ue.GemKey, gc.Price, gc.Name
+            FROM UserEquipment ue
+            JOIN GemCatalog gc ON ue.GemKey = gc.GemKey
+            WHERE ue.UserID = %s AND ue.Slot = %s
+        """, (user_id, slot))
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return False, "No hay ninguna gema equipada en ese slot."
+        
+        gem_key, price, gem_name = row[0], row[1], row[2]
+        cost = price // 2
+
+    # Cobrar la mitad del precio
+    success, current_balance = spend_combat_currency(user_id, cost)
+    if not success:
+        return False, f"No tienes suficiente Bronce para remover la gema. Requiere {format_currency(cost)} (tienes {format_currency(current_balance)})."
+
+    with db_cursor() as cursor:
+        cursor.execute("UPDATE UserEquipment SET GemKey = NULL WHERE UserID = %s AND Slot = %s", (user_id, slot))
+        return True, f"Removiste **{gem_name}** de tu pieza de **{slot}** por un costo de {format_currency(cost)}."
 
 
 def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_value, secondaries=None, passive=None):
@@ -2431,4 +2730,75 @@ def update_user_class_and_subclass(user_id: int, class_name: str, subclass_name:
     except Exception as e:
         logger.error(f"Error updating user class/subclass for user {user_id}: {e}")
         return False
+
+
+def get_consumable_catalog():
+    """Retorna los 4 consumibles disponibles."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT ConsumableKey, Name, Description, Price FROM ConsumableCatalog ORDER BY Price ASC")
+        catalog = []
+        for row in cursor.fetchall():
+            catalog.append({
+                'consumable_key': row[0],
+                'name': row[1],
+                'description': row[2],
+                'price': row[3]
+            })
+        return catalog
+
+
+def buy_consumable(user_id, consumable_key, quantity=1):
+    """Cobra Price * quantity con spend_combat_currency; si alcanza, hace
+    INSERT ... ON CONFLICT (UserID, ConsumableKey) DO UPDATE SET Quantity = Quantity + quantity.
+    Retorna (True, mensaje) o (False, motivo)."""
+    if quantity <= 0:
+        return False, "La cantidad debe ser mayor a 0."
+
+    from src.utils.combat_progression import format_currency
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Price, Name FROM ConsumableCatalog WHERE ConsumableKey = %s", (consumable_key,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "El consumible especificado no existe."
+        price, name = row[0], row[1]
+        total_cost = price * quantity
+
+    # Cobrar total
+    success, current_balance = spend_combat_currency(user_id, total_cost)
+    if not success:
+        return False, f"No tienes suficiente Bronce. Requieres {format_currency(total_cost)} (tienes {format_currency(current_balance)})."
+
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (UserID, ConsumableKey)
+            DO UPDATE SET Quantity = UserConsumables.Quantity + EXCLUDED.Quantity
+        """, (user_id, consumable_key, quantity))
+        return True, f"Compraste {quantity}x **{name}** por {format_currency(total_cost)}."
+
+
+def get_user_consumables(user_id):
+    """Retorna dict {ConsumableKey: Quantity} de lo que tiene el usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT ConsumableKey, Quantity FROM UserConsumables WHERE UserID = %s", (user_id,))
+        res = {}
+        for row in cursor.fetchall():
+            if row[1] > 0:
+                res[row[0]] = row[1]
+        return res
+
+
+def use_consumable(user_id, consumable_key):
+    """Descuenta 1 unidad de forma atómica.
+    Retorna True si tenía al menos 1 y se descontó, False si no tenía."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE UserConsumables
+            SET Quantity = Quantity - 1
+            WHERE UserID = %s AND ConsumableKey = %s AND Quantity > 0
+            RETURNING Quantity
+        """, (user_id, consumable_key))
+        row = cursor.fetchone()
+        return row is not None
 
