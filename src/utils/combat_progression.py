@@ -589,15 +589,18 @@ def calc_equipment_bonus(equipment_dict):
         equipment_dict: dict de slot -> {
             'primary_stat', 'primary_value',
             'secondaries': [{'stat', 'value'}, ...],
-            'passive': {...} or None
+            'passive': {...} or None,
+            'gem': {...} or None
         }
 
     Returns:
-        tuple (bonus_dict, passives_list)
+        tuple (bonus_dict, passives_list, secondary_bonus_dict)
         bonus_dict: {'atk': N, 'mag': N, 'def': N, 'hp': N}
         passives_list: lista de dicts de pasivos activos
+        secondary_bonus_dict: {'dodge': F, 'crit': F}
     """
     bonus = {"atk": 0, "mag": 0, "def": 0, "hp": 0}
+    secondary_bonus = {"dodge": 0.0, "crit": 0.0}
     passives = []
 
     for slot, item in equipment_dict.items():
@@ -619,7 +622,17 @@ def calc_equipment_bonus(equipment_dict):
         if passive:
             passives.append(passive)
 
-    return bonus, passives
+        # Gema equipada
+        gem = item.get("gem")  # dict con stat_target/bonus_value/is_percentage, o None
+        if gem:
+            if gem["is_percentage"]:
+                if gem["stat_target"] in secondary_bonus:
+                    secondary_bonus[gem["stat_target"]] += gem["bonus_value"]
+            else:
+                if gem["stat_target"] in bonus:
+                    bonus[gem["stat_target"]] += gem["bonus_value"]
+
+    return bonus, passives, secondary_bonus
 
 
 def apply_subclass_equipment_conversion(bonus: dict, subclass_name: str | None) -> tuple[dict, dict]:
@@ -764,7 +777,7 @@ LEVEL_STAT_WEIGHT = 11  # 3 (atk) + 3 (mag) + 2*1.5 (def) + 20/10 (hp) — mismo
 def calc_power_level(level: int, equipment: dict, subclass_name: str | None = None) -> float:
     """Retorna el 'nivel equivalente' de un jugador: nivel real + bonus de equipo
     convertido a niveles usando la misma tasa de crecimiento que los stats base."""
-    bonus, passives = calc_equipment_bonus(equipment)
+    bonus, passives, _ = calc_equipment_bonus(equipment)
     # Copiar bonus para evitar modificar el original in-place
     bonus = bonus.copy()
     bonus, _ = apply_subclass_equipment_conversion(bonus, subclass_name)
@@ -813,6 +826,8 @@ def format_stat_type(stat_type):
         "atk": "⚔️ ATK",
         "mag": "🔮 MAG",
         "def": "🛡️ DEF",
+        "dodge": "💨 Evasión",
+        "crit": "⚡ Crítico",
     }
     return names.get(stat_type, stat_type.upper())
 
@@ -832,4 +847,62 @@ def format_item_stats_display(item):
     if item.get("passive"):
         p = item["passive"]
         lines.append(f"{p.get('emoji', '✨')} *{p['name']}*")
+    if item.get("gem"):
+        g = item["gem"]
+        val_str = f"+{int(g['bonus_value'])}" if not g["is_percentage"] else f"+{int(g['bonus_value'] * 100)}%"
+        lines.append(f"💎 *Gema: {g['name']} ({format_stat_type(g['stat_target'])} {val_str})*")
     return "\n".join(lines)
+
+
+def format_currency(total_bronze: int) -> str:
+    """Formatea la moneda de combate en Oro, Plata y Bronce."""
+    oro, resto = divmod(total_bronze, 10_000)
+    plata, bronce = divmod(resto, 100)
+    partes = []
+    if oro:
+        partes.append(f"🥇{oro}")
+    if plata:
+        partes.append(f"🥈{plata}")
+    if bronce or not partes:
+        partes.append(f"🥉{bronce}")
+    return " ".join(partes)
+
+
+# ──────────────────────────────────────────────
+# SISTEMA DE SETS DE EQUIPO
+# ──────────────────────────────────────────────
+
+EQUIPMENT_SETS_CACHE = {}
+
+def load_equipment_sets_cache():
+    """Carga los bonus de los sets de equipo desde la base de datos a la memoria."""
+    global EQUIPMENT_SETS_CACHE
+    from src.db import db_cursor
+    try:
+        with db_cursor() as cursor:
+            cursor.execute("""
+                SELECT SetKey, SetName, Bonus2pc, Bonus4pc
+                FROM EquipmentSets
+            """)
+            for row in cursor.fetchall():
+                EQUIPMENT_SETS_CACHE[row[0]] = {
+                    "set_key": row[0],
+                    "set_name": row[1],
+                    "bonus_2pc": row[2],
+                    "bonus_4pc": row[3],
+                }
+    except Exception:
+        pass
+
+def get_equipped_set_pieces(equipment_dict: dict) -> dict:
+    """Retorna {SetKey: cantidad_de_piezas_equipadas} a partir del equipo del jugador."""
+    counts = {}
+    if not equipment_dict:
+        return counts
+    for slot, item in equipment_dict.items():
+        if not item:
+            continue
+        set_key = item.get("set_key")
+        if set_key:
+            counts[set_key] = counts.get(set_key, 0) + 1
+    return counts

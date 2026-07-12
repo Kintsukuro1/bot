@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 from src.db import (
     ensure_user, get_combat_stats, get_user_equipment,
     add_balance, registrar_transaccion, equip_item,
-    db_cursor,
+    db_cursor, add_combat_currency,
+    get_consumable_catalog, get_user_consumables, use_consumable,
 )
 from src.utils.combat_progression import (
     calc_base_stats, calc_equipment_bonus, get_effective_bonus,
@@ -28,7 +29,8 @@ from src.utils.combat_progression import (
     get_combat_rank, get_combat_rank_emoji,
     EQUIPMENT_SLOTS, SLOT_EMOJIS, RARITY_COLORS,
     LOOT_TIMEOUT_SECONDS, ALL_STATS, format_item_stats_display,
-    apply_subclass_equipment_conversion,
+    apply_subclass_equipment_conversion, format_currency,
+    get_equipped_set_pieces, EQUIPMENT_SETS_CACHE, load_equipment_sets_cache,
 )
 from src.utils.combat_config import SKILLS_CONFIG
 from src.utils.subclass_config import (
@@ -50,6 +52,8 @@ from src.utils.raid_config import (
     get_today_boss, calc_boss_stats, generate_raid_loot,
 )
 from src.db import update_combat_stats_after_duel
+
+EQUIPMENT_ULTIMATE_FILL_RATE = 0.15
 
 
 # ══════════════════════════════════════════════
@@ -143,10 +147,19 @@ class RaidCombatant:
 
         # Stats base + equipo
         base = calc_base_stats(level)
-        bonus, passives = calc_equipment_bonus(equipment)
+        bonus, passives, secondary_bonus = calc_equipment_bonus(equipment)
 
         # Aplicar conversión de equipo por subclase (antes del cap)
         bonus, self.subclass_extras = apply_subclass_equipment_conversion(bonus, combat_subclass)
+
+        # Sumar secondary_bonus a dodge_chance_bonus/crit_chance_bonus antes de aplicar el tope
+        dodge_bonus_from_gem = secondary_bonus.get("dodge", 0.0)
+        subclass_dodge = self.subclass_extras.get("dodge_chance_bonus", 0.0)
+        self.subclass_extras["dodge_chance_bonus"] = min(0.30, subclass_dodge + dodge_bonus_from_gem)
+
+        crit_bonus_from_gem = secondary_bonus.get("crit", 0.0)
+        subclass_crit = self.subclass_extras.get("crit_chance_bonus", 0.0)
+        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem)
 
         effective, _, _ = get_effective_bonus(bonus, level)
 
@@ -156,6 +169,89 @@ class RaidCombatant:
         self.base_atk = self.atk  # Para restaurar después de debuffs
         self.mag = base["mag"] + int(round(effective.get("mag", 0)))
         self.def_stat = base["def"] + int(round(effective.get("def", 0)))
+
+        # Inicializar variables de bonus de sets
+        self.vampirism_pct = 0.08 if any(p['id'] == 'vampirism' for p in passives) else 0.0
+        if any(p['id'] == 'vampirism_improved' for p in passives):
+            self.vampirism_pct += 0.15
+        self.healing_bonus_pct = 0.0
+        self.set_bonus_yggdrasil_4pc = False
+        self.set_bonus_ignis_4pc = False
+        self.set_bonus_caelum_4pc = False
+        self.set_bonus_thanatos_4pc = False
+        self.set_bonus_leviathan_4pc = False
+        self.set_bonus_aurelius_4pc = False
+        self.set_bonus_abyssus_4pc = False
+
+        # Cargar cache de sets si está vacío
+        if not EQUIPMENT_SETS_CACHE:
+            load_equipment_sets_cache()
+
+        # Detección de piezas de set
+        set_pieces = get_equipped_set_pieces(equipment)
+        for set_key, count in set_pieces.items():
+            set_config = EQUIPMENT_SETS_CACHE.get(set_key)
+            if not set_config:
+                continue
+            if count >= 2:
+                # Aplicar Bonus 2pc
+                if set_key == "set_yggdrasil":
+                    self.max_hp = int(self.max_hp * 1.08)
+                    self.hp = self.max_hp
+                elif set_key == "set_ignis":
+                    self.atk = int(self.atk * 1.08)
+                    self.base_atk = self.atk
+                elif set_key == "set_caelum":
+                    self.subclass_extras["crit_chance_bonus"] = min(0.25, self.subclass_extras.get("crit_chance_bonus", 0.0) + 0.08)
+                elif set_key == "set_thanatos":
+                    self.vampirism_pct += 0.08
+                elif set_key == "set_leviathan":
+                    self.def_stat = int(self.def_stat * 1.08)
+                elif set_key == "set_aurelius":
+                    self.healing_bonus_pct += 0.08
+                elif set_key == "set_abyssus":
+                    import random
+                    possible_abyssus_stats = ["hp", "atk", "crit", "vamp", "def"]
+                    ab_stat = random.choice(possible_abyssus_stats)
+                    if ab_stat == "hp":
+                        self.max_hp = int(self.max_hp * 1.08)
+                        self.hp = self.max_hp
+                    elif ab_stat == "atk":
+                        self.atk = int(self.atk * 1.08)
+                        self.base_atk = self.atk
+                    elif ab_stat == "crit":
+                        self.subclass_extras["crit_chance_bonus"] = min(0.25, self.subclass_extras.get("crit_chance_bonus", 0.0) + 0.08)
+                    elif ab_stat == "vamp":
+                        self.vampirism_pct += 0.08
+                    elif ab_stat == "def":
+                        self.def_stat = int(self.def_stat * 1.08)
+
+            if count >= 4:
+                # Activar Flags de 4pc
+                if set_key == "set_yggdrasil":
+                    self.set_bonus_yggdrasil_4pc = True
+                elif set_key == "set_ignis":
+                    self.set_bonus_ignis_4pc = True
+                elif set_key == "set_caelum":
+                    self.set_bonus_caelum_4pc = True
+                elif set_key == "set_thanatos":
+                    self.set_bonus_thanatos_4pc = True
+                elif set_key == "set_leviathan":
+                    self.set_bonus_leviathan_4pc = True
+                elif set_key == "set_aurelius":
+                    self.set_bonus_aurelius_4pc = True
+                elif set_key == "set_abyssus":
+                    self.set_bonus_abyssus_4pc = True
+                    import random
+                    possible_effects = [
+                        "yggdrasil_group_regen",
+                        "ignis_burn_extension",
+                        "caelum_first_strike_dodge",
+                        "thanatos_ally_death_lifesteal",
+                        "leviathan_cc_reduction",
+                        "aurelius_low_hp_heal",
+                    ]
+                    self.abyssus_rolled_4pc_effect = random.choice(possible_effects)
 
         # Pasivos de equipo (Legendario)
         self.passives = passives
@@ -558,6 +654,127 @@ class PersonalSkillSelectView(discord.ui.View):
         await self.raid_view._register_action(interaction, selected_value, is_ephemeral=True)
 
 
+class PersonalRaidConsumableSelectView(discord.ui.View):
+    """Menú efímero de un solo select para que un jugador elija su consumible en una raid."""
+    def __init__(self, raid_view, player, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.raid_view = raid_view
+        self.player = player
+
+        select = discord.ui.Select(
+            placeholder="🧪 Seleccionar Consumible...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        if self.raid_view.game_over:
+            await interaction.response.edit_message(content="❌ La raid ya terminó.", view=self)
+            return
+
+        user_id = self.player.user.id
+        if user_id in self.raid_view.actions:
+            await interaction.response.edit_message(content="❌ Ya elegiste tu acción.", view=self)
+            return
+
+        selected_value = interaction.data["values"][0]
+
+        # Si el consumible es frasco_silencio y hay esbirros vivos, ir al menú de selección de objetivo
+        alive_minions = [m for m in self.raid_view.minions if m["hp"] > 0]
+        if selected_value == "frasco_silencio" and alive_minions:
+            target_options = [
+                discord.SelectOption(
+                    label=f"{self.raid_view.boss.name} (Jefe)",
+                    value="boss",
+                    description=f"HP: {self.raid_view.boss.hp}/{self.raid_view.boss.max_hp}"
+                )
+            ]
+            for idx, m in enumerate(self.raid_view.minions):
+                if m["hp"] > 0:
+                    target_options.append(
+                        discord.SelectOption(
+                            label=m["name"],
+                            value=f"minion:{idx}",
+                            description=f"HP: {m['hp']}/{m['max_hp']}"
+                        )
+                    )
+            view = RaidSilenceTargetSelectView(raid_view=self.raid_view, player=self.player, target_options=target_options)
+            await interaction.response.edit_message(content="Elige el objetivo para silenciar:", view=view)
+            return
+
+        # Para los demás consumibles (o frasco_silencio sin esbirros), descontar de inmediato
+        success = await asyncio.to_thread(use_consumable, user_id, selected_value)
+        if not success:
+            await interaction.response.edit_message(content="❌ No tienes suficiente cantidad de este consumible.", view=self)
+            return
+
+        # Registrar acción
+        action_str = f"consumable:{selected_value}"
+        if selected_value == "frasco_silencio":
+            action_str = "consumable:frasco_silencio:boss"
+
+        # Obtener nombre para confirmación
+        from src.db import get_consumable_catalog
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        c_info = next((item for item in catalog if item['consumable_key'] == selected_value), None)
+        c_name = c_info['name'] if c_info else selected_value
+
+        await interaction.response.edit_message(content=f"✅ Consumible registrado: **{c_name}**", view=self)
+        await self.raid_view._register_action(interaction, action_str, is_ephemeral=True)
+
+
+class RaidSilenceTargetSelectView(discord.ui.View):
+    """Menú efímero para seleccionar el objetivo de silencio (Boss o esbirro) en raid."""
+    def __init__(self, raid_view, player, target_options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.raid_view = raid_view
+        self.player = player
+
+        select = discord.ui.Select(
+            placeholder="🎯 Selecciona el Objetivo...",
+            min_values=1,
+            max_values=1,
+            options=target_options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        if self.raid_view.game_over:
+            await interaction.response.edit_message(content="❌ La raid ya terminó.", view=self)
+            return
+
+        user_id = self.player.user.id
+        if user_id in self.raid_view.actions:
+            await interaction.response.edit_message(content="❌ Ya elegiste tu acción.", view=self)
+            return
+
+        target_value = interaction.data["values"][0]
+
+        # Descontar el consumible
+        success = await asyncio.to_thread(use_consumable, user_id, "frasco_silencio")
+        if not success:
+            await interaction.response.edit_message(content="❌ No tienes suficiente cantidad de este consumible.", view=self)
+            return
+
+        # Registrar la acción (e.g. consumable:frasco_silencio:boss o consumable:frasco_silencio:minion:0)
+        action_str = f"consumable:frasco_silencio:{target_value}"
+
+        await interaction.response.edit_message(content=f"✅ Consumible registrado: **Frasco de Silencio**", view=self)
+        await self.raid_view._register_action(interaction, action_str, is_ephemeral=True)
+
+
 # ══════════════════════════════════════════════
 # VISTA: COMBATE DE RAID
 # ══════════════════════════════════════════════
@@ -616,6 +833,9 @@ class RaidCombatView(discord.ui.View):
         self.boss_channeling_threshold = 0
         self.boss_poison_turns = 0
         self.boss_poison_damage = 0
+        if not hasattr(self.boss, "silence_turns"):
+            self.boss.silence_turns = 0
+        self.equipment_ultimate_charge = 0.0
 
         # Habilidades especiales se manejan de forma efímera por botón
 
@@ -630,11 +850,23 @@ class RaidCombatView(discord.ui.View):
 
         # Afijo activo
         affix_info = RAID_AFFIXES.get(self.affix, {"emoji": "⚪", "desc": "Ninguno"})
+        # Ultimate de Equipo
+        filled_blocks = int(self.equipment_ultimate_charge / 10)
+        empty_blocks = 10 - filled_blocks
+        bar_str = "█" * filled_blocks + "░" * empty_blocks
+        ult_bar = f"[{bar_str}] {int(self.equipment_ultimate_charge)}%"
+
+        # Actualizar estado del botón de Ultimate de Equipo
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.label == "💥 Ultimate de Equipo":
+                child.disabled = self.equipment_ultimate_charge < 100.0
+
         desc = (
             f"**Ronda {self.turn_count + 1}** · "
             f"Jugadores vivos: {total_alive}/{total_players}\n"
             f"**Afijo:** {affix_info['emoji']} **{self.affix}** — *{affix_info['desc']}*\n"
-            f"Habilidad especial en: **{BOSS_SPECIAL_INTERVAL - (self.turn_count % BOSS_SPECIAL_INTERVAL)}** turnos"
+            f"Habilidad especial en: **{BOSS_SPECIAL_INTERVAL - (self.turn_count % BOSS_SPECIAL_INTERVAL)}** turnos\n"
+            f"💥 **Ultimate de Equipo:** {ult_bar}"
         )
         if self.boss_channeling:
             desc += f"\n⚠️ **¡{self.boss.name} está canalizando su ataque definitivo!** Daño acumulado: **{self.boss_channeled_damage}/{self.boss_channeling_threshold}**"
@@ -826,6 +1058,86 @@ class RaidCombatView(discord.ui.View):
         view = PersonalSkillSelectView(raid_view=self, player=player, options=options)
         await interaction.response.send_message("Elige tu habilidad especial:", view=view, ephemeral=True)
 
+    @discord.ui.button(label="🧪 Usar Consumible", style=discord.ButtonStyle.success, row=1)
+    async def consumable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        player = next((p for p in self.players if p.user.id == user_id), None)
+        if player is None:
+            await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
+            return
+
+        if player.is_dead:
+            await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
+            return
+
+        if player.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            return
+
+        if user_id in self.actions:
+            await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
+            return
+
+        user_consumables = await asyncio.to_thread(get_user_consumables, user_id)
+        if not user_consumables:
+            await interaction.response.send_message("❌ No tienes consumibles. Cómpralos con `/consumibles`.", ephemeral=True)
+            return
+
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        options = []
+        for key, qty in user_consumables.items():
+            c_info = next((item for item in catalog if item['consumable_key'] == key), None)
+            name = c_info['name'] if c_info else key
+            desc = c_info['description'] if c_info else ""
+            options.append(
+                discord.SelectOption(
+                    label=f"{name} (Tienes: {qty})",
+                    value=key,
+                    description=desc[:100]
+                )
+            )
+
+        view = PersonalRaidConsumableSelectView(raid_view=self, player=player, options=options)
+        await interaction.response.send_message("Elige tu consumible:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="💥 Ultimate de Equipo", style=discord.ButtonStyle.blurple, row=2, disabled=True)
+    async def equipment_ultimate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
+            return
+
+        user_id = interaction.user.id
+        player = next((p for p in self.players if p.user.id == user_id), None)
+        if player is None:
+            await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
+            return
+
+        if player.is_dead:
+            await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
+            return
+
+        if player.stun_turns > 0:
+            await interaction.response.send_message("❌ Estás aturdido y no puedes actuar este turno.", ephemeral=True)
+            return
+
+        if self.equipment_ultimate_charge < 100.0:
+            await interaction.response.send_message("❌ La barra de Ultimate de Equipo no está al 100%.", ephemeral=True)
+            return
+
+        if user_id in self.actions:
+            await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
+            return
+
+        # Consumir la barra inmediatamente para evitar que otros lo presionen
+        self.equipment_ultimate_charge = 0.0
+        button.disabled = True
+
+        await self._register_action(interaction, 'ultimate_equipo')
+
     async def _register_action(self, interaction: discord.Interaction, action: str, is_ephemeral: bool = False):
         if self.game_over:
             if is_ephemeral:
@@ -940,6 +1252,7 @@ class RaidCombatView(discord.ui.View):
             # Reflejo (Juicio Final)
             if target.juicio_final_turns > 0 and raw_dmg > 0:
                 reflected = int(raw_dmg * target.juicio_final_reflect_pct)
+                self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (reflected * EQUIPMENT_ULTIMATE_FILL_RATE))
                 alive_minions = [m for m in self.minions if m["hp"] > 0]
                 if alive_minions:
                     target_minion = alive_minions[0]
@@ -967,6 +1280,7 @@ class RaidCombatView(discord.ui.View):
             if target.is_defending and target.has_parry:
                 # No se reduce el daño recibido, pero se cura un 30% del mismo
                 parry_heal = max(1, int(raw_dmg * 0.30))
+                parry_heal = int(parry_heal * (1.0 + target.healing_bonus_pct))
                 final_dmg = max(0, raw_dmg - parry_heal)
                 target.hp = max(0, target.hp - final_dmg)
                 if is_boss_attack:
@@ -975,6 +1289,7 @@ class RaidCombatView(discord.ui.View):
                 
                 # Contraatacar al boss o esbirro
                 counter_dmg = max(1, int(raw_dmg * 0.75))
+                self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (counter_dmg * EQUIPMENT_ULTIMATE_FILL_RATE))
                 alive_minions = [m for m in self.minions if m["hp"] > 0]
                 if alive_minions:
                     target_minion = alive_minions[0]
@@ -1027,6 +1342,7 @@ class RaidCombatView(discord.ui.View):
             if p.hot_turns > 0:
                 if p.anti_heal_turns == 0:
                     hot_heal = int(p.max_hp * p.hot_pct)
+                    hot_heal = int(hot_heal * (1.0 + p.healing_bonus_pct))
                     p.hp = min(p.max_hp, p.hp + hot_heal)
                     logs.append(f"💚 **Aura de Salvación:** {p.user.display_name} se cura **{hot_heal}** HP por efecto gradual.")
 
@@ -1118,6 +1434,7 @@ class RaidCombatView(discord.ui.View):
             if p.has_regen and p.hp < p.max_hp:
                 if p.anti_heal_turns == 0:
                     regen_heal = max(1, int(p.max_hp * 0.03))
+                    regen_heal = int(regen_heal * (1.0 + p.healing_bonus_pct))
                     p.hp = min(p.max_hp, p.hp + regen_heal)
                     logs.append(f"💚 **Regeneración:** {p.user.display_name} recupera **{regen_heal}** HP.")
 
@@ -1153,6 +1470,9 @@ class RaidCombatView(discord.ui.View):
                 if m.get("stun_turns", 0) > 0 or m.get("frozen_turns", 0) > 0:
                     logs.append(f"🌀 {m['name']} está incapacitado y no puede debilitar este turno.")
                     continue
+                if m.get("silence_turns", 0) > 0:
+                    logs.append(f"🤫 {m['name']} está silenciado y no puede debilitar este turno.")
+                    continue
                 if alive:
                     target_player = random.choice(alive)
                     debuff_type = random.choice(["weakness", "fragility", "ceguera"])
@@ -1185,10 +1505,84 @@ class RaidCombatView(discord.ui.View):
                 active_target = self.boss
 
             # Verificación de ceguera (50% de probabilidad de fallo)
-            if p.blinded_turns > 0 and action != "defend" and action != "timeout":
+            if p.blinded_turns > 0 and action != "defend" and action != "timeout" and not action.startswith("consumable:"):
                 if random.random() < 0.5:
                     logs.append(f"👁️ **Ceguera:** ¡{p.user.display_name} está cegado y falla su acción!")
                     continue
+
+            if action.startswith("consumable:"):
+                parts = action.split(":")
+                ckey = parts[1]
+                if ckey == "pocion_curacion":
+                    if p.anti_heal_turns == 0:
+                        heal_amt = int(p.max_hp * 0.25)
+                        heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                        p.hp = min(p.max_hp, p.hp + heal_amt)
+                        logs.append(f"🧪 **Poción de Curación:** {p.user.display_name} usa una poción y se cura **{heal_amt}** HP. ({p.hp}/{p.max_hp} HP)")
+                    else:
+                        logs.append(f"🧪 **Poción de Curación:** {p.user.display_name} usa una poción, pero tiene anti-curación y no se cura.")
+                elif ckey == "pergamino_purificacion":
+                    # Limpiar todos los debuffs
+                    p.poison_turns = 0
+                    p.poison_damage = 0
+                    p.atk_debuff_turns = 0
+                    p.atk_debuff_pct = 0.0
+                    p.stun_turns = 0
+                    p.frozen_turns = 0
+                    p.silence_turns = 0
+                    p.bleed_turns = 0
+                    p.anti_heal_turns = 0
+                    p.weakness_turns = 0
+                    p.weakness_pct = 0.0
+                    p.fragility_turns = 0
+                    p.fragility_pct = 0.0
+                    p.vulnerability_turns = 0
+                    p.vulnerability_pct = 0.0
+                    p.enhanced_burn_turns = 0
+                    p.burn_turns = 0
+                    p.blinded_turns = 0
+                    logs.append(f"📜 **Pergamino de Purificación:** {p.user.display_name} usa un pergamino y limpia todos sus estados alterados.")
+                elif ckey == "bomba_humo":
+                    p.guaranteed_dodge_next = True
+                    logs.append(f"💨 **Bomba de Humo:** {p.user.display_name} lanza una bomba de humo y se oculta. ¡Garantiza esquivar el próximo golpe!")
+                elif ckey == "frasco_silencio":
+                    target_type = parts[2] if len(parts) > 2 else "boss"
+                    if target_type == "boss":
+                        self.boss.silence_turns = 3
+                        logs.append(f"🤫 **Frasco de Silencio:** {p.user.display_name} lanza un frasco a {self.boss.name}. ¡Lo silencia por 2 turnos!")
+                    elif target_type == "minion" and len(parts) > 3:
+                        m_idx = int(parts[3])
+                        if m_idx < len(self.minions):
+                            m = self.minions[m_idx]
+                            m["silence_turns"] = 3
+                            logs.append(f"🤫 **Frasco de Silencio:** {p.user.display_name} lanza un frasco a {m['name']}. ¡Lo silencia por 2 turnos!")
+                    else:
+                        self.boss.silence_turns = 3
+                        logs.append(f"🤫 **Frasco de Silencio:** {p.user.display_name} lanza un frasco a {self.boss.name}. ¡Lo silencia por 2 turnos!")
+                continue
+
+            if action == "ultimate_equipo":
+                alive_players = self._alive_players()
+                total_power = sum(pl.atk + pl.mag for pl in alive_players)
+                ultimate_damage = int(total_power * 0.40)
+
+                # Reset de la barra de Ultimate (por seguridad)
+                self.equipment_ultimate_charge = 0.0
+
+                targets = [self.boss] + [m for m in self.minions if m.get("hp", 0) > 0]
+                for target in targets:
+                    if target == self.boss:
+                        self.boss.hp = max(0, self.boss.hp - ultimate_damage)
+                        total_damage_dealt_this_turn += ultimate_damage
+                        if self.boss_channeling:
+                            self.boss_channeled_damage += ultimate_damage
+                    else:
+                        target["hp"] = max(0, target["hp"] - ultimate_damage)
+                        if target["hp"] <= 0:
+                            logs.append(f"💀 **{target['name']}** ha sido destruido!")
+
+                logs.append(f"💥 **¡Ultimate de Equipo!** {p.user.display_name} activa el poder combinado del grupo, infligiendo **{ultimate_damage}** de daño a todos los enemigos!")
+                continue
 
             if action == 'attack':
                 if p.dominated_turns > 0:
@@ -1302,6 +1696,7 @@ class RaidCombatView(discord.ui.View):
                 # Curación de defensa
                 if not p.has_parry:
                     heal = calc_defend_heal(p.max_hp)
+                    heal = int(heal * (1.0 + p.healing_bonus_pct))
                     if p.anti_heal_turns == 0:
                         p.hp = min(p.max_hp, p.hp + heal)
                         logs.append(f"🛡️ {p.user.display_name} se defiende y recupera **{heal}** HP.")
@@ -1401,11 +1796,13 @@ class RaidCombatView(discord.ui.View):
                         
                         if hasattr(active_target, 'hp'):
                             active_target.hp = max(0, active_target.hp - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if self.boss_channeling:
                                 self.boss_channeled_damage += steal_amt
                             total_damage_dealt_this_turn += steal_amt
                         else:
                             active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if active_target["hp"] <= 0:
                                 logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
                                 
@@ -1905,6 +2302,7 @@ class RaidCombatView(discord.ui.View):
                             logs.append(f"🚫 **Luz Curativa:** {p.user.display_name} intenta curar a {target_p.user.display_name}, pero tiene anti-cura.")
                         else:
                             heal_val = int(target_p.max_hp * cfg["heal_pct_of_max_hp"]) + p.subclass_extras.get("heal_power", 0)
+                            heal_val = int(heal_val * (1.0 + p.healing_bonus_pct + target_p.healing_bonus_pct))
                             target_p.hp = min(target_p.max_hp, target_p.hp + heal_val)
                             logs.append(f"💚 **Luz Curativa:** {p.user.display_name} cura a {target_p.user.display_name} por **{heal_val}** HP.")
                         damage = 0
@@ -1915,6 +2313,7 @@ class RaidCombatView(discord.ui.View):
                             target_dead = dead_players[0]
                             target_dead.is_dead = False
                             revive_amt = int(target_dead.max_hp * cfg["revive_hp_pct"]) + p.subclass_extras.get("heal_power", 0)
+                            revive_amt = int(revive_amt * (1.0 + p.healing_bonus_pct + target_dead.healing_bonus_pct))
                             target_dead.hp = revive_amt
                             logs.append(f"✝️ **Resurrección Parcial:** ¡{p.user.display_name} revive a {target_dead.user.display_name} con **{revive_amt}** HP!")
                         else:
@@ -1922,6 +2321,7 @@ class RaidCombatView(discord.ui.View):
                                 logs.append(f"🚫 **Resurrección Parcial:** {p.user.display_name} se intentó curar, pero tiene anti-cura.")
                             else:
                                 heal_val = int(p.max_hp * cfg["self_heal_in_duel_pct"]) + p.subclass_extras.get("heal_power", 0)
+                                heal_val = int(heal_val * (1.0 + p.healing_bonus_pct))
                                 p.hp = min(p.max_hp, p.hp + heal_val)
                                 logs.append(f"✝️ **Resurrección Parcial:** No hay aliados caídos. ¡{p.user.display_name} se cura **{heal_val}** HP!")
                         damage = 0
@@ -1933,17 +2333,20 @@ class RaidCombatView(discord.ui.View):
                         
                         if hasattr(active_target, 'hp'):
                             active_target.hp = max(0, active_target.hp - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if self.boss_channeling:
                                 self.boss_channeled_damage += steal_amt
                             total_damage_dealt_this_turn += steal_amt
                         else:
                             active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if active_target["hp"] <= 0:
                                 logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
                                 
                         if p.anti_heal_turns == 0:
                             heal_amt = min(p.max_hp - p.hp, steal_amt)
-                            p.hp += heal_amt
+                            heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                            p.hp = min(p.max_hp, p.hp + heal_amt)
                             logs.append(f"🖤 **Pacto de Sangre:** {p.user.display_name} drena **{steal_amt}** HP de {active_target.name if hasattr(active_target, 'name') else active_target['name']} y se cura **{heal_amt}** HP.")
                         else:
                             logs.append(f"🖤 **Pacto de Sangre:** {p.user.display_name} drena **{steal_amt}** HP, pero no puede curarse.")
@@ -1964,17 +2367,20 @@ class RaidCombatView(discord.ui.View):
                         
                         if hasattr(active_target, 'hp'):
                             active_target.hp = max(0, active_target.hp - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if self.boss_channeling:
                                 self.boss_channeled_damage += steal_amt
                             total_damage_dealt_this_turn += steal_amt
                         else:
                             active_target["hp"] = max(0, active_target["hp"] - steal_amt)
+                            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (steal_amt * EQUIPMENT_ULTIMATE_FILL_RATE))
                             if active_target["hp"] <= 0:
                                 logs.append(f"💀 **{active_target['name']}** ha sido destruido!")
                                 
                         if p.anti_heal_turns == 0:
                             heal_amt = min(p.max_hp - p.hp, steal_amt)
-                            p.hp += heal_amt
+                            heal_amt = int(heal_amt * (1.0 + p.healing_bonus_pct))
+                            p.hp = min(p.max_hp, p.hp + heal_amt)
                             detail = " **(¡Ejecución!)**" if is_low else ""
                             logs.append(f"👁️ **Consumir Alma:** {p.user.display_name} drena **{steal_amt}** HP de {active_target.name if hasattr(active_target, 'name') else active_target['name']}{detail} y se cura **{heal_amt}** HP.")
                         else:
@@ -2038,6 +2444,7 @@ class RaidCombatView(discord.ui.View):
                         damage = max(1, int(damage * 0.5))
                         logs.append(f"🛡️ **Guardián de Escudo:** ¡{target_minion['name']} reduce el daño recibido un 50%!")
                     target_minion["hp"] = max(0, target_minion["hp"] - damage)
+                    self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (damage * EQUIPMENT_ULTIMATE_FILL_RATE))
                     if not is_magic:
                         target_minion["last_physical_damage_taken"] = damage
                     logs.append(f"   → Daño redirigido a {target_minion['name']}: **{damage}** daño.")
@@ -2046,6 +2453,7 @@ class RaidCombatView(discord.ui.View):
                 else:
                     # Daño al jefe
                     self.boss.hp = max(0, self.boss.hp - damage)
+                    self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (damage * EQUIPMENT_ULTIMATE_FILL_RATE))
                     if not is_magic:
                         self.boss.last_physical_damage_taken = damage
                     total_damage_dealt_this_turn += damage
@@ -2056,10 +2464,11 @@ class RaidCombatView(discord.ui.View):
                     crit_str = crit_text if 'crit_text' in locals() else ""
                     logs.append(f"   → Daño al jefe: **{damage}** daño{crit_str}.")
 
-                # Pasivo: Vampirismo (cura 8% del daño infligido)
-                if p.has_vampirism:
+                # Pasivo: Vampirismo
+                if p.vampirism_pct > 0:
                     if p.anti_heal_turns == 0:
-                        vamp_heal = max(1, int(damage * 0.08))
+                        vamp_heal = max(1, int(damage * p.vampirism_pct))
+                        vamp_heal = int(vamp_heal * (1.0 + p.healing_bonus_pct))
                         p.hp = min(p.max_hp, p.hp + vamp_heal)
                         logs.append(f"🧛 **Vampirismo:** {p.user.display_name} se cura **{vamp_heal}** HP.")
 
@@ -2149,8 +2558,11 @@ class RaidCombatView(discord.ui.View):
 
             # Habilidad especial del boss (cada 3 turnos, si no está aturdido ni intangible)
             if (self.turn_count + 1) % BOSS_SPECIAL_INTERVAL == 0 and not boss_stunned and not getattr(self.boss, "is_intangible", False):
-                special_logs = self._execute_boss_ability()
-                logs.extend(special_logs)
+                if getattr(self.boss, "silence_turns", 0) > 0:
+                    logs.append(f"🤫 **Silencio:** ¡{self.boss.name} está silenciado y no puede usar su habilidad especial!")
+                else:
+                    special_logs = self._execute_boss_ability()
+                    logs.extend(special_logs)
 
         # 7. Aplicar veneno de Rogue (Pícaro) al jefe
         if self.boss_poison_turns > 0:
@@ -2276,8 +2688,10 @@ class RaidCombatView(discord.ui.View):
         # Procesar comportamientos de esbirros al final del turno (healer, explosive)
         for m in self.minions:
             if m.get("hp", 0) > 0:
-                # Si está aturdido o congelado, no actúa
-                if m.get("stun_turns", 0) > 0 or m.get("frozen_turns", 0) > 0:
+                # Si está aturdido, congelado o silenciado, no actúa
+                if m.get("stun_turns", 0) > 0 or m.get("frozen_turns", 0) > 0 or m.get("silence_turns", 0) > 0:
+                    if m.get("silence_turns", 0) > 0:
+                        logs.append(f"🤫 {m['name']} está silenciado y no puede actuar al final del turno.")
                     continue
 
                 arch_type = m.get("archetype")
@@ -2351,6 +2765,7 @@ class RaidCombatView(discord.ui.View):
             new_view.boss_channeling_threshold = self.boss_channeling_threshold
             new_view.boss_poison_turns = self.boss_poison_turns
             new_view.boss_poison_damage = self.boss_poison_damage
+            new_view.equipment_ultimate_charge = self.equipment_ultimate_charge
             new_view._rewards_done = self._rewards_done
             try:
                 if self.interaction_msg:
@@ -2618,6 +3033,37 @@ class RaidCombatView(discord.ui.View):
             channel = self.interaction_msg.channel
 
         is_mimic = (victory and getattr(self.boss, "miniboss_key", None) == "cofre_mimetico")
+
+        # Otorgamiento de monedas de combate al ganar
+        if victory:
+            RAID_CURRENCY_REWARD = {
+                "normal":  (20, 40),
+                "dificil": (80, 150),
+                "mitica":  (400, 700),
+            }
+            currency_summary = []
+            for p in self.players:
+                if is_mimic:
+                    bronze_reward = random.randint(60, 100)
+                else:
+                    reward_range = RAID_CURRENCY_REWARD.get(self.difficulty, (20, 40))
+                    bronze_reward = random.randint(*reward_range)
+                    if self.difficulty == "mitica" and random.random() < 0.05:
+                        bronze_reward += 10_000  # +1 Oro extra (10.000 Bronce)
+                
+                await asyncio.to_thread(add_combat_currency, p.user.id, bronze_reward)
+                currency_summary.append(f"• {p.user.mention}: {format_currency(bronze_reward)}")
+            
+            if channel and currency_summary:
+                embed_currency = discord.Embed(
+                    title="🪙 Recompensas de Monedas de Combate",
+                    description="\n".join(currency_summary),
+                    color=discord.Color.gold()
+                )
+                try:
+                    await channel.send(embed=embed_currency)
+                except Exception as exc:
+                    logger.warning("No se pudo enviar el embed de recompensas de combate: %r", exc)
 
         for p in self.players:
             # Determinar tasa de drop y bonus de rareza

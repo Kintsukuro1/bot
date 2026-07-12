@@ -744,9 +744,10 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         view.interaction_msg.channel = AsyncMock()
         
         # Mock random.random() to:
-        # 1. 0.99 for player normal drop rate (normal drop fails)
-        # 2. 0.01 for unique drop roll (unique drop succeeds! unique_chance = 0.08)
-        mock_random.side_effect = [0.99, 0.01]
+        # 1. 0.5 for mythic extra gold roll (fails, >= 0.05)
+        # 2. 0.99 for player normal drop rate (normal drop fails)
+        # 3. 0.01 for unique drop roll (unique drop succeeds! unique_chance = 0.08)
+        mock_random.side_effect = [0.5, 0.99, 0.01]
         
         mock_gen_loot.return_value = {
             "name": "Espada de Madera", "slot": "arma", "rarity": "Común", "rarity_color": "Común", "rarity_hex": 0x7f8c8d, "item_level": 10,
@@ -768,9 +769,9 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         # Verify roll_unique_item was called
         mock_roll_unique.assert_called_once_with("Dummy Mythic Boss")
         
-        # Since only 1 player, it should call effective_channel.send with individual drop message
-        view.interaction_msg.channel.send.assert_called_once()
-        sent_content = view.interaction_msg.channel.send.call_args[1]["content"]
+        # Since only 1 player, it should call effective_channel.send with individual drop message and currency reward
+        self.assertEqual(view.interaction_msg.channel.send.call_count, 2)
+        sent_content = view.interaction_msg.channel.send.call_args_list[1].kwargs["content"]
         self.assertIn("Has obtenido un Ítem Único de Raid", sent_content)
 
     async def test_special_button_ephemeral_response(self):
