@@ -1901,10 +1901,16 @@ def init_db():
                     PrimaryValue INT NOT NULL,
                     Secondaries JSONB DEFAULT '[]'::jsonb,
                     Passive JSONB DEFAULT NULL,
+                    MiniAffixKey VARCHAR(20) DEFAULT NULL,
+                    MiniAffixValue NUMERIC DEFAULT NULL,
+                    WeaponSubtype VARCHAR(10) DEFAULT NULL,
                     CONSTRAINT uq_user_slot UNIQUE (UserID, Slot)
                 )
             """)
             cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS GemKey VARCHAR(40) DEFAULT NULL")
+            cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS MiniAffixKey VARCHAR(20) DEFAULT NULL")
+            cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS MiniAffixValue NUMERIC DEFAULT NULL")
+            cursor.execute("ALTER TABLE UserEquipment ADD COLUMN IF NOT EXISTS WeaponSubtype VARCHAR(10) DEFAULT NULL")
 
             # Tabla: GemCatalog (Gemas y Encantamientos)
             cursor.execute("""
@@ -2628,7 +2634,7 @@ def get_user_equipment(user_id):
         cursor.execute("""
             SELECT ue.Slot, ue.ItemName, ue.Rarity, ue.ItemLevel, ue.PrimaryStat, ue.PrimaryValue, ue.Secondaries, ue.Passive, ue.GemKey,
                    gc.StatTarget, gc.BonusValue, gc.IsPercentage, gc.Name,
-                   uic.SetKey
+                   uic.SetKey, ue.MiniAffixKey, ue.MiniAffixValue, ue.WeaponSubtype
             FROM UserEquipment ue
             LEFT JOIN GemCatalog gc ON ue.GemKey = gc.GemKey
             LEFT JOIN UniqueItemCatalog uic ON ue.ItemName = uic.Name
@@ -2656,6 +2662,9 @@ def get_user_equipment(user_id):
                 'gem_key': gem_key,
                 'gem': gem_data,
                 'set_key': row[13],
+                'mini_affix_key': row[14],
+                'mini_affix_value': float(row[15]) if row[15] is not None else None,
+                'weapon_subtype': row[16],
             }
         return equipment
 
@@ -2738,7 +2747,7 @@ def remove_gem(user_id, slot):
         return True, f"Removiste **{gem_name}** de tu pieza de **{slot}** por un costo de {format_currency(cost)}."
 
 
-def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_value, secondaries=None, passive=None):
+def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_value, secondaries=None, passive=None, mini_affix_key=None, mini_affix_value=None, weapon_subtype=None):
     """Equipa un ítem en un slot (UPSERT). Retorna la pieza anterior si existía.
 
     Returns:
@@ -2751,7 +2760,7 @@ def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_va
     with db_cursor() as cursor:
         # Obtener pieza actual
         cursor.execute("""
-            SELECT ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive
+            SELECT ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive, MiniAffixKey, MiniAffixValue, WeaponSubtype
             FROM UserEquipment WHERE UserID = %s AND Slot = %s
         """, (user_id, slot))
         old_row = cursor.fetchone()
@@ -2765,12 +2774,15 @@ def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_va
                 'primary_value': old_row[4],
                 'secondaries': old_row[5] if isinstance(old_row[5], list) else [],
                 'passive': old_row[6] if isinstance(old_row[6], dict) else None,
+                'mini_affix_key': old_row[7],
+                'mini_affix_value': float(old_row[8]) if old_row[8] is not None else None,
+                'weapon_subtype': old_row[9],
             }
 
         # UPSERT
         cursor.execute("""
-            INSERT INTO UserEquipment (UserID, Slot, ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO UserEquipment (UserID, Slot, ItemName, Rarity, ItemLevel, PrimaryStat, PrimaryValue, Secondaries, Passive, MiniAffixKey, MiniAffixValue, WeaponSubtype)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT ON CONSTRAINT uq_user_slot
             DO UPDATE SET ItemName = EXCLUDED.ItemName,
                          Rarity = EXCLUDED.Rarity,
@@ -2778,9 +2790,13 @@ def equip_item(user_id, slot, name, rarity, item_level, primary_stat, primary_va
                          PrimaryStat = EXCLUDED.PrimaryStat,
                          PrimaryValue = EXCLUDED.PrimaryValue,
                          Secondaries = EXCLUDED.Secondaries,
-                         Passive = EXCLUDED.Passive
+                         Passive = EXCLUDED.Passive,
+                         MiniAffixKey = EXCLUDED.MiniAffixKey,
+                         MiniAffixValue = EXCLUDED.MiniAffixValue,
+                         WeaponSubtype = EXCLUDED.WeaponSubtype
         """, (user_id, slot, name, rarity, item_level, primary_stat, primary_value,
-              psycopg2.extras.Json(secondaries), psycopg2.extras.Json(passive) if passive else None))
+              psycopg2.extras.Json(secondaries), psycopg2.extras.Json(passive) if passive else None,
+              mini_affix_key, mini_affix_value, weapon_subtype))
 
         return old_item
 

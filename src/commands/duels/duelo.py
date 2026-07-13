@@ -39,6 +39,7 @@ from src.utils.combat_progression import (
     SPECIAL_UNLOCK_LEVEL, SPECIAL_COOLDOWN_TURNS, MAX_GEAR_BONUS_PCT,
     DROP_RATE_WINNER, DROP_RATE_LOSER,
     ALL_STATS, format_item_stats_display, format_currency,
+    can_proc, mark_proc,
 )
 from src.utils.combat_config import SKILLS_CONFIG
 from src.utils.subclass_config import (
@@ -62,6 +63,7 @@ class Combatant:
         self.level = level
         self.combat_class = combat_class
         self.combat_subclass = combat_subclass
+        self.equipment = equipment
 
         # Stats base
         base = calc_base_stats(level)
@@ -77,7 +79,18 @@ class Combatant:
 
         crit_bonus_from_gem = secondary_bonus.get("crit", 0.0)
         subclass_crit = self.subclass_extras.get("crit_chance_bonus", 0.0)
-        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem)
+
+        # Modificador de crítico por subtipo de arma (Daga +5%, Hacha -5%)
+        weapon_item = equipment.get("Arma")
+        weapon_crit_mod = 0.0
+        if weapon_item and weapon_item.get("weapon_subtype"):
+            sub = weapon_item["weapon_subtype"]
+            if sub == "daga":
+                weapon_crit_mod = 0.05
+            elif sub == "hacha":
+                weapon_crit_mod = -0.05
+
+        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem + weapon_crit_mod)
 
         effective, _, pct_per_stat = get_effective_bonus(bonus, level)
 
@@ -88,6 +101,15 @@ class Combatant:
         self.base_atk = self.atk  # Para restaurar tras debuffs
         self.mag = base["mag"] + int(round(effective.get("mag", 0)))
         self.def_stat = base["def"] + int(round(effective.get("def", 0)))
+
+        # Pasivo: Corazón Fragmentado (glass_heart)
+        if any(p['id'] == 'glass_heart' for p in passives):
+            self.max_hp = int(self.max_hp * 0.92)
+            self.hp = self.max_hp
+            self.pre_hit_hp = self.hp
+            self.atk = int(self.atk * 1.12)
+            self.base_atk = self.atk
+            self.mag = int(self.mag * 1.12)
 
         # Inicializar variables de bonus de sets
         self.vampirism_pct = 0.08 if any(p['id'] == 'vampirism' for p in passives) else 0.0
@@ -191,8 +213,39 @@ class Combatant:
                 setattr(self, flag, True)
                 self.abyssus_log = f"🌀 **Efecto Abyssus:** ¡{self.user.display_name} obtiene el bonus del set **{name}**!"
 
-        # Actualizar pre_hit_hp por si HP cambió debido a Yggdrasil
+        # Aplicar mini-afijos porcentuales (furia, vacio, bastion, vital)
+        ma_pcts = {"atk": 0.0, "mag": 0.0, "def": 0.0, "hp": 0.0}
+        for slot, item in equipment.items():
+            ma_key = item.get("mini_affix_key")
+            ma_val = item.get("mini_affix_value")
+            if ma_key and ma_val is not None:
+                if ma_key == "furia":
+                    ma_pcts["atk"] += ma_val
+                elif ma_key == "vacio":
+                    ma_pcts["mag"] += ma_val
+                elif ma_key == "bastion":
+                    ma_pcts["def"] += ma_val
+                elif ma_key == "vital":
+                    ma_pcts["hp"] += ma_val
+
+        # Aplicar los porcentajes acumulados
+        if ma_pcts["hp"] > 0:
+            self.max_hp = int(self.max_hp * (1.0 + ma_pcts["hp"]))
+            self.hp = self.max_hp
+        if ma_pcts["atk"] > 0:
+            self.atk = int(self.atk * (1.0 + ma_pcts["atk"]))
+            self.base_atk = self.atk
+        if ma_pcts["mag"] > 0:
+            self.mag = int(self.mag * (1.0 + ma_pcts["mag"]))
+        if ma_pcts["def"] > 0:
+            self.def_stat = int(self.def_stat * (1.0 + ma_pcts["def"]))
+
+        # Actualizar pre_hit_hp por si HP cambió debido a Yggdrasil o mini-afijos
         self.pre_hit_hp = self.hp
+
+        # Seguimiento de acciones y habilidades
+        self.last_action = None
+        self.special_used_this_combat = False
 
         # Escudo de absorción de subclase (Guardián Sagrado, Guardián de la Fe)
         self.shield = self.subclass_extras.get("shield_pool", 0)
@@ -209,6 +262,7 @@ class Combatant:
         self._stun_turns = 0                # Turnos aturdido (Golpe de Escudo, Onda Escarcha)
         self._frozen_turns = 0              # Turnos congelado
         self._silence_turns = 0             # Turnos silenciado
+        self._blinded_turns = 0             # Turnos cegado
         self.bleed_turns = 0                # Turnos sangrado
         self.bleed_source_pct = 0.06        # 6% del último daño físico
         self.last_physical_damage_taken = 0  # Para sangrado
@@ -240,13 +294,30 @@ class Combatant:
         self.arcane_shield_active = any(p['id'] == 'arcane_shield' for p in passives)
         self.has_bleed_on_hit = any(p['id'] == 'bleed_on_hit' for p in passives)
 
+        # Infraestructura de ICD e Inmunidades de Control
+        self.passive_icd = {}
+        self.used_erratic_ward = False
+        self.used_eternal_watch = False
+        self.eternal_watch_trigger_log = None
+
+    def has_eternal_watch_active(self) -> bool:
+        return any(p['id'] == 'eternal_watch' for p in self.passives) and not getattr(self, "used_eternal_watch", False)
+
+    def trigger_eternal_watch(self, debuff_name: str):
+        self.used_eternal_watch = True
+        self.eternal_watch_trigger_log = f"👁️ **Vigilancia Eterna:** ¡{self.user.display_name} resiste el debuff de {debuff_name}!"
+
     @property
     def stun_turns(self) -> int:
         return self._stun_turns
 
     @stun_turns.setter
     def stun_turns(self, value: int):
-        if value > getattr(self, "_stun_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_stun_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Aturdimiento")
+                return
+        if value > getattr(self, "_stun_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._stun_turns = value
 
@@ -256,7 +327,11 @@ class Combatant:
 
     @frozen_turns.setter
     def frozen_turns(self, value: int):
-        if value > getattr(self, "_frozen_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_frozen_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Congelación")
+                return
+        if value > getattr(self, "_frozen_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._frozen_turns = value
 
@@ -266,9 +341,25 @@ class Combatant:
 
     @silence_turns.setter
     def silence_turns(self, value: int):
-        if value > getattr(self, "_silence_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_silence_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Silencio")
+                return
+        if value > getattr(self, "_silence_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._silence_turns = value
+
+    @property
+    def blinded_turns(self) -> int:
+        return getattr(self, "_blinded_turns", 0)
+
+    @blinded_turns.setter
+    def blinded_turns(self, value: int):
+        if value > getattr(self, "_blinded_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Ceguera")
+                return
+        self._blinded_turns = value
 
 
 # ══════════════════════════════════════════════
@@ -558,6 +649,22 @@ class DuelView(discord.ui.View):
         self.p1_blinded_turns = 0
         self.p2_blinded_turns = 0
 
+    @property
+    def p1_blinded_turns(self) -> int:
+        return self.p1.blinded_turns
+
+    @p1_blinded_turns.setter
+    def p1_blinded_turns(self, value: int):
+        self.p1.blinded_turns = value
+
+    @property
+    def p2_blinded_turns(self) -> int:
+        return self.p2.blinded_turns
+
+    @p2_blinded_turns.setter
+    def p2_blinded_turns(self, value: int):
+        self.p2.blinded_turns = value
+
         # Estados especiales de clases
         self.p1_frenzy_turns = 0
         self.p2_frenzy_turns = 0
@@ -837,6 +944,19 @@ class DuelView(discord.ui.View):
         view = PersonalDuelConsumableSelectView(duel_view=self, player=cp, options=options)
         await interaction.response.send_message("Elige tu consumible:", view=view, ephemeral=True)
 
+    def _apply_damage_to_combatant(self, target: Combatant, raw_dmg: int, logs: list[str]) -> int:
+        """Aplica daño mitigándolo primero con escudos de absorción si existen."""
+        if raw_dmg <= 0:
+            return 0
+        absorbed = 0
+        if target.shield > 0:
+            absorbed = min(target.shield, raw_dmg)
+            raw_dmg -= absorbed
+            target.shield -= absorbed
+            logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
+        target.hp = max(0, target.hp - raw_dmg)
+        return raw_dmg
+
     async def _check_and_resolve(self, interaction: discord.Interaction, is_ephemeral: bool = False):
         """Verifica si ambos jugadores han votado y resuelve el turno."""
         if self.p1_action is not None and self.p2_action is not None:
@@ -1034,6 +1154,15 @@ class DuelView(discord.ui.View):
                 skill_cd = cfg.get("cooldown", 3)
                 if has_mana_residual:
                     skill_cd = max(1, skill_cd - 1)
+
+                # Modificador de cooldown por subtipo de arma (Orbe -1, Cetro +1)
+                weapon_item = caster.equipment.get("Arma")
+                if weapon_item and weapon_item.get("weapon_subtype"):
+                    sub = weapon_item["weapon_subtype"]
+                    if sub == "orbe":
+                        skill_cd = max(1, skill_cd - 1)
+                    elif sub == "cetro":
+                        skill_cd = skill_cd + 1
                 
                 if cfg.get("min_level") == 10:
                     caster.skill10_cooldown = skill_cd + 1  # +1 porque se decrementa al final de esta ronda
@@ -1253,6 +1382,24 @@ class DuelView(discord.ui.View):
                 p.hp = min(p.max_hp, p.hp + heal_amt)
                 logs.append(f"☀️ **Set Aurelius:** ¡{p.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP!")
 
+        # Pasivo: Toque Letal (deathtouch) post-daño
+        for attacker, defender in ((self.p1, self.p2), (self.p2, self.p1)):
+            damage_taken = defender.pre_hit_hp - defender.hp
+            if defender.hp > 0 and defender.hp < defender.max_hp * 0.15 and damage_taken > 0:
+                if any(p['id'] == 'deathtouch' for p in attacker.passives):
+                    dt_damage = int(damage_taken * 0.10)
+                    dt_damage = max(1, dt_damage)
+                    self._apply_damage_to_combatant(defender, dt_damage, logs)
+                    logs.append(f"💀 **Toque Letal:** ¡{attacker.user.display_name} inflige **{dt_damage}** de daño adicional de rebote a {defender.user.display_name}!")
+
+        # Pasivo: Absorción Errática (erratic_ward) post-daño
+        for p in (self.p1, self.p2):
+            if p.hp > 0 and p.hp < p.max_hp * 0.25 and not p.used_erratic_ward and any(pass_item['id'] == 'erratic_ward' for pass_item in p.passives):
+                p.used_erratic_ward = True
+                shield_amt = int(p.max_hp * 0.10)
+                p.shield += shield_amt
+                logs.append(f"🛡️ **Absorción Errática:** ¡{p.user.display_name} baja del 25% HP y obtiene un escudo de **{shield_amt}** HP!")
+
         # 6. Procesar pasivos post-daño (como Segundo Aliento)
         for attacker, defender in ((self.p1, self.p2), (self.p2, self.p1)):
             if defender.hp <= 0 and any(p['id'] == 'second_wind' for p in defender.passives) and not defender.used_second_wind:
@@ -1271,6 +1418,23 @@ class DuelView(discord.ui.View):
             damage_taken = p.pre_hit_hp - p.hp
             if damage_taken > 0:
                 p.total_damage_taken += damage_taken
+
+        # Pasivo: Sed de Batalla (bloodlust_proc)
+        for p in (self.p1, self.p2):
+            damage_received = p.pre_hit_hp - p.hp
+            if damage_received > 0 and p.hp > 0 and any(pass_item['id'] == 'bloodlust_proc' for pass_item in p.passives):
+                if can_proc(p, 'bloodlust_proc', self.turn_count, 3):
+                    if random.random() < 0.10:
+                        mark_proc(p, 'bloodlust_proc', self.turn_count)
+                        if p.special_cooldown > 0:
+                            p.special_cooldown -= 1
+                            logs.append(f"💢 **Sed de Batalla:** ¡{p.user.display_name} reduce en 1 turno el cooldown de su Especial!")
+
+        # Logs de Vigilancia Eterna
+        for p in (self.p1, self.p2):
+            if getattr(p, "eternal_watch_trigger_log", None):
+                logs.append(p.eternal_watch_trigger_log)
+                p.eternal_watch_trigger_log = None
 
         # Decrementar cooldowns de especial y turnos de buffs/debuffs
         for p in (self.p1, self.p2):
@@ -1343,6 +1507,8 @@ class DuelView(discord.ui.View):
             self.p2_burn_turns -= 1
 
         # Limpiar acciones y estados para la próxima ronda
+        self.p1.last_action = p1_act
+        self.p2.last_action = p2_act
         self.p1_action = None
         self.p2_action = None
         self.p1_special_id = None
@@ -1480,6 +1646,9 @@ class DuelView(discord.ui.View):
 
         # Pasivo: Golpe crítico
         extra_crit = 0.10 if any(p['id'] == 'crit_boost' for p in attacker.passives) else 0.0
+        # Golpe de Halcón (hawk_strike): +8% crit chance, exclusive to normal attacks
+        if action_type == 'attack' and any(p['id'] == 'hawk_strike' for p in attacker.passives):
+            extra_crit += 0.08
         # Agregar bonus de crit por subclase (Duelista conversion)
         extra_crit += attacker.subclass_extras.get("crit_chance_bonus", 0.0)
         
@@ -1491,6 +1660,23 @@ class DuelView(discord.ui.View):
         def finalize_damage_and_log(raw_damage, skill_name, skill_emoji, detail_log="", custom_log=None):
             dmg = raw_damage
             
+            # Modificadores de daño por subtipo de arma (Tomo +10% en primer uso, Cetro +15%)
+            weapon_item = attacker.equipment.get("Arma")
+            if weapon_item and weapon_item.get("weapon_subtype"):
+                sub = weapon_item["weapon_subtype"]
+                if sub == "tomo":
+                    if not getattr(attacker, "special_used_this_combat", False):
+                        dmg = int(dmg * 1.10)
+                elif sub == "cetro":
+                    dmg = int(dmg * 1.15)
+                    
+            attacker.special_used_this_combat = True
+            
+            # Piel de Piedra (stoneskin): reduce physical flat damage by 3
+            is_magic = skill_name in ("Drenaje Sagrado", "Quemadura", "Onda de Escarcha", "Sobrecarga Arcana", "Tormenta Elemental", "Singularidad", "Pacto de Sangre")
+            if not is_magic and any(p['id'] == 'stoneskin' for p in defender.passives):
+                dmg = max(1, dmg - 3)
+
             # Amplificación combinada
             amp_pct = 0.0
             if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
@@ -1527,6 +1713,20 @@ class DuelView(discord.ui.View):
         if action_type == 'attack':
             damage, crit = calc_attack_damage(atk_val, defender_def_val, is_defending_for_damage, extra_crit, has_fury, fury_active)
             
+            # Modificadores de daño por subtipo de arma (Lanza +10% si rival defendió, Hacha +15%)
+            weapon_item = attacker.equipment.get("Arma")
+            if weapon_item and weapon_item.get("weapon_subtype"):
+                sub = weapon_item["weapon_subtype"]
+                if sub == "lanza":
+                    if getattr(defender, "last_action", None) == "defend":
+                        damage = int(damage * 1.10)
+                elif sub == "hacha":
+                    damage = int(damage * 1.15)
+
+            # Piel de Piedra (stoneskin): reduce physical flat damage by 3
+            if any(p['id'] == 'stoneskin' for p in defender.passives):
+                damage = max(1, damage - 3)
+
             # Amplificación combinada
             amp_pct = 0.0
             if (self.p1_frenzy_turns > 0 and defender == self.p1) or (self.p2_frenzy_turns > 0 and defender == self.p2):
@@ -1577,10 +1777,36 @@ class DuelView(discord.ui.View):
                 defender.bleed_source_pct = 0.06
                 log_line += f"\n🩸 El Filo Sangrante corta profundo — Sangrado aplicado a {defender.user.display_name}."
 
+            # Pasivo: Viento de Guerra (windfury)
+            if any(p['id'] == 'windfury' for p in attacker.passives) and damage > 0:
+                if can_proc(attacker, 'windfury', self.turn_count, 2):
+                    if random.random() < 0.15:
+                        mark_proc(attacker, 'windfury', self.turn_count)
+                        wf_damage = int(damage * 0.50)
+                        wf_logs = []
+                        self._apply_damage_to_combatant(defender, wf_damage, wf_logs)
+                        log_line += f"\n🌪️ **Viento de Guerra:** ¡Un golpe adicional inflige **{wf_damage}** de daño!"
+                        for wl in wf_logs:
+                            log_line += f"\n{wl}"
+
+            # Pasivo: Filo Cegador (blinding_edge)
+            if any(p['id'] == 'blinding_edge' for p in attacker.passives) and damage > 0:
+                if can_proc(attacker, 'blinding_edge', self.turn_count, 4):
+                    if random.random() < 0.08:
+                        mark_proc(attacker, 'blinding_edge', self.turn_count)
+                        defender.blinded_turns = 3 # 2 turnos + 1
+                        log_line += f"\n🌫️ **Filo Cegador:** ¡Ceguera aplicada por 2 turnos a {defender.user.display_name}!"
+
             return damage, log_line
 
         elif action_type == 'special':
             special_id = self.p1_special_id if attacker == self.p1 else self.p2_special_id
+            
+            # Si el especial no es dañino, se marca como usado aquí (los dañinos se marcan en finalize_damage_and_log)
+            is_damaging = special_id not in ("frenesi", "represalia", "drenaje") and (special_id and special_id != "ceguera")
+            if not is_damaging:
+                attacker.special_used_this_combat = True
+            
             cfg = SKILLS_CONFIG.get(special_id) if special_id else SKILLS_CONFIG["ceguera"]
             
             if not special_id or special_id == "ceguera":
@@ -2327,7 +2553,10 @@ class LootView(discord.ui.View):
             equip_item, self.user.id,
             loot['slot'], loot['name'], loot['rarity'],
             loot['item_level'], loot['primary_stat'], loot['primary_value'],
-            loot['secondaries'], loot['passive']
+            loot['secondaries'], loot['passive'],
+            loot.get('mini_affix', {}).get('key') if loot.get('mini_affix') else None,
+            loot.get('mini_affix', {}).get('value') if loot.get('mini_affix') else None,
+            loot.get('weapon_subtype')
         )
 
         # Vender la pieza anterior si existía

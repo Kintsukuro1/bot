@@ -733,7 +733,7 @@ class TestRaidCombatResolve(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loot["item_level"], 15)
         self.assertIn(loot["rarity"], ("Poco Común", "Raro", "Épico", "Legendario"))
 
-    @patch('src.commands.duels.raid.db_cursor')
+    @patch('src.db.db_cursor')
     def test_roll_unique_item(self, mock_db_cursor):
         from src.commands.duels.raid import roll_unique_item
         mock_cursor = MagicMock()
