@@ -111,11 +111,11 @@ class RutaVueloView(discord.ui.View):
         self.stop()
 
     async def on_timeout(self):
-        if not self.resuelto:
-            self.resuelto = True
+        self.resuelto = True
+        if self.ruta is None:
             self.ruta = "corta"  # opción segura por defecto si no decide a tiempo
-            for item in self.children:
-                item.disabled = True
+        for item in self.children:
+            item.disabled = True
 
 class EventoPilotoView(discord.ui.View):
     def __init__(self, user_id, evento, tiempo_limite=7.0):
@@ -205,7 +205,9 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
     msg_ruta = await interaction.followup.send(embed=embed_ruta, view=ruta_view, wait=True)
     await ruta_view.wait()
 
-    ruta_elegida = RUTAS_VUELO[ruta_view.ruta]
+    # Si por alguna razón la ruta sigue siendo None o inválida, asignamos la corta por defecto
+    ruta_key = ruta_view.ruta if (ruta_view.ruta in RUTAS_VUELO) else "corta"
+    ruta_elegida = RUTAS_VUELO[ruta_key]
     num_eventos = ruta_elegida["num_eventos"]
     multiplicador_ruta = ruta_elegida["multiplicador"]
 
