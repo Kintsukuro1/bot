@@ -494,6 +494,16 @@ class TestClaseCommand(unittest.IsolatedAsyncioTestCase):
         f_args, f_kwargs = self.mock_interaction.followup.send.call_args
         self.assertIn("Tu subclase ha sido actualizada", f_args[0])
 
+    @patch('src.commands.duels.duelo.get_combat_stats')
+    async def test_clase_cmd_already_has_class_and_subclass(self, mock_get_stats):
+        mock_get_stats.return_value = {"level": 15, "combat_class": "Mago", "combat_subclass": "Piromante"}
+        
+        await self.cog.clase_cmd.callback(self.cog, self.mock_interaction)
+        
+        self.mock_interaction.response.send_message.assert_called_once()
+        args, kwargs = self.mock_interaction.response.send_message.call_args
+        self.assertIn("Ya has elegido tu clase (**Mago**) y subclase (**Piromante**)", args[0])
+
 
 if __name__ == '__main__':
     unittest.main()

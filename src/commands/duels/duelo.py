@@ -2863,6 +2863,13 @@ class DuelsCog(commands.Cog):
         player_level = c_stats['level']
 
         if current_class:
+            if current_subclass:
+                await interaction.response.send_message(
+                    f"❌ Ya has elegido tu clase (**{current_class}**) y subclase (**{current_subclass}**). Estas elecciones son permanentes.",
+                    ephemeral=True
+                )
+                return
+
             if player_level < SUBCLASS_UNLOCK_LEVEL:
                 await interaction.response.send_message(
                     f"❌ Ya has elegido la clase **{current_class}** y no puedes cambiarla. Podrás elegir una subclase a nivel {SUBCLASS_UNLOCK_LEVEL}.",
