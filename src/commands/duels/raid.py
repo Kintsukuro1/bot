@@ -1358,134 +1358,7 @@ class RaidCombatView(discord.ui.View):
 
         # Helper para aplicar daño a jugadores (con pasivos)
         def apply_damage_to_player(target, raw_dmg, is_boss_attack=False):
-            if target.is_dead:
-                return
-
-            # Evasión garantizada / paso fantasma / cota de malla / esquiva pasiva
-            if is_boss_attack:
-                if target.set_bonus_caelum_4pc and not target.first_strike_used and not target.guaranteed_dodge_next:
-                    target.first_strike_used = True
-                    if random.random() < 0.20:
-                        logs.append(f"💨 **Efecto Caelum:** ¡{target.user.display_name} esquiva el primer golpe recibido en el combate!")
-                        return
-
-                if target.guaranteed_dodge_next:
-                    target.guaranteed_dodge_next = False
-                    logs.append(f"👥 **Paso Fantasma:** {target.user.display_name} **ESQUIVÓ** el ataque!")
-                    return
-                if target.evasion_buff_turns > 0 and random.random() < target.evasion_buff_pct:
-                    logs.append(f"💨 **Evasión:** ¡{target.user.display_name} esquiva el ataque gracias a su agilidad!")
-                    return
-                if target.has_dodge and random.random() < 0.05:
-                    logs.append(f"💨 **Esquiva:** {target.user.display_name} **ESQUIVÓ** el ataque!")
-                    return
-
-            # Amplificación de daño combinada (Frenesí + Vulnerabilidad)
-            amp_pct = 0.0
-            if target.frenzy_turns > 0:
-                amp_pct += SKILLS_CONFIG["frenesi"]["damage_received_boost"]
-            if target.vulnerability_turns > 0:
-                amp_pct += target.vulnerability_pct
-            
-            amp_pct = min(0.75, amp_pct)
-            raw_dmg = int(raw_dmg * (1.0 + amp_pct))
-
-            # Reducción de daño activa (e.g. Muralla Inquebrantable)
-            if target.damage_reduction_turns > 0:
-                raw_dmg = int(raw_dmg * (1.0 - target.damage_reduction_pct))
-                logs.append(f"🏰 **Mitigación:** Daño recibido reducido a **{raw_dmg}** por Muralla Inquebrantable.")
-
-            # Pasivo: Piel de Piedra (stoneskin)
-            if any(p['id'] == 'stoneskin' for p in target.passives):
-                raw_dmg = max(1, raw_dmg - 3)
-
-            # Daño de entrada registrado para Castigo Divino
-            target.total_damage_taken += raw_dmg
-
-            # Reflejo (Juicio Final)
-            if target.juicio_final_turns > 0 and raw_dmg > 0:
-                reflected = int(raw_dmg * target.juicio_final_reflect_pct)
-                self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (reflected * EQUIPMENT_ULTIMATE_FILL_RATE))
-                alive_minions = [m for m in self.minions if m["hp"] > 0]
-                if alive_minions:
-                    target_minion = alive_minions[0]
-                    target_minion["hp"] = max(0, target_minion["hp"] - reflected)
-                    logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {target_minion['name']}!")
-                    if target_minion["hp"] <= 0:
-                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido por el reflejo!")
-                else:
-                    self.boss.hp = max(0, self.boss.hp - reflected)
-                    logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {self.boss.name}!")
-
-            absorbed = 0
-            if target.shield > 0:
-                absorbed = min(target.shield, raw_dmg)
-                raw_dmg -= absorbed
-                target.shield -= absorbed
-                logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
-
-            # Pasivo: Escudo arcano (primer golpe recibido se reduce a la mitad)
-            if is_boss_attack and target.arcane_shield_active:
-                raw_dmg = max(1, int(raw_dmg / 2))
-                target.arcane_shield_active = False
-                logs.append(f"🔮 **Escudo Arcano:** Se redujo el daño a la mitad para {target.user.display_name}.")
-            
-            if target.is_defending and target.has_parry:
-                # No se reduce el daño recibido, pero se cura un 30% del mismo
-                parry_heal = max(1, int(raw_dmg * 0.30))
-                parry_heal = int(parry_heal * (1.0 + target.healing_bonus_pct))
-                final_dmg = max(0, raw_dmg - parry_heal)
-                target.hp = max(0, target.hp - final_dmg)
-                if is_boss_attack:
-                    target.last_physical_damage_taken = final_dmg
-                logs.append(f"💥 {target.user.display_name} recibe **{final_dmg}** daño (tras curarse **{parry_heal}** por Parada). ({target.hp}/{target.max_hp} HP)")
-                
-                # Contraatacar al boss o esbirro
-                counter_dmg = max(1, int(raw_dmg * 0.75))
-                self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (counter_dmg * EQUIPMENT_ULTIMATE_FILL_RATE))
-                alive_minions = [m for m in self.minions if m["hp"] > 0]
-                if alive_minions:
-                    target_minion = alive_minions[0]
-                    target_minion["hp"] = max(0, target_minion["hp"] - counter_dmg)
-                    logs.append(f"⚔️ **Parada:** Contraataca a {target_minion['name']} por **{counter_dmg}** daño.")
-                    if target_minion["hp"] <= 0:
-                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido!")
-                else:
-                    self.boss.hp = max(0, self.boss.hp - counter_dmg)
-                    logs.append(f"⚔️ **Parada:** Contraataca a {self.boss.name} por **{counter_dmg}** daño.")
-            else:
-                if target.is_defending:
-                    raw_dmg = max(1, int(raw_dmg * 0.4))
-                target.hp = max(0, target.hp - raw_dmg)
-                if is_boss_attack:
-                    target.last_physical_damage_taken = raw_dmg
-                logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
-
-            # Aurelius 4pc low hp heal check
-            if target.hp > 0 and target.hp < target.max_hp * 0.30 and target.set_bonus_aurelius_4pc and not target.low_hp_heal_used:
-                target.low_hp_heal_used = True
-                heal_amt = int(target.max_hp * 0.15)
-                heal_amt = int(heal_amt * (1.0 + target.healing_bonus_pct))
-                target.hp = min(target.max_hp, target.hp + heal_amt)
-                logs.append(f"☀️ **Set Aurelius:** ¡{target.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP! ({target.hp}/{target.max_hp} HP)")
-
-            if target.hp <= 0:
-                # Pasivo: Segundo aliento (sobrevive con 1 HP una vez)
-                if not target.used_second_wind and any(p['id'] == 'second_wind' for p in target.passives):
-                    target.hp = 1
-                    target.used_second_wind = True
-                    logs.append(f"💫 **Segundo Aliento:** {target.user.display_name} sobrevive con **1 HP**!")
-                    return
-                target.is_dead = True
-                logs.append(f"💀 **{target.user.display_name}** ha caído en combate!")
-                for ally in self.players:
-                    if not ally.is_dead and ally.user.id != target.user.id and ally.set_bonus_thanatos_4pc:
-                        ally.next_hit_lifesteal_bonus = 0.10
-                        logs.append(f"💀 **Efecto Thanatos:** ¡La caída de un aliado otorga a {ally.user.display_name} +10% de robo de vida en su próximo golpe!")
-                if self.affix == "Sangriento":
-                    heal = int(self.boss.max_hp * 0.15)
-                    self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
-                    logs.append(f"🩸 **Sangriento:** {self.boss.name} se cura **{heal}** HP debido a la caída de un jugador.")
+            self._apply_damage_to_player(target, raw_dmg, logs, is_boss_attack)
 
         # 1. Aplicar afijo "Niebla Venenosa"
         if self.affix == "Niebla Venenosa":
@@ -3153,6 +3026,136 @@ class RaidCombatView(discord.ui.View):
                 except Exception:
                     pass
 
+    def _apply_damage_to_player(self, target, raw_dmg, logs: list[str], is_boss_attack=False):
+        if target.is_dead:
+            return
+
+        # Evasión garantizada / paso fantasma / cota de malla / esquiva pasiva
+        if is_boss_attack:
+            if target.set_bonus_caelum_4pc and not target.first_strike_used and not target.guaranteed_dodge_next:
+                target.first_strike_used = True
+                if random.random() < 0.20:
+                    logs.append(f"💨 **Efecto Caelum:** ¡{target.user.display_name} esquiva el primer golpe recibido en el combate!")
+                    return
+
+            if target.guaranteed_dodge_next:
+                target.guaranteed_dodge_next = False
+                logs.append(f"👥 **Paso Fantasma:** {target.user.display_name} **ESQUIVÓ** el ataque!")
+                return
+            if target.evasion_buff_turns > 0 and random.random() < target.evasion_buff_pct:
+                logs.append(f"💨 **Evasión:** ¡{target.user.display_name} esquiva el ataque gracias a su agilidad!")
+                return
+            if target.has_dodge and random.random() < 0.05:
+                logs.append(f"💨 **Esquiva:** {target.user.display_name} **ESQUIVÓ** el ataque!")
+                return
+
+        # Amplificación de daño combinada (Frenesí + Vulnerabilidad)
+        amp_pct = 0.0
+        if target.frenzy_turns > 0:
+            amp_pct += SKILLS_CONFIG["frenesi"]["damage_received_boost"]
+        if target.vulnerability_turns > 0:
+            amp_pct += target.vulnerability_pct
+        
+        amp_pct = min(0.75, amp_pct)
+        raw_dmg = int(raw_dmg * (1.0 + amp_pct))
+
+        # Reducción de daño activa (e.g. Muralla Inquebrantable)
+        if target.damage_reduction_turns > 0:
+            raw_dmg = int(raw_dmg * (1.0 - target.damage_reduction_pct))
+            logs.append(f"🏰 **Mitigación:** Daño recibido reducido a **{raw_dmg}** por Muralla Inquebrantable.")
+
+        # Pasivo: Piel de Piedra (stoneskin)
+        if any(p['id'] == 'stoneskin' for p in target.passives):
+            raw_dmg = max(1, raw_dmg - 3)
+
+        # Daño de entrada registrado para Castigo Divino
+        target.total_damage_taken += raw_dmg
+
+        # Reflejo (Juicio Final)
+        if target.juicio_final_turns > 0 and raw_dmg > 0:
+            reflected = int(raw_dmg * target.juicio_final_reflect_pct)
+            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (reflected * EQUIPMENT_ULTIMATE_FILL_RATE))
+            alive_minions = [m for m in self.minions if m["hp"] > 0]
+            if alive_minions:
+                target_minion = alive_minions[0]
+                target_minion["hp"] = max(0, target_minion["hp"] - reflected)
+                logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {target_minion['name']}!")
+                if target_minion["hp"] <= 0:
+                    logs.append(f"💀 **{target_minion['name']}** ha sido destruido por el reflejo!")
+            else:
+                self.boss.hp = max(0, self.boss.hp - reflected)
+                logs.append(f"⚖️ **Juicio Final:** ¡Se reflejan **{reflected}** daño de vuelta a {self.boss.name}!")
+
+        absorbed = 0
+        if target.shield > 0:
+            absorbed = min(target.shield, raw_dmg)
+            raw_dmg -= absorbed
+            target.shield -= absorbed
+            logs.append(f"🛡️ **Escudo:** Se absorbieron **{absorbed}** de daño. Queda {target.shield} de escudo en {target.user.display_name}.")
+
+        # Pasivo: Escudo arcano (primer golpe recibido se reduce a la mitad)
+        if is_boss_attack and target.arcane_shield_active:
+            raw_dmg = max(1, int(raw_dmg / 2))
+            target.arcane_shield_active = False
+            logs.append(f"🔮 **Escudo Arcano:** Se redujo el daño a la mitad para {target.user.display_name}.")
+        
+        if target.is_defending and target.has_parry:
+            # No se reduce el daño recibido, pero se cura un 30% del mismo
+            parry_heal = max(1, int(raw_dmg * 0.30))
+            parry_heal = int(parry_heal * (1.0 + target.healing_bonus_pct))
+            final_dmg = max(0, raw_dmg - parry_heal)
+            target.hp = max(0, target.hp - final_dmg)
+            if is_boss_attack:
+                target.last_physical_damage_taken = final_dmg
+            logs.append(f"💥 {target.user.display_name} recibe **{final_dmg}** daño (tras curarse **{parry_heal}** por Parada). ({target.hp}/{target.max_hp} HP)")
+            
+            # Contraatacar al boss o esbirro
+            counter_dmg = max(1, int(raw_dmg * 0.75))
+            self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + (counter_dmg * EQUIPMENT_ULTIMATE_FILL_RATE))
+            alive_minions = [m for m in self.minions if m["hp"] > 0]
+            if alive_minions:
+                target_minion = alive_minions[0]
+                target_minion["hp"] = max(0, target_minion["hp"] - counter_dmg)
+                logs.append(f"⚔️ **Parada:** Contraataca a {target_minion['name']} por **{counter_dmg}** daño.")
+                if target_minion["hp"] <= 0:
+                    logs.append(f"💀 **{target_minion['name']}** ha sido destruido!")
+            else:
+                self.boss.hp = max(0, self.boss.hp - counter_dmg)
+                logs.append(f"⚔️ **Parada:** Contraataca a {self.boss.name} por **{counter_dmg}** daño.")
+        else:
+            if target.is_defending:
+                raw_dmg = max(1, int(raw_dmg * 0.4))
+            target.hp = max(0, target.hp - raw_dmg)
+            if is_boss_attack:
+                target.last_physical_damage_taken = raw_dmg
+            logs.append(f"💥 {target.user.display_name} recibe **{raw_dmg}** daño. ({target.hp}/{target.max_hp} HP)")
+
+        # Aurelius 4pc low hp heal check
+        if target.hp > 0 and target.hp < target.max_hp * 0.30 and target.set_bonus_aurelius_4pc and not target.low_hp_heal_used:
+            target.low_hp_heal_used = True
+            heal_amt = int(target.max_hp * 0.15)
+            heal_amt = int(heal_amt * (1.0 + target.healing_bonus_pct))
+            target.hp = min(target.max_hp, target.hp + heal_amt)
+            logs.append(f"☀️ **Set Aurelius:** ¡{target.user.display_name} baja del 30% HP y activa Destello Dorado, curándose **{heal_amt}** HP! ({target.hp}/{target.max_hp} HP)")
+
+        if target.hp <= 0:
+            # Pasivo: Segundo aliento (sobrevive con 1 HP una vez)
+            if not target.used_second_wind and any(p['id'] == 'second_wind' for p in target.passives):
+                target.hp = 1
+                target.used_second_wind = True
+                logs.append(f"💫 **Segundo Aliento:** {target.user.display_name} sobrevive con **1 HP**!")
+                return
+            target.is_dead = True
+            logs.append(f"💀 **{target.user.display_name}** ha caído en combate!")
+            for ally in self.players:
+                if not ally.is_dead and ally.user.id != target.user.id and ally.set_bonus_thanatos_4pc:
+                    ally.next_hit_lifesteal_bonus = 0.10
+                    logs.append(f"💀 **Efecto Thanatos:** ¡La caída de un aliado otorga a {ally.user.display_name} +10% de robo de vida en su próximo golpe!")
+            if self.affix == "Sangriento":
+                heal = int(self.boss.max_hp * 0.15)
+                self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
+                logs.append(f"🩸 **Sangriento:** {self.boss.name} se cura **{heal}** HP debido a la caída de un jugador.")
+
     def _execute_boss_ability(self) -> list[str]:
         """Ejecuta la habilidad especial del boss. Retorna líneas de log."""
         logs = []
@@ -3172,7 +3175,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             dmg = int(base * random.uniform(0.85, 1.15))
             logs.append(f"   → Dirigido a {target.user.display_name}:")
-            apply_damage_to_player(target, dmg, is_boss_attack=True)
+            self._apply_damage_to_player(target, dmg, logs, is_boss_attack=True)
 
         elif ab_type == "aoe_damage":
             base = int(self.boss.atk * ability["damage_mult"])
@@ -3180,7 +3183,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                apply_damage_to_player(p, dmg, is_boss_attack=True)
+                self._apply_damage_to_player(p, dmg, logs, is_boss_attack=True)
 
         elif ab_type == "single_target_dot":
             taunters = [p for p in alive if p.taunt_turns > 0 or p.is_taunting]
@@ -3193,7 +3196,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             dmg = int(base * random.uniform(0.85, 1.15))
             logs.append(f"   → Dirigido a {target.user.display_name}:")
-            apply_damage_to_player(target, dmg, is_boss_attack=True)
+            self._apply_damage_to_player(target, dmg, logs, is_boss_attack=True)
             if not target.is_dead:
                 if target.poison_turns == 0:
                     target.poison_damage = 10
@@ -3208,7 +3211,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                apply_damage_to_player(p, dmg, is_boss_attack=True)
+                self._apply_damage_to_player(p, dmg, logs, is_boss_attack=True)
 
             heal = int(self.boss.max_hp * ability["heal_pct"])
             self.boss.hp = min(self.boss.max_hp, self.boss.hp + heal)
@@ -3221,7 +3224,7 @@ class RaidCombatView(discord.ui.View):
                 if p.is_defending:
                     drain = max(1, int(drain * 0.5))
                 old_hp = p.hp
-                apply_damage_to_player(p, drain, is_boss_attack=True)
+                self._apply_damage_to_player(p, drain, logs, is_boss_attack=True)
                 actual_lost = max(0, old_hp - p.hp)
                 total_drained += actual_lost
             self.boss.hp = min(self.boss.max_hp, self.boss.hp + total_drained)
@@ -3233,7 +3236,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             for p in alive:
                 dmg = int(base * random.uniform(0.85, 1.15))
-                apply_damage_to_player(p, dmg, is_boss_attack=True)
+                self._apply_damage_to_player(p, dmg, logs, is_boss_attack=True)
                 if not p.is_dead:
                     p.atk_debuff_turns = ability["debuff_turns"]
                     p.atk_debuff_pct = ability["atk_reduction_pct"]
@@ -3250,7 +3253,7 @@ class RaidCombatView(discord.ui.View):
                 base = int(base * (1.0 - self.boss.weakness_pct))
             dmg = int(base * random.uniform(0.90, 1.10))
             logs.append(f"   ⚡ ¡{self.boss.name} lanza un rayo devastador a {target.user.display_name}!")
-            apply_damage_to_player(target, dmg, is_boss_attack=True)
+            self._apply_damage_to_player(target, dmg, logs, is_boss_attack=True)
 
         elif ab_type == "self_buff":
             low, high = ability["stat_shuffle_range"]
