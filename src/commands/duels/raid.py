@@ -440,11 +440,16 @@ class RaidCombatView(discord.ui.View):
         await self._register_action(interaction, 'ultimate_equipo')
 
     async def _register_action(self, interaction: discord.Interaction, action: str, is_ephemeral: bool = False):
+        should_defer = not is_ephemeral
+
+        if should_defer and not interaction.response.is_done():
+            await interaction.response.defer()
+
         if self.game_over:
             if is_ephemeral:
                 await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
             else:
-                await interaction.response.send_message("❌ La raid ya terminó.", ephemeral=True)
+                await interaction.followup.send("❌ La raid ya terminó.", ephemeral=True)
             return
 
         user_id = interaction.user.id
@@ -455,21 +460,21 @@ class RaidCombatView(discord.ui.View):
             if is_ephemeral:
                 await interaction.followup.send("❌ No participas en esta raid.", ephemeral=True)
             else:
-                await interaction.response.send_message("❌ No participas en esta raid.", ephemeral=True)
+                await interaction.followup.send("❌ No participas en esta raid.", ephemeral=True)
             return
 
         if player.is_dead:
             if is_ephemeral:
                 await interaction.followup.send("❌ Has caído en combate.", ephemeral=True)
             else:
-                await interaction.response.send_message("❌ Has caído en combate.", ephemeral=True)
+                await interaction.followup.send("❌ Has caído en combate.", ephemeral=True)
             return
 
         if user_id in self.actions:
             if is_ephemeral:
                 await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
             else:
-                await interaction.response.send_message("❌ Ya elegiste tu acción.", ephemeral=True)
+                await interaction.followup.send("❌ Ya elegiste tu acción.", ephemeral=True)
             return
 
         self.actions[user_id] = action
@@ -482,7 +487,6 @@ class RaidCombatView(discord.ui.View):
             if is_ephemeral:
                 await self._resolve_round(None)
             else:
-                await interaction.response.defer()
                 await self._resolve_round(interaction)
         else:
             embed = self._build_embed()
@@ -490,7 +494,7 @@ class RaidCombatView(discord.ui.View):
                 if self.interaction_msg:
                     await self.interaction_msg.edit(embed=embed, view=self)
             else:
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.edit_original_response(embed=embed, view=self)
 
     # ──────────────────── RESOLUCIÓN ────────────────────
 
