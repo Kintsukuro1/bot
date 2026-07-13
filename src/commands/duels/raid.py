@@ -32,6 +32,7 @@ from src.utils.combat_progression import (
     LOOT_TIMEOUT_SECONDS, ALL_STATS, format_item_stats_display,
     apply_subclass_equipment_conversion, format_currency,
     get_equipped_set_pieces, EQUIPMENT_SETS_CACHE, load_equipment_sets_cache,
+    can_proc, mark_proc,
 )
 from src.utils.combat_config import SKILLS_CONFIG
 from src.utils.subclass_config import (
@@ -145,6 +146,7 @@ class RaidCombatant:
         self.level = level
         self.combat_class = combat_class
         self.combat_subclass = combat_subclass
+        self.equipment = equipment
 
         # Stats base + equipo
         base = calc_base_stats(level)
@@ -160,7 +162,18 @@ class RaidCombatant:
 
         crit_bonus_from_gem = secondary_bonus.get("crit", 0.0)
         subclass_crit = self.subclass_extras.get("crit_chance_bonus", 0.0)
-        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem)
+
+        # Modificador de crítico por subtipo de arma (Daga +5%, Hacha -5%)
+        weapon_item = equipment.get("Arma")
+        weapon_crit_mod = 0.0
+        if weapon_item and weapon_item.get("weapon_subtype"):
+            sub = weapon_item["weapon_subtype"]
+            if sub == "daga":
+                weapon_crit_mod = 0.05
+            elif sub == "hacha":
+                weapon_crit_mod = -0.05
+
+        self.subclass_extras["crit_chance_bonus"] = min(0.25, subclass_crit + crit_bonus_from_gem + weapon_crit_mod)
 
         effective, _, _ = get_effective_bonus(bonus, level)
 
@@ -170,6 +183,14 @@ class RaidCombatant:
         self.base_atk = self.atk  # Para restaurar después de debuffs
         self.mag = base["mag"] + int(round(effective.get("mag", 0)))
         self.def_stat = base["def"] + int(round(effective.get("def", 0)))
+
+        # Pasivo: Corazón Fragmentado (glass_heart)
+        if any(p['id'] == 'glass_heart' for p in passives):
+            self.max_hp = int(self.max_hp * 0.92)
+            self.hp = self.max_hp
+            self.atk = int(self.atk * 1.12)
+            self.base_atk = self.atk
+            self.mag = int(self.mag * 1.12)
 
         # Inicializar variables de bonus de sets
         self.vampirism_pct = 0.08 if any(p['id'] == 'vampirism' for p in passives) else 0.0
@@ -273,8 +294,37 @@ class RaidCombatant:
                 setattr(self, flag, True)
                 self.abyssus_log = f"🌀 **Efecto Abyssus:** ¡{self.user.display_name} obtiene el bonus del set **{name}**!"
 
+        # Aplicar mini-afijos porcentuales (furia, vacio, bastion, vital)
+        ma_pcts = {"atk": 0.0, "mag": 0.0, "def": 0.0, "hp": 0.0}
+        for slot, item in equipment.items():
+            ma_key = item.get("mini_affix_key")
+            ma_val = item.get("mini_affix_value")
+            if ma_key and ma_val is not None:
+                if ma_key == "furia":
+                    ma_pcts["atk"] += ma_val
+                elif ma_key == "vacio":
+                    ma_pcts["mag"] += ma_val
+                elif ma_key == "bastion":
+                    ma_pcts["def"] += ma_val
+                elif ma_key == "vital":
+                    ma_pcts["hp"] += ma_val
+
+        # Aplicar los porcentajes acumulados
+        if ma_pcts["hp"] > 0:
+            self.max_hp = int(self.max_hp * (1.0 + ma_pcts["hp"]))
+            self.hp = self.max_hp
+        if ma_pcts["atk"] > 0:
+            self.atk = int(self.atk * (1.0 + ma_pcts["atk"]))
+            self.base_atk = self.atk
+        if ma_pcts["mag"] > 0:
+            self.mag = int(self.mag * (1.0 + ma_pcts["mag"]))
+        if ma_pcts["def"] > 0:
+            self.def_stat = int(self.def_stat * (1.0 + ma_pcts["def"]))
+
         # Pasivos de equipo (Legendario)
         self.passives = passives
+        self.last_action = None
+        self.special_used_this_combat = False
         self.used_second_wind = False
         self.arcane_shield_active = any(p['id'] == 'arcane_shield' for p in passives)
         self.has_crit_boost = any(p['id'] == 'crit_boost' for p in passives)
@@ -340,8 +390,21 @@ class RaidCombatant:
         self.dominated_turns = 0
         self.fury_stun_pending = False
         self.retribution_active = False     # Postura de Represalia activa
-        self.blinded_turns = 0              # Ceguera
+        self._blinded_turns = 0              # Ceguera
         self.turns_survived = 0    # Turnos sobrevividos (para XP)
+
+        # Infraestructura de ICD e Inmunidades de Control
+        self.passive_icd = {}
+        self.used_erratic_ward = False
+        self.used_eternal_watch = False
+        self.eternal_watch_trigger_log = None
+
+    def has_eternal_watch_active(self) -> bool:
+        return any(p['id'] == 'eternal_watch' for p in self.passives) and not getattr(self, "used_eternal_watch", False)
+
+    def trigger_eternal_watch(self, debuff_name: str):
+        self.used_eternal_watch = True
+        self.eternal_watch_trigger_log = f"👁️ **Vigilancia Eterna:** ¡{self.user.display_name} resiste el debuff de {debuff_name}!"
 
     @property
     def stun_turns(self) -> int:
@@ -349,7 +412,11 @@ class RaidCombatant:
 
     @stun_turns.setter
     def stun_turns(self, value: int):
-        if value > getattr(self, "_stun_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_stun_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Aturdimiento")
+                return
+        if value > getattr(self, "_stun_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._stun_turns = value
 
@@ -359,7 +426,11 @@ class RaidCombatant:
 
     @frozen_turns.setter
     def frozen_turns(self, value: int):
-        if value > getattr(self, "_frozen_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_frozen_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Congelación")
+                return
+        if value > getattr(self, "_frozen_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._frozen_turns = value
 
@@ -369,9 +440,25 @@ class RaidCombatant:
 
     @silence_turns.setter
     def silence_turns(self, value: int):
-        if value > getattr(self, "_silence_turns", 0) and self.set_bonus_leviathan_4pc:
+        if value > getattr(self, "_silence_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Silencio")
+                return
+        if value > getattr(self, "_silence_turns", 0) and getattr(self, "set_bonus_leviathan_4pc", False):
             value = max(1, int(value * 0.85))
         self._silence_turns = value
+
+    @property
+    def blinded_turns(self) -> int:
+        return getattr(self, "_blinded_turns", 0)
+
+    @blinded_turns.setter
+    def blinded_turns(self, value: int):
+        if value > getattr(self, "_blinded_turns", 0):
+            if self.has_eternal_watch_active():
+                self.trigger_eternal_watch("Ceguera")
+                return
+        self._blinded_turns = value
 
 
 # ══════════════════════════════════════════════
@@ -1308,6 +1395,10 @@ class RaidCombatView(discord.ui.View):
                 raw_dmg = int(raw_dmg * (1.0 - target.damage_reduction_pct))
                 logs.append(f"🏰 **Mitigación:** Daño recibido reducido a **{raw_dmg}** por Muralla Inquebrantable.")
 
+            # Pasivo: Piel de Piedra (stoneskin)
+            if any(p['id'] == 'stoneskin' for p in target.passives):
+                raw_dmg = max(1, raw_dmg - 3)
+
             # Daño de entrada registrado para Castigo Divino
             target.total_damage_taken += raw_dmg
 
@@ -1563,6 +1654,8 @@ class RaidCombatView(discord.ui.View):
                         logs.append(f"🌀 **Espectro Debilitante:** Aplica Ceguera (50% probabilidad de fallo) a {target_player.user.display_name} por 2 turnos.")
 
         # 4. Procesar acciones de jugadores
+        for pl in self.players:
+            pl.pre_hit_hp = pl.hp
         total_damage_dealt_this_turn = 0
 
         for p in alive:
@@ -1676,10 +1769,22 @@ class RaidCombatView(discord.ui.View):
                             victim_def = int(victim_def * (1.0 - victim.fragility_pct))
 
                         damage_to_ally = max(1, int(base_dmg - victim_def * 0.35))
+                        
+                        # Modificadores de daño por subtipo de arma (Lanza +10% si rival defendió, Hacha +15%)
+                        weapon_item = p.equipment.get("Arma")
+                        if weapon_item and weapon_item.get("weapon_subtype"):
+                            sub = weapon_item["weapon_subtype"]
+                            if sub == "lanza":
+                                if getattr(victim, "last_action", None) == "defend":
+                                    damage_to_ally = int(damage_to_ally * 1.10)
+                            elif sub == "hacha":
+                                damage_to_ally = int(damage_to_ally * 1.15)
 
                         crit_chance = 0.10
                         if p.has_crit_boost:
                             crit_chance += 0.10
+                        if any(pass_item['id'] == 'hawk_strike' for pass_item in p.passives):
+                            crit_chance += 0.08
                         crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
 
                         crit = random.random() < crit_chance
@@ -1709,6 +1814,16 @@ class RaidCombatView(discord.ui.View):
                             target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
 
                         damage = max(1, int(base_dmg - target_def * 0.35))
+                        
+                        # Modificadores de daño por subtipo de arma (Lanza +10% si rival defendió, Hacha +15%)
+                        weapon_item = p.equipment.get("Arma")
+                        if weapon_item and weapon_item.get("weapon_subtype"):
+                            sub = weapon_item["weapon_subtype"]
+                            if sub == "lanza":
+                                if getattr(active_target, "last_action", None) == "defend":
+                                    damage = int(damage * 1.10)
+                            elif sub == "hacha":
+                                damage = int(damage * 1.15)
 
                         crit_chance = 0.10
                         if p.has_crit_boost:
@@ -1738,10 +1853,22 @@ class RaidCombatView(discord.ui.View):
                         target_def = int(target_def * (1.0 - active_target.get("fragility_pct", 0.0)))
 
                     damage = max(1, int(base_dmg - target_def * 0.35))
+                    
+                    # Modificadores de daño por subtipo de arma (Lanza +10% si rival defendió, Hacha +15%)
+                    weapon_item = p.equipment.get("Arma")
+                    if weapon_item and weapon_item.get("weapon_subtype"):
+                        sub = weapon_item["weapon_subtype"]
+                        if sub == "lanza":
+                            if getattr(active_target, "last_action", None) == "defend":
+                                damage = int(damage * 1.10)
+                        elif sub == "hacha":
+                            damage = int(damage * 1.15)
 
                     crit_chance = 0.10
                     if p.has_crit_boost:
                         crit_chance += 0.10
+                    if any(pass_item['id'] == 'hawk_strike' for pass_item in p.passives):
+                        crit_chance += 0.08
                     crit_chance += p.subclass_extras.get("crit_chance_bonus", 0.0)
 
                     crit = random.random() < crit_chance
@@ -1784,6 +1911,9 @@ class RaidCombatView(discord.ui.View):
 
             else:
                 # Es un lanzamiento de habilidad especial
+                # Guardamos si era primer uso antes de marcarlo para el cálculo de daño posterior
+                p.first_special_use_this_combat = not getattr(p, "special_used_this_combat", False)
+                p.special_used_this_combat = True
                 cfg = SKILLS_CONFIG.get(action)
                 if cfg:
                     # Aplicar enfriamiento
@@ -1791,6 +1921,15 @@ class RaidCombatView(discord.ui.View):
                     has_mana_residual = any(pass_item['id'] == 'mana_residual' for pass_item in p.passives)
                     if has_mana_residual:
                         skill_cd = max(1, skill_cd - 1)
+
+                    # Modificador de cooldown por subtipo de arma (Orbe -1, Cetro +1)
+                    weapon_item = p.equipment.get("Arma")
+                    if weapon_item and weapon_item.get("weapon_subtype"):
+                        sub = weapon_item["weapon_subtype"]
+                        if sub == "orbe":
+                            skill_cd = max(1, skill_cd - 1)
+                        elif sub == "cetro":
+                            skill_cd = skill_cd + 1
 
                     if cfg.get("min_level") == 10:
                         p.skill10_cooldown = skill_cd
@@ -2500,6 +2639,17 @@ class RaidCombatView(discord.ui.View):
                 damage = int(damage * 1.10)
                 logs.append(f"🔥 **Furia Creciente:** ¡{p.user.display_name} inflige un 10% más de daño!")
 
+            # Tomo / Cetro checks for Specials
+            if action not in ('attack', 'defend', 'timeout') and damage > 0:
+                weapon_item = p.equipment.get("Arma")
+                if weapon_item and weapon_item.get("weapon_subtype"):
+                    sub = weapon_item["weapon_subtype"]
+                    if sub == "tomo":
+                        if getattr(p, "first_special_use_this_combat", False):
+                            damage = int(damage * 1.10)
+                    elif sub == "cetro":
+                        damage = int(damage * 1.15)
+
             # Aplicar modificadores de afijo "Inestabilidad Mágica" y Vulnerability combinados
             if damage > 0:
                 amp_pct = 0.0
@@ -2549,6 +2699,70 @@ class RaidCombatView(discord.ui.View):
                     
                     crit_str = crit_text if 'crit_text' in locals() else ""
                     logs.append(f"   → Daño al jefe: **{damage}** daño{crit_str}.")
+
+                # Procs de pasivos nuevos (windfury, blinding_edge, chain_lightning, deathtouch)
+                if damage > 0:
+                    # Pasivo: Viento de Guerra (windfury)
+                    if action == 'attack':
+                        if any(pass_item['id'] == 'windfury' for pass_item in p.passives) and can_proc(p, 'windfury', self.turn_count, 2):
+                            if random.random() < 0.15:
+                                mark_proc(p, 'windfury', self.turn_count)
+                                wf_dmg = int(damage * 0.50)
+                                if alive_minions:
+                                    target_minion = alive_minions[0]
+                                    target_minion["hp"] = max(0, target_minion["hp"] - wf_dmg)
+                                    logs.append(f"🌪️ **Viento de Guerra:** ¡Un golpe adicional inflige **{wf_dmg}** de daño a {target_minion['name']}!")
+                                    if target_minion["hp"] <= 0:
+                                        logs.append(f"💀 **{target_minion['name']}** ha sido destruido por Viento de Guerra!")
+                                else:
+                                    self.boss.hp = max(0, self.boss.hp - wf_dmg)
+                                    total_damage_dealt_this_turn += wf_dmg
+                                    if self.boss_channeling:
+                                        self.boss_channeled_damage += wf_dmg
+                                    logs.append(f"🌪️ **Viento de Guerra:** ¡Un golpe adicional inflige **{wf_dmg}** de daño a {self.boss.name}!")
+
+                    # Pasivo: Filo Cegador (blinding_edge)
+                    if action == 'attack':
+                        if any(pass_item['id'] == 'blinding_edge' for pass_item in p.passives) and can_proc(p, 'blinding_edge', self.turn_count, 4):
+                            if random.random() < 0.08:
+                                mark_proc(p, 'blinding_edge', self.turn_count)
+                                if hasattr(active_target, 'blinded_turns'):
+                                    active_target.blinded_turns = 3
+                                    logs.append(f"🌫️ **Filo Cegador:** ¡Ceguera aplicada por 2 turnos a {active_target.name}!")
+                                else:
+                                    active_target["blinded_turns"] = 3
+                                    logs.append(f"🌫️ **Filo Cegador:** ¡Ceguera aplicada por 2 turnos a {active_target['name']}!")
+
+                    # Pasivo: Cadena de Tormenta (chain_lightning)
+                    if action != 'attack' and action != 'defend' and action != 'timeout' and not action.startswith('consumable:') and not action == 'ultimate_equipo':
+                        if alive_minions and any(pass_item['id'] == 'chain_lightning' for pass_item in p.passives) and can_proc(p, 'chain_lightning', self.turn_count, 3):
+                            if random.random() < 0.10:
+                                mark_proc(p, 'chain_lightning', self.turn_count)
+                                cl_dmg = int(damage * 0.30)
+                                cl_dmg = max(1, cl_dmg)
+                                target_minion = random.choice(alive_minions)
+                                target_minion["hp"] = max(0, target_minion["hp"] - cl_dmg)
+                                logs.append(f"⛈️ **Cadena de Tormenta:** ¡Un rayo secundario golpea a {target_minion['name']} por **{cl_dmg}** de daño!")
+                                if target_minion["hp"] <= 0:
+                                    logs.append(f"💀 **{target_minion['name']}** ha sido destruido por Cadena de Tormenta!")
+
+                    # Pasivo: Toque Letal (deathtouch)
+                    target_hp = active_target.hp if hasattr(active_target, 'hp') else active_target["hp"]
+                    target_max = active_target.max_hp if hasattr(active_target, 'max_hp') else active_target["max_hp"]
+                    if target_hp > 0 and target_hp < target_max * 0.15:
+                        if any(pass_item['id'] == 'deathtouch' for pass_item in p.passives):
+                            dt_dmg = int(damage * 0.10)
+                            dt_dmg = max(1, dt_dmg)
+                            if hasattr(active_target, 'hp'):
+                                active_target.hp = max(0, active_target.hp - dt_dmg)
+                                logs.append(f"💀 **Toque Letal:** ¡{p.user.display_name} inflige **{dt_dmg}** de daño adicional de rebote a {active_target.name}!")
+                                if active_target.hp <= 0:
+                                    logs.append(f"🎉 **¡{active_target.name} ha sido derrotado por Toque Letal!**")
+                            else:
+                                active_target["hp"] = max(0, active_target["hp"] - dt_dmg)
+                                logs.append(f"💀 **Toque Letal:** ¡{p.user.display_name} inflige **{dt_dmg}** de daño adicional de rebote a {active_target['name']}!")
+                                if active_target["hp"] <= 0:
+                                    logs.append(f"💀 **{active_target['name']}** ha sido destruido por Toque Letal!")
 
                 # Pasivo: Vampirismo (e incluye bono de set de Thanatos)
                 total_lifesteal = p.vampirism_pct + getattr(p, "next_hit_lifesteal_bonus", 0.0)
@@ -2698,6 +2912,7 @@ class RaidCombatView(discord.ui.View):
 
         # 8. Limpiar estados de ronda y reducir cooldowns
         for p in self.players:
+            p.last_action = self.actions.get(p.user.id, 'timeout')
             p.is_defending = False
             p.is_taunting = False
             if p.frozen_turns > 0:
@@ -2767,6 +2982,28 @@ class RaidCombatView(discord.ui.View):
                             logs.append(f"💀 **Efecto Thanatos:** ¡La caída de un aliado otorga a {ally.user.display_name} +10% de robo de vida en su próximo golpe!")
             if not p.is_dead:
                 p.turns_survived += 1
+
+                # Pasivo: Absorción Errática (erratic_ward)
+                if p.hp < p.max_hp * 0.25 and not p.used_erratic_ward and any(pass_item['id'] == 'erratic_ward' for pass_item in p.passives):
+                    p.used_erratic_ward = True
+                    shield_amt = int(p.max_hp * 0.10)
+                    p.shield += shield_amt
+                    logs.append(f"🛡️ **Absorción Errática:** ¡{p.user.display_name} baja del 25% HP y obtiene un escudo de **{shield_amt}** HP! ({p.hp}/{p.max_hp} HP)")
+
+                # Pasivo: Sed de Batalla (bloodlust_proc)
+                damage_received = p.pre_hit_hp - p.hp
+                if damage_received > 0 and any(pass_item['id'] == 'bloodlust_proc' for pass_item in p.passives):
+                    if can_proc(p, 'bloodlust_proc', self.turn_count, 3):
+                        if random.random() < 0.10:
+                            mark_proc(p, 'bloodlust_proc', self.turn_count)
+                            if p.special_cooldown > 0:
+                                p.special_cooldown -= 1
+                                logs.append(f"💢 **Sed de Batalla:** ¡{p.user.display_name} reduce en 1 turno el cooldown de su Especial!")
+
+            # Logs de Vigilancia Eterna
+            if getattr(p, "eternal_watch_trigger_log", None):
+                logs.append(p.eternal_watch_trigger_log)
+                p.eternal_watch_trigger_log = None
 
         # Decrementar debuffs del Boss
         if self.boss.weakness_turns > 0:
@@ -3429,7 +3666,10 @@ class RaidLootView(discord.ui.View):
             equip_item, self.user.id,
             loot['slot'], loot['name'], loot['rarity'],
             loot['item_level'], loot['primary_stat'], loot['primary_value'],
-            loot['secondaries'], loot['passive']
+            loot['secondaries'], loot['passive'],
+            loot.get('mini_affix', {}).get('key') if loot.get('mini_affix') else None,
+            loot.get('mini_affix', {}).get('value') if loot.get('mini_affix') else None,
+            loot.get('weapon_subtype')
         )
 
         sell_msg = ""

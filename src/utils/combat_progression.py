@@ -323,9 +323,90 @@ ITEM_PASSIVES = [
         "emoji": "🩸",
         "desc": "15% de probabilidad de aplicar Sangrado (3 turnos) al golpear con esta arma",
     },
+    {
+        "id": "windfury",
+        "name": "Viento de Guerra",
+        "emoji": "🌪️",
+        "desc": "15% de probabilidad al Atacar de dar un golpe adicional por 50% del daño normal. (ICD: 2 turnos)",
+    },
+    {
+        "id": "hawk_strike",
+        "name": "Golpe de Halcón",
+        "emoji": "🦅",
+        "desc": "+8% de probabilidad de crítico, exclusivo en Atacar (no en Especial)",
+    },
+    {
+        "id": "deathtouch",
+        "name": "Toque Letal",
+        "emoji": "💀",
+        "desc": "Si tu golpe deja al objetivo por debajo de 15% HP sin matarlo, inflige 10% adicional del daño ya hecho como rebote",
+    },
+    {
+        "id": "chain_lightning",
+        "name": "Cadena de Tormenta",
+        "emoji": "⛈️",
+        "desc": "En raid, 10% de probabilidad al usar Especial de golpear también a un esbirro vivo por 30% del daño. (ICD: 3 turnos)",
+    },
+    {
+        "id": "stoneskin",
+        "name": "Piel de Piedra",
+        "emoji": "🗿",
+        "desc": "Reduce en 3 el daño plano de cada golpe físico recibido (después de mitigación)",
+    },
+    {
+        "id": "erratic_ward",
+        "name": "Absorción Errática",
+        "emoji": "🛡️",
+        "desc": "Al bajar de 25% HP, gana un escudo de 10% HP máximo. Una vez por combate.",
+    },
+    {
+        "id": "bloodlust_proc",
+        "name": "Sed de Batalla",
+        "emoji": "💢",
+        "desc": "10% de probabilidad al recibir daño de reducir en 1 turno tu cooldown actual de Especial. (ICD: 3 turnos)",
+    },
+    {
+        "id": "blinding_edge",
+        "name": "Filo Cegador",
+        "emoji": "🌫️",
+        "desc": "8% de probabilidad al Atacar de aplicar Ceguera (2 turnos) al objetivo. (ICD: 4 turnos)",
+    },
+    {
+        "id": "glass_heart",
+        "name": "Corazón Fragmentado",
+        "emoji": "💔",
+        "desc": "+12% ATK/MAG, pero -8% HP máximo",
+    },
+    {
+        "id": "eternal_watch",
+        "name": "Vigilancia Eterna",
+        "emoji": "👁️",
+        "desc": "Inmune al primer debuff de control (Aturdimiento/Congelación/Silencio/Ceguera) que recibas cada combate",
+    },
 ]
 
 PASSIVE_LOOKUP = {p["id"]: p for p in ITEM_PASSIVES}
+
+MINI_AFFIXES = {
+    "furia":     {"stat": "atk", "epico": 0.03, "legendario": 0.06, "name": "De la Furia"},
+    "vacio":     {"stat": "mag", "epico": 0.03, "legendario": 0.06, "name": "Del Vacío"},
+    "bastion":   {"stat": "def", "epico": 0.03, "legendario": 0.06, "name": "Del Bastión"},
+    "vital":     {"stat": "hp",  "epico": 0.03, "legendario": 0.06, "name": "Vital"},
+    "cazador":   {"stat": "crit", "epico": 0.02, "legendario": 0.04, "name": "Del Cazador"},
+    "fantasma":  {"stat": "dodge", "epico": 0.02, "legendario": 0.04, "name": "Del Fantasma"},
+}
+
+
+def can_proc(combatant, passive_id, current_turn, icd_turns):
+    """Verifica si un proc con Cooldown Interno (ICD) puede dispararse."""
+    last = combatant.passive_icd.get(passive_id, -999)
+    return current_turn - last >= icd_turns
+
+
+def mark_proc(combatant, passive_id, current_turn):
+    """Registra el turno en que se disparó un proc para calcular su ICD."""
+    combatant.passive_icd[passive_id] = current_turn
+
 
 
 # ──────────────────────────────────────────────
@@ -380,49 +461,75 @@ _STAT_SUFFIXES = {
     "hp":  ["del Fénix", "del Titán"],
 }
 
+_PASSIVE_VARIANT_WORDS = {
+    "dodge": "Escurridizo", "vampirism": "Sediento", "second_wind": "Renacido",
+    "regen": "Vital", "fury": "Furioso", "arcane_shield": "Protegido",
+    "crit_boost": "Certero", "mana_residual": "del Éter", "parry": "del Duelista",
+    "bleed_on_hit": "Sangriento", "windfury": "del Viento", "hawk_strike": "del Halcón",
+    "deathtouch": "de la Muerte", "chain_lightning": "de la Tormenta", "stoneskin": "Pétreo",
+    "erratic_ward": "del Vacío Errante", "bloodlust_proc": "del Frenesí",
+    "blinding_edge": "Cegador", "glass_heart": "Quebrado", "eternal_watch": "Vigilante",
+}
+
+_MINI_AFFIX_WORDS = {
+    "furia": "del Berserker", "vacio": "del Vacío", "bastion": "del Guardián",
+    "vital": "del Coloso", "cazador": "del Verdugo", "fantasma": "del Espectro",
+}
+
+_WEAPON_SUBTYPE_BASE_NAMES = {
+    "daga": ["Daga", "Estoque", "Puñal"],
+    "espada": ["Espada", "Maza", "Estoque"],
+    "lanza": ["Lanza", "Alabarda", "Pica"],
+    "hacha": ["Hacha", "Hacha de guerra", "Hachuela"],
+    "baston": ["Bastón", "Cayado"],
+    "orbe": ["Orbe", "Esfera arcana"],
+    "tomo": ["Tomo", "Grimorio"],
+    "cetro": ["Cetro", "Vara real"],
+}
+
 # 6.3 — Prefijos por rareza (vacío para Común)
 _RARITY_PREFIXES = {
-    "Común":      ["", "gastado", "oxidado"],
-    "Poco Común": ["", "reforzado", "templado"],
-    "Raro":       ["", "certero", "afilado"],
-    "Épico":      ["Refulgente", "Imponente", "Sagrado"],
-    "Legendario": ["Resplandeciente", "Ancestral", "Divino"],
+    "Común":      ["", "", "gastado", "oxidado", "desgastado", "simple"],
+    "Poco Común": ["", "reforzado", "templado", "pulido", "curtido"],
+    "Raro":       ["", "certero", "afilado", "resonante", "grabado"],
+    "Épico":      ["Refulgente", "Imponente", "Sagrado", "Vengador", "Tempestuoso"],
+    "Legendario": ["Resplandeciente", "Ancestral", "Divino", "Eterno", "Inquebrantable"],
 }
 
 
-def _generate_item_name(slot, rarity_name, first_secondary_stat, material=None):
-    """Genera un nombre procedural: [Prefijo rareza] [Base slot] [Sufijo secondary].
-
-    - Común sin secundario: no lleva sufijo.
-    - Épico / Legendario: siempre llevan prefijo de rareza.
-    - Poco Común / Raro: prefijo opcional (50%).
-    """
-    if material and slot in _SLOT_BASE_NAMES_BY_MATERIAL:
+def _generate_item_name(slot, rarity_name, first_secondary_stat, material=None, passive_id=None, mini_affix_key=None, weapon_subtype=None):
+    """Genera un nombre en 4 capas."""
+    # Subvariante (base)
+    if weapon_subtype and weapon_subtype in _WEAPON_SUBTYPE_BASE_NAMES:
+        base_name = random.choice(_WEAPON_SUBTYPE_BASE_NAMES[weapon_subtype])
+    elif material and slot in _SLOT_BASE_NAMES_BY_MATERIAL:
         base_name = random.choice(_SLOT_BASE_NAMES_BY_MATERIAL[slot][material])
     else:
         base_name = random.choice(_SLOT_BASE_NAMES.get(slot, ["Objeto"]))
 
-    # Sufijo (basado en primera stat secundaria)
-    suffix = ""
-    if first_secondary_stat and first_secondary_stat in _STAT_SUFFIXES:
-        suffix = " " + random.choice(_STAT_SUFFIXES[first_secondary_stat])
+    # Variante (ligada al pasivo, si tiene)
+    variant = ""
+    if passive_id and passive_id in _PASSIVE_VARIANT_WORDS:
+        variant = " " + _PASSIVE_VARIANT_WORDS[passive_id]
+    elif not passive_id and not mini_affix_key and first_secondary_stat and first_secondary_stat in _STAT_SUFFIXES:
+        variant = " " + random.choice(_STAT_SUFFIXES[first_secondary_stat])
 
-    # Prefijo
+    # Mini afijo (solo Épico/Legendario)
+    mini_affix_word = ""
+    if mini_affix_key and mini_affix_key in _MINI_AFFIX_WORDS:
+        mini_affix_word = " " + _MINI_AFFIX_WORDS[mini_affix_key]
+
+    # Afijo (prefijo de rareza, como ya existía)
     prefix_pool = _RARITY_PREFIXES.get(rarity_name, [""])
     if rarity_name in ("Épico", "Legendario"):
-        # Siempre lleva prefijo
         prefix = random.choice(prefix_pool)
     elif rarity_name in ("Poco Común", "Raro"):
-        # 50% de probabilidad de prefijo
         prefix = random.choice(prefix_pool) if random.random() < 0.5 else ""
     else:
-        # Común: 30% de tener prefijo descriptivo
         prefix = random.choice(prefix_pool) if random.random() < 0.3 else ""
 
-    if prefix:
-        return f"{prefix} {base_name}{suffix}"
-    else:
-        return f"{base_name}{suffix}"
+    parts = [p for p in [prefix, base_name.strip() + variant, mini_affix_word.strip()] if p]
+    return " ".join(parts)
 
 
 # ──────────────────────────────────────────────
@@ -502,10 +609,19 @@ def generate_loot(player_level, ilvl=None, floor_idx=0):
     else:
         primary_stat = SLOT_PRIMARY_STAT[slot]
         
+    # Determinar subtipo de arma si corresponde
+    weapon_subtype = None
+    if slot == "Arma":
+        weapon_subtype = random.choice(["daga", "espada", "lanza", "hacha"])
+    elif slot == "Bastón mágico":
+        weapon_subtype = random.choice(["baston", "orbe", "tomo", "cetro"])
+
     is_chest = (slot == "Pecho")
 
     # Stat principal
     primary_value = _calc_primary_value(ilvl, rarity["mult"], is_chest)
+    if weapon_subtype in ("daga", "orbe"):
+        primary_value = int(primary_value * 0.92)
 
     # Stats secundarias
     sec_count = rarity["secondaries"]
@@ -516,10 +632,6 @@ def generate_loot(player_level, ilvl=None, floor_idx=0):
         sec_value = _calc_secondary_value(primary_value, sec_weight)
         secondaries.append({"stat": sec_stat, "value": sec_value})
 
-    # Nombre procedural
-    first_sec = secondaries[0]["stat"] if secondaries else None
-    name = _generate_item_name(slot, rarity["name"], first_sec, material)
-
     # Pasivos: se otorgan a partir de rareza "Raro" en adelante
     passive = None
     if rarity["name"] in ("Raro", "Épico", "Legendario"):
@@ -527,6 +639,27 @@ def generate_loot(player_level, ilvl=None, floor_idx=0):
         if slot != "Arma" or primary_stat != "atk":
             candidates = [p for p in ITEM_PASSIVES if p["id"] != "bleed_on_hit"]
         passive = random.choice(candidates).copy()
+
+    # Mini-afijos: para Épico o Legendario
+    mini_affix = None
+    if rarity["name"] in ("Épico", "Legendario"):
+        key = random.choice(list(MINI_AFFIXES.keys()))
+        tier = "epico" if rarity["name"] == "Épico" else "legendario"
+        mini_affix = {
+            "key": key,
+            "stat": MINI_AFFIXES[key]["stat"],
+            "value": MINI_AFFIXES[key][tier],
+            "name": MINI_AFFIXES[key]["name"]
+        }
+
+    # Nombre procedural
+    first_sec = secondaries[0]["stat"] if secondaries else None
+    name = _generate_item_name(
+        slot, rarity["name"], first_sec, material,
+        passive_id=passive["id"] if passive else None,
+        mini_affix_key=mini_affix["key"] if mini_affix else None,
+        weapon_subtype=weapon_subtype
+    )
 
     # Precio de venta
     sell_price = calc_sell_price(rarity["name"], ilvl)
@@ -547,6 +680,8 @@ def generate_loot(player_level, ilvl=None, floor_idx=0):
         "primary_value": primary_value,
         "secondaries": secondaries,
         "passive": passive,
+        "mini_affix": mini_affix,
+        "weapon_subtype": weapon_subtype,
         "sell_price": sell_price,
         "stats_summary": stats_summary,
         "material": material,
@@ -640,6 +775,14 @@ def calc_equipment_bonus(equipment_dict):
             else:
                 if gem["stat_target"] in bonus:
                     bonus[gem["stat_target"]] += gem["bonus_value"]
+
+        # Mini-afijo (crítico y esquiva)
+        ma_key = item.get("mini_affix_key")
+        ma_val = item.get("mini_affix_value")
+        if ma_key and ma_val is not None:
+            if ma_key in ("cazador", "fantasma"):
+                stat_target = "crit" if ma_key == "cazador" else "dodge"
+                secondary_bonus[stat_target] += ma_val
 
     return bonus, passives, secondary_bonus
 
@@ -856,6 +999,26 @@ def format_item_stats_display(item):
     if item.get("passive"):
         p = item["passive"]
         lines.append(f"{p.get('emoji', '✨')} *{p['name']}*")
+
+    # Mini-afijo
+    ma_key = None
+    ma_val = None
+    ma_name = None
+    if "mini_affix" in item and item["mini_affix"]:
+        ma_key = item["mini_affix"]["key"]
+        ma_val = item["mini_affix"]["value"]
+        ma_name = item["mini_affix"]["name"]
+    elif "mini_affix_key" in item and item["mini_affix_key"]:
+        ma_key = item["mini_affix_key"]
+        ma_val = item["mini_affix_value"]
+        ma_name = MINI_AFFIXES.get(ma_key, {}).get("name", "")
+
+    if ma_key and ma_val is not None:
+        stat_map = {"hp": "HP", "atk": "ATK", "mag": "MAG", "def": "DEF", "crit": "crítico", "dodge": "esquiva"}
+        stat_lbl = stat_map.get(MINI_AFFIXES.get(ma_key, {}).get("stat", "hp"), "")
+        val_lbl = f"+{int(round(ma_val * 100))}%"
+        lines.append(f"✨ *{ma_name} ({val_lbl} {stat_lbl})*")
+
     if item.get("gem"):
         g = item["gem"]
         val_str = f"+{int(g['bonus_value'])}" if not g["is_percentage"] else f"+{int(g['bonus_value'] * 100)}%"
