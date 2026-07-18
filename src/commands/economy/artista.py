@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -95,7 +95,7 @@ class AuctionView(discord.ui.View):
         recompensa_final = int(self.recompensa_obra * mult)
         user_id = self.user.id
         
-        resultado_nivel, has_easel = await asyncio.to_thread(
+        resultado_nivel, has_easel, has_prestige = await asyncio.to_thread(
             _finalizar_artista_db, user_id, recompensa_final, self.xp_ganada, f"subastado a {comprador}"
         )
             
@@ -107,7 +107,11 @@ class AuctionView(discord.ui.View):
         xp_ganada_final = resultado_nivel.get("xp_ganada_final", self.xp_ganada)
         pocion_msg = "\n🧪 **¡Poción de Enfoque usada!** (+50% XP)" if resultado_nivel.get("pocion_usada") else ""
         
-        easel_msg = "\n🖼️ **Caballete de Oro activo:** +10 creatividad base" if has_easel else ""
+        easel_msg = ""
+        if has_prestige:
+            easel_msg = "\n🖼️ **Caballete Divino Prestigio activo:** +20 creatividad base"
+        elif has_easel:
+            easel_msg = "\n🖼️ **Caballete de Oro activo:** +10 creatividad base"
         
         if nivel_nuevo < 10:
             progreso = xp_actual / xp_para_siguiente if xp_para_siguiente > 0 else 1
@@ -384,7 +388,7 @@ class ArtistaView(discord.ui.View):
         
         user_id = self.user.id
         
-        resultado_nivel, has_easel = await asyncio.to_thread(
+        resultado_nivel, has_easel, has_prestige = await asyncio.to_thread(
             _finalizar_artista_db, user_id, recompensa_final, xp_ganada, "Venta estándar"
         )
             
@@ -396,7 +400,11 @@ class ArtistaView(discord.ui.View):
         xp_ganada_final = resultado_nivel.get("xp_ganada_final", xp_ganada)
         pocion_msg = "\n🧪 **¡Poción de Enfoque usada!** (+50% XP)" if resultado_nivel.get("pocion_usada") else ""
         
-        easel_msg = "\n🖼️ **Caballete de Oro activo:** +10 creatividad base" if has_easel else ""
+        easel_msg = ""
+        if has_prestige:
+            easel_msg = "\n🖼️ **Caballete Divino Prestigio activo:** +20 creatividad base"
+        elif has_easel:
+            easel_msg = "\n🖼️ **Caballete de Oro activo:** +10 creatividad base"
         
         if nivel_nuevo < 10:
             progreso = xp_actual / xp_para_siguiente if xp_para_siguiente > 0 else 1
@@ -513,33 +521,33 @@ class ArtistaView(discord.ui.View):
 
 def _finalizar_artista_db(user_id, recompensa_final, xp_ganada, comprador_msg):
     if recompensa_final > 0:
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa_final)
-        registrar_transaccion(user_id, recompensa_final, f"Trabajo: Artista completado ({comprador_msg})")
+        pagar_recompensa_trabajo(user_id, recompensa_final, 'artista')
         
     resultado_nivel = add_experiencia_trabajo(user_id, 'artista', xp_ganada)
+    has_prestige = usuario_tiene_mejora(user_id, 15)
     has_easel = usuario_tiene_mejora(user_id, 8)
-    return resultado_nivel, has_easel
+    return resultado_nivel, has_easel, has_prestige
 
 def _iniciar_artista_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)
     energia_actual = get_energia(user_id)
     energia_base = 15
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
+    has_prestige_mejora = usuario_tiene_mejora(user_id, 15)
     has_mejora_8 = usuario_tiene_mejora(user_id, 8)
     
     energia_consumida = False
     if energia_actual >= energia_requerida:
         energia_consumida = consumir_energia(user_id, energia_requerida)
         
-    return nivel_info, energia_actual, energia_requerida, has_mejora_8, energia_consumida
+    return nivel_info, energia_actual, energia_requerida, has_mejora_8, has_prestige_mejora, energia_consumida
 
 async def iniciar_trabajo_artista(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de artista."""
     user_id = interaction.user.id
     tipo_trabajo = 'artista'
     
-    nivel_info, energia_actual, energia_requerida, has_mejora_8, energia_consumida = await asyncio.to_thread(_iniciar_artista_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, has_mejora_8, has_prestige_mejora, energia_consumida = await asyncio.to_thread(_iniciar_artista_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
     if energia_actual < energia_requerida or not energia_consumida:
@@ -684,7 +692,15 @@ async def iniciar_trabajo_artista(interaction: discord.Interaction):
     
     view = ArtistaView(interaction.user, obra_objetivo, recompensa_base, nivel)
     view.has_mejora_8 = has_mejora_8
-    view.creatividad_bonus = 10 if has_mejora_8 else 0
+    view.has_mejora_15 = has_prestige_mejora
+    
+    if has_prestige_mejora:
+        view.creatividad_bonus = 20
+    elif has_mejora_8:
+        view.creatividad_bonus = 10
+    else:
+        view.creatividad_bonus = 0
+        
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, view=view)
     else:

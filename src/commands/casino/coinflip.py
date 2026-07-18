@@ -218,6 +218,8 @@ class CoinflipView(discord.ui.View):
             prob_ganar += 0.03  # Mejora las probabilidades
         if await asyncio.to_thread(usuario_tiene_mejora, user_id, 3):  # Magnate
             ganancia_bonus += 0.15  # Aumenta la ganancia
+        if await asyncio.to_thread(usuario_tiene_mejora, user_id, 10):  # Corona
+            ganancia_bonus += 0.05
         # ---------------------------
         
         # Animación de lanzamiento

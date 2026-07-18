@@ -8,8 +8,9 @@ from src.db import (
     get_balance, set_balance, deduct_balance, add_balance, ensure_user,
     registrar_transaccion, record_game_result, usuario_tiene_item,
     usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora,
-    process_crash_payout_atomic
+    process_crash_payout_atomic, get_provably_fair_seeds, advance_provably_fair_nonce
 )
+from src.utils.provably_fair import get_uniform_float
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
@@ -77,11 +78,15 @@ class Crash(commands.Cog):
         # House edge base del 4% (ventaja de la casa)
         base_edge = 0.04
         # Ajustar la ventaja de la casa según la dificultad del jugador (-0.5 a 0.5)
-        # Con factor 0.06, edge varía de 0.01 a 0.07, utilizando todo el rango de dificultad sin saturar el clamp.
-        edge = base_edge + (difficulty_modifier * 0.06)
+        # Reducimos el rango de influencia de difficulty_modifier a 0.015 en vez de 0.06 (Opción A)
+        edge = base_edge + (difficulty_modifier * 0.015)
         edge = max(0.01, min(0.15, edge))
         
-        U = random.random()
+        # Migración a Provably Fair
+        seeds = await asyncio.to_thread(get_provably_fair_seeds, user_id)
+        nonce = await asyncio.to_thread(advance_provably_fair_nonce, user_id)
+        U = get_uniform_float(seeds["server_seed"], seeds["client_seed"], nonce, cursor=0)
+        
         # Evitar división por cero y evitar valores extremos en la cola,
         # pero sin comprimir en exceso la cola de multiplicadores altos.
         U_adj = min(max(U, 1e-6), 0.9999)
@@ -89,14 +94,11 @@ class Crash(commands.Cog):
         # Algoritmo clásico y justo de Crash: M = (1 - edge) / (1 - U)
         val = (1.0 - edge) / (1.0 - U_adj)
         
-        # Quitar la probabilidad de que explote en 1 (choque instantáneo)
-        if val <= 1.0:
-            val = random.uniform(1.05, 1.25)
+        # Piso absoluto de 1.00 si el cálculo da menos (no convertir en ganancia)
+        crash_point = max(1.00, round(val, 2))
             
-        crash_point = round(val, 2)
-            
-        # Asegurar límites razonables para el bot (mínimo 1.0, máximo 25.0)
-        crash_point = min(25.0, crash_point)
+        # Asegurar límites razonables para el bot (mínimo 1.0, máximo 1000.0)
+        crash_point = min(1000.0, crash_point)
         current_mult = 1.00
 
         ticket_activo = False
@@ -174,6 +176,8 @@ class CrashView(discord.ui.View):
         ganancia_bonus = 1.0
         if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
             ganancia_bonus += 0.15
+        if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 10):  # Corona
+            ganancia_bonus += 0.05
         return ganancia_bonus
 
     async def _safe_edit_or_followup(self, interaction: discord.Interaction | None, embed: discord.Embed):

@@ -3,7 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.db import ensure_user, usuario_tiene_item, usuario_tiene_mejora
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
@@ -25,7 +26,7 @@ class Slots(commands.Cog):
                 await interaction.followup.send("La apuesta debe ser mayor a 0.", ephemeral=True)
                 return
 
-            success, saldo_usuario = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+            success, saldo_usuario = await CasinoService.place_bet(user_id, apuesta, 'slots')
             if not success:
                 await interaction.followup.send("No tienes suficiente saldo para esa apuesta.", ephemeral=True)
                 return
@@ -47,6 +48,8 @@ class Slots(commands.Cog):
                 prob_bonus += 0.10
             if await asyncio.to_thread(usuario_tiene_mejora, user_id, 3):  # Magnate
                 ganancia_bonus += 0.15
+            if await asyncio.to_thread(usuario_tiene_mejora, user_id, 10):  # Corona
+                ganancia_bonus += 0.05
             # ---------------------------
 
             # Evaluar resultado natural
@@ -109,7 +112,7 @@ class Slots(commands.Cog):
                             ticket_desc = " 🎫 (Ticket x2 aplicado)"
                             if status == 'blocked_start':
                                 ticket_desc += "\n⏱️ **Has alcanzado el límite de 3 escudos diarios.** Cooldown de 24h iniciado."
-                    elif status == 'blocked':
+                    elif status == 'blocked' and time_remaining is not None:
                         hours = time_remaining // 3600
                         minutes = (time_remaining % 3600) // 60
                         ticket_desc = f"\n⚠️ **No se pudo usar tu Ticket de Slots.** Bloqueado por cooldown de escudos ({hours}h {minutes:02d}m restantes)."
@@ -122,13 +125,16 @@ class Slots(commands.Cog):
                     winnings = int(winnings * 0.65)
                     ticket_desc += "\n⚠️ **Debuff de 35% menos de dinero aplicado por protección activa.**"
                 profit = winnings - apuesta
-                
-                # add_balance is atomic, returns None, so we re-fetch balance or just calculate
-                await asyncio.to_thread(add_balance, user_id, winnings)
-                nuevo_saldo = saldo_usuario + winnings # because saldo_usuario is balance after deduction
-                
-                await asyncio.to_thread(registrar_transaccion, user_id, profit, f"Slots: {payout_desc}{ticket_desc}")
-                await asyncio.to_thread(record_game_result, user_id, 'slots', apuesta, 'win', profit, difficulty_modifier, nuevo_saldo)
+
+                winnings_total = winnings
+                nuevo_saldo = await CasinoService.settle_win(
+                    user_id,
+                    apuesta,
+                    winnings_total,
+                    'slots',
+                    difficulty_modifier,
+                    saldo_usuario
+                )
                 try:
                     await process_post_game_events(interaction, user_id, 'slots', apuesta, profit)
                 except Exception:
@@ -139,10 +145,13 @@ class Slots(commands.Cog):
                 footer = f"{payout_desc}{ticket_desc}"
                 desc = f'**[ {result_display} ]**\n\n💰 Apuesta: **{apuesta}** monedas\n🎉 Premio: **{winnings:,}** monedas\n🪙 Nuevo saldo: **{nuevo_saldo:,}** monedas'
             else:
-                # Perdió (la apuesta ya fue deducida al inicio)
-                nuevo_saldo = saldo_usuario
-                await asyncio.to_thread(registrar_transaccion, user_id, -apuesta, "Slots: sin premio")
-                await asyncio.to_thread(record_game_result, user_id, 'slots', apuesta, 'loss', 0, difficulty_modifier, nuevo_saldo)
+                nuevo_saldo = await CasinoService.settle_loss(
+                    user_id,
+                    apuesta,
+                    'slots',
+                    difficulty_modifier,
+                    saldo_usuario
+                )
                 try:
                     await process_post_game_events(interaction, user_id, 'slots', apuesta, 0)
                 except Exception:

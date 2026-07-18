@@ -3,35 +3,33 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import asyncio
-from typing import List
+from typing import List, Optional
 
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import ensure_user
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
 
-# Cálculo del multiplicador de Mines (combinatoria clásica)
 import math
+
 
 def nCr(n, r):
     if r < 0 or r > n:
         return 0
     f = math.factorial
-    return f(n) / f(r) / f(n-r)
+    return f(n) / f(r) / f(n - r)
+
 
 def calculate_multiplier(bombs: int, total_cells: int, diamonds_found: int, house_edge: float = 0.05) -> float:
-    """Calcula el multiplicador basado en la probabilidad de sacar diamantes sin tocar bombas."""
     if diamonds_found == 0:
         return 1.0
-    
-    # Probabilidad de sacar `diamonds_found` diamantes seguidos
     prob = nCr(total_cells - bombs, diamonds_found) / nCr(total_cells, diamonds_found)
-    
     if prob <= 0:
         return 0.0
-        
     multiplier = (1.0 / prob) * (1.0 - house_edge)
     return round(multiplier, 2)
+
 
 class MineButton(discord.ui.Button):
     def __init__(self, x: int, y: int, is_bomb: bool):
@@ -42,8 +40,8 @@ class MineButton(discord.ui.Button):
         self.revealed = False
 
     async def callback(self, interaction: discord.Interaction):
-        view: MinesView = self.view
-        
+        view: MinesView = self.view  # type: ignore[assignment]
+
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("¡Esta no es tu partida!", ephemeral=True)
             return
@@ -53,7 +51,7 @@ class MineButton(discord.ui.Button):
             return
 
         self.revealed = True
-        
+
         if self.is_bomb:
             view.game_over = True
             self.style = discord.ButtonStyle.danger
@@ -68,12 +66,13 @@ class MineButton(discord.ui.Button):
             view.diamonds_found += 1
             await view.update_game(interaction)
 
+
 class CashoutButton(discord.ui.Button):
     def __init__(self):
         super().__init__(style=discord.ButtonStyle.primary, label="Retirarse (Cashout)", row=4, emoji="💰")
 
     async def callback(self, interaction: discord.Interaction):
-        view: MinesView = self.view
+        view: MinesView = self.view  # type: ignore[assignment]
         if interaction.user.id != view.user_id:
             await interaction.response.send_message("¡Esta no es tu partida!", ephemeral=True)
             return
@@ -81,7 +80,7 @@ class CashoutButton(discord.ui.Button):
         if view.game_over:
             await interaction.response.send_message("Esta partida ya terminó.", ephemeral=True)
             return
-            
+
         if view.diamonds_found == 0:
             await interaction.response.send_message("Debes revelar al menos una gema antes de retirarte.", ephemeral=True)
             return
@@ -90,8 +89,9 @@ class CashoutButton(discord.ui.Button):
         await interaction.response.defer()
         await view.process_win(interaction)
 
+
 class MinesView(discord.ui.View):
-    def __init__(self, user_id: int, bet: int, bombs: int, difficulty_modifier: float, balance: int, client: discord.Client = None, channel: discord.abc.Messageable = None):
+    def __init__(self, user_id: int, bet: int, bombs: int, difficulty_modifier: float, balance: int, client: Optional[discord.Client] = None, channel: Optional[discord.abc.Messageable] = None):
         super().__init__(timeout=120)
         self.user_id = user_id
         self.bet = bet
@@ -102,17 +102,15 @@ class MinesView(discord.ui.View):
         self.channel = channel
         self.diamonds_found = 0
         self.game_over = False
-        self.total_cells = 20 # 5x4 grid
-        
+        self.total_cells = 20
+        self.message: Optional[discord.Message] = None
+
         self.generate_grid()
         self.add_item(CashoutButton())
 
     def generate_grid(self):
-        # Generar lista de bombas y diamantes
         items = [True] * self.bombs + [False] * (self.total_cells - self.bombs)
         random.shuffle(items)
-        
-        # 5 columnas, 4 filas = 20 botones
         idx = 0
         for y in range(4):
             for x in range(5):
@@ -130,7 +128,6 @@ class MinesView(discord.ui.View):
                         child.emoji = "💣"
                         child.label = ""
                     else:
-                        # Gema no descubierta
                         child.style = discord.ButtonStyle.secondary
                         child.emoji = "💎"
                         child.label = ""
@@ -141,17 +138,20 @@ class MinesView(discord.ui.View):
         if not self.game_over:
             self.game_over = True
             self.reveal_all()
-            
-            # El timeout se considera derrota
-            nuevo_saldo = self.balance
-            await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Timeout ({self.bombs} bombas)")
-            await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
-            
+            nuevo_saldo = await CasinoService.settle_loss(self.user_id, self.bet, 'mines', self.difficulty_modifier, self.balance)
+            self.balance = nuevo_saldo
+
             user_obj = None
-            if self.channel and hasattr(self.channel, 'guild') and self.channel.guild:
-                user_obj = self.channel.guild.get_member(self.user_id)
+            if self.channel and hasattr(self.channel, 'guild') and getattr(self.channel, 'guild', None):
+                try:
+                    user_obj = self.channel.guild.get_member(self.user_id)  # type: ignore[attr-defined]
+                except Exception:
+                    user_obj = None
             if not user_obj and self.client:
-                user_obj = self.client.get_user(self.user_id)
+                try:
+                    user_obj = self.client.get_user(self.user_id)
+                except Exception:
+                    user_obj = None
 
             if self.client and self.channel and user_obj:
                 class DummyInteraction:
@@ -159,34 +159,35 @@ class MinesView(discord.ui.View):
                         self.client = client
                         self.channel = channel
                         self.user = user
+                        self.message = None
 
                 dummy_inter = DummyInteraction(self.client, self.channel, user_obj)
                 try:
-                    await process_post_game_events(dummy_inter, self.user_id, 'mines', self.bet, 0)
+                    await process_post_game_events(dummy_inter, self.user_id, 'mines', self.bet, 0)  # type: ignore[arg-type]
                 except Exception:
                     pass
 
             try:
-                if hasattr(self, 'message') and self.message:
-                    embed = self.message.embeds[0]
+                if self.message:
+                    embed = self.message.embeds[0] if self.message.embeds else discord.Embed()
                     embed.color = discord.Color.dark_red()
                     embed.title = "💥 Mines - ¡Se acabó el tiempo!"
-                    embed.description = f"Tardaste demasiado en jugar y la mina explotó.\nPerdiste **{self.bet}** monedas.\nNuevo saldo: **{nuevo_saldo}**"
+                    embed.description = (
+                        f"Tardaste demasiado en jugar y la mina explotó.\n"
+                        f"Perdiste **{self.bet}** monedas.\n"
+                        f"Nuevo saldo: **{self.balance}**"
+                    )
                     await self.message.edit(embed=embed, view=self)
-            except:
+            except Exception:
                 pass
 
     async def update_game(self, interaction: discord.Interaction):
-        # Ajustar house edge según la dificultad (dificultad positiva aumenta house edge, negativa lo reduce)
         house_edge = 0.05 + (self.difficulty_modifier * 0.04)
         house_edge = max(0.01, min(0.15, house_edge))
-        
         current_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found, house_edge)
         next_multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found + 1, house_edge)
-        
         current_win = int(self.bet * current_multiplier)
-        
-        # Check if won game (all diamonds found)
+
         if self.diamonds_found == (self.total_cells - self.bombs):
             if not self.game_over:
                 self.game_over = True
@@ -194,20 +195,23 @@ class MinesView(discord.ui.View):
                 await self.process_win(interaction)
             return
 
-        embed = interaction.message.embeds[0]
+        message_ref = self.message or interaction.message
+        if not message_ref or not message_ref.embeds:
+            return
+
+        embed = message_ref.embeds[0]
         embed.description = (
             f"💰 Apuesta: **{self.bet}**\n"
             f"💣 Bombas: **{self.bombs}**\n"
             f"💎 Gemas: **{self.diamonds_found} / {self.total_cells - self.bombs}**\n\n"
-            f"Multiplicador actual: **x{current_multiplier:.2f}** (Ganancia: **{current_win}**)\n"
+            f"Multiplicador actual: **x{current_multiplier:.2f}** (Ganancia: **{current_win}** )\n"
             f"Próximo multiplicador: **x{next_multiplier:.2f}**"
         )
-        
-        # Update cashout button text
+
         for child in self.children:
             if isinstance(child, CashoutButton):
                 child.label = f"Retirarse ({current_win})"
-                
+
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=self)
         else:
@@ -216,16 +220,15 @@ class MinesView(discord.ui.View):
     async def process_loss(self, interaction: discord.Interaction):
         self.game_over = True
         self.reveal_all()
-        
-        nuevo_saldo = self.balance
-        await asyncio.to_thread(registrar_transaccion, self.user_id, -self.bet, f"Mines: Perdida ({self.bombs} bombas)")
-        await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'loss', 0, self.difficulty_modifier, nuevo_saldo)
+        nuevo_saldo = await CasinoService.settle_loss(self.user_id, self.bet, 'mines', self.difficulty_modifier, self.balance)
+        self.balance = nuevo_saldo
         try:
             await process_post_game_events(interaction, self.user_id, 'mines', self.bet, 0)
         except Exception:
-            raise
+            pass
 
-        embed = interaction.message.embeds[0]
+        message_ref = interaction.message or self.message
+        embed = message_ref.embeds[0] if message_ref and message_ref.embeds else discord.Embed()
         embed.color = discord.Color.red()
         embed.title = "💥 Mines - ¡BBOOM!"
         embed.description = (
@@ -234,72 +237,66 @@ class MinesView(discord.ui.View):
             f"💣 Bombas: **{self.bombs}**\n"
             f"💎 Gemas encontradas: **{self.diamonds_found}**\n\n"
             f"Perdiste **{self.bet}** monedas.\n"
-            f"Nuevo saldo: **{nuevo_saldo}**"
+            f"Nuevo saldo: **{self.balance}**"
         )
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=self)
         else:
             await interaction.response.edit_message(embed=embed, view=self)
-        
-        # Castigo para administradores
+
         if isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator:
             from datetime import timedelta
-            # Filtrar solo los roles que dan permisos de administrador explícitamente
             admin_roles = [role for role in interaction.user.roles if role.permissions.administrator and not role.is_default()]
-            
             try:
-                # Quitar roles de admin
                 if admin_roles:
                     await interaction.user.remove_roles(*admin_roles, reason="Perdió en las minas y explotó (Castigo de Admin)")
-                
-                # Mutear (Timeout) por 60 segundos
                 await interaction.user.timeout(timedelta(seconds=60), reason="Perdió en las minas (Castigo de Admin)")
-                
-                punish_embed = discord.Embed(
-                    title="⚠️ ¡ADMINISTRADOR CAÍDO!",
-                    description=f"¡BOOM! A {interaction.user.mention} le explotó la mina en la cara.\nPor su incompetencia, ha perdido sus poderes de administrador y ha sido silenciado por 1 minuto. 🤫💣",
-                    color=discord.Color.dark_red()
-                )
-                await interaction.channel.send(embed=punish_embed)
-                
-                # Tarea para devolver los roles
-                async def restore_roles(member, roles):
+                if isinstance(interaction.channel, discord.abc.Messageable):
+                    punish_embed = discord.Embed(
+                        title="⚠️ ¡ADMINISTRADOR CAÍDO!",
+                        description=(
+                            f"¡BOOM! A {interaction.user.mention} le explotó la mina en la cara.\n"
+                            f"Por su incompetencia, ha perdido sus poderes de administrador y ha sido silenciado por 1 minuto. 🤫💣"
+                        ),
+                        color=discord.Color.dark_red()
+                    )
+                    await interaction.channel.send(embed=punish_embed)
+
+                async def restore_roles(member: discord.Member, roles: List[discord.Role]):
                     await asyncio.sleep(60)
                     try:
                         await member.add_roles(*roles, reason="Castigo de minas terminado")
-                        await interaction.channel.send(f"✅ El castigo de {member.mention} ha terminado. Se le han devuelto sus poderes de administrador.")
+                        if isinstance(interaction.channel, discord.abc.Messageable):
+                            await interaction.channel.send(
+                                f"✅ El castigo de {member.mention} ha terminado. Se le han devuelto sus poderes de administrador."
+                            )
                     except discord.Forbidden:
                         pass
-                
+
                 if admin_roles:
                     interaction.client.loop.create_task(restore_roles(interaction.user, admin_roles))
-                    
+
             except discord.Forbidden:
-                # El bot no tiene permisos suficientes para castigar a este usuario (es el dueño o tiene rol más alto)
                 pass
 
     async def process_win(self, interaction: discord.Interaction):
         self.game_over = True
         self.reveal_all()
-        
-        # Ajustar house edge según la dificultad
         house_edge = 0.05 + (self.difficulty_modifier * 0.04)
         house_edge = max(0.01, min(0.15, house_edge))
-        
         multiplier = calculate_multiplier(self.bombs, self.total_cells, self.diamonds_found, house_edge)
         winnings = int(self.bet * multiplier)
         profit = winnings - self.bet
-        
-        nuevo_saldo = self.balance + winnings
-        await asyncio.to_thread(add_balance, self.user_id, winnings)
-        await asyncio.to_thread(registrar_transaccion, self.user_id, profit, f"Mines: Retiro x{multiplier:.2f} ({self.bombs} bombas)")
-        await asyncio.to_thread(record_game_result, self.user_id, 'mines', self.bet, 'win', profit, self.difficulty_modifier, nuevo_saldo)
+
+        nuevo_saldo = await CasinoService.settle_win(self.user_id, self.bet, winnings, 'mines', self.difficulty_modifier, self.balance)
+        self.balance = nuevo_saldo
         try:
             await process_post_game_events(interaction, self.user_id, 'mines', self.bet, profit)
         except Exception:
-            raise
+            pass
 
-        embed = interaction.message.embeds[0]
+        message_ref = interaction.message or self.message
+        embed = message_ref.embeds[0] if message_ref and message_ref.embeds else discord.Embed()
         embed.color = discord.Color.green()
         embed.title = "✅ Mines - ¡Retirada Exitosa!"
         embed.description = (
@@ -311,11 +308,11 @@ class MinesView(discord.ui.View):
             f"Ganaste **{winnings}** monedas (Beneficio: **+{profit}**).\n"
             f"Nuevo saldo: **{nuevo_saldo}**"
         )
-        
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=self)
         else:
             await interaction.response.edit_message(embed=embed, view=self)
+
 
 class MinesSetupView(discord.ui.View):
     def __init__(self, user_id: int, apuesta: int, user_name: str):
@@ -324,16 +321,17 @@ class MinesSetupView(discord.ui.View):
         self.apuesta = apuesta
         self.user_name = user_name
         self.bombas = 3
-        
+        self.message: Optional[discord.Message] = None
+
         options = []
         for i in range(1, 20):
             mult = calculate_multiplier(i, 20, 1)
-            options.append(discord.SelectOption(label=f"{i} Bombas", description=f"Primer multiplicador: x{mult:.2f}", value=str(i), default=(i==3)))
-            
+            options.append(discord.SelectOption(label=f"{i} Bombas", description=f"Primer multiplicador: x{mult:.2f}", value=str(i), default=(i == 3)))
+
         self.select_bombas = discord.ui.Select(placeholder="Selecciona la cantidad de bombas...", options=options)
         self.select_bombas.callback = self.select_callback
         self.add_item(self.select_bombas)
-        
+
         self.btn_start = discord.ui.Button(label="Comenzar Juego", style=discord.ButtonStyle.success)
         self.btn_start.callback = self.start_callback
         self.add_item(self.btn_start)
@@ -342,40 +340,48 @@ class MinesSetupView(discord.ui.View):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Esta no es tu partida.", ephemeral=True)
             return
-            
+
         self.bombas = int(self.select_bombas.values[0])
         for opt in self.select_bombas.options:
             opt.default = (opt.value == str(self.bombas))
-            
+
         mult = calculate_multiplier(self.bombas, 20, 1)
-        embed = interaction.message.embeds[0]
+        message_ref = interaction.message or self.message
+        embed = message_ref.embeds[0] if message_ref and message_ref.embeds else discord.Embed()
         embed.description = (
             f"💰 Apuesta: **{self.apuesta}**\n"
             f"💣 Bombas seleccionadas: **{self.bombas}**\n\n"
             f"Multiplicador al primer acierto: **x{mult:.2f}**\n"
             "A mayor cantidad de bombas, mayor el riesgo y las ganancias."
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except Exception:
+            pass
 
     async def start_callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Esta no es tu partida.", ephemeral=True)
             return
-            
+
         await interaction.response.defer()
-        
+
         await asyncio.to_thread(ensure_user, self.user_id, self.user_name)
-        success, saldo_usuario = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
+        success, saldo_usuario = await CasinoService.place_bet(self.user_id, self.apuesta, 'mines')
         if not success:
             await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
-            
-        difficulty_modifier, explanation = await asyncio.to_thread(
+
+        difficulty_modifier, _ = await asyncio.to_thread(
             DynamicDifficulty.calculate_dynamic_difficulty, self.user_id, self.apuesta, 'mines'
         )
 
-        view = MinesView(self.user_id, self.apuesta, self.bombas, difficulty_modifier, saldo_usuario, client=interaction.client, channel=interaction.channel)
-        
+        channel_arg = interaction.channel if isinstance(interaction.channel, discord.abc.Messageable) else None
+        view = MinesView(self.user_id, self.apuesta, self.bombas, difficulty_modifier, saldo_usuario, client=interaction.client, channel=channel_arg)
+
         embed = discord.Embed(
             title="💣 Buscaminas",
             description=(
@@ -387,39 +393,42 @@ class MinesSetupView(discord.ui.View):
             ),
             color=discord.Color.blue()
         )
-        
-        view.message = await interaction.edit_original_response(embed=embed, view=view)
+
+        self.message = await interaction.edit_original_response(embed=embed, view=view)
+        view.message = self.message
 
     async def on_timeout(self):
         for item in self.children:
-            item.disabled = True
+            try:
+                item.disabled = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
         try:
-            if hasattr(self, 'message') and self.message:
+            if self.message:
                 await self.message.edit(view=self)
-        except:
-            raise
+        except Exception:
+            pass
+
 
 class Mines(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @app_commands.command(name="mines", description="Juega al Buscaminas. Encuentra diamantes y evita las bombas.")
-    @app_commands.describe(
-        apuesta="Cantidad a apostar"
-    )
+    @app_commands.describe(apuesta="Cantidad a apostar")
     @CASINO_COOLDOWN
     async def mines(self, interaction: discord.Interaction, apuesta: int):
         user_id = interaction.user.id
         user_name = interaction.user.name
-        
+
         if apuesta <= 0:
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
-            
+
         await interaction.response.defer()
-        
+
         view = MinesSetupView(user_id, apuesta, user_name)
-        
+
         embed = discord.Embed(
             title="💣 Configuración de Buscaminas",
             description=(
@@ -430,8 +439,9 @@ class Mines(commands.Cog):
             ),
             color=discord.Color.blue()
         )
-        
-        view.message = await interaction.followup.send(embed=embed, view=view)
+
+        await interaction.followup.send(embed=embed, view=view)
+
 
 async def setup(bot):
     await bot.add_cog(Mines(bot))

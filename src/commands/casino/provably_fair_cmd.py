@@ -25,13 +25,25 @@ class ProvablyFair(commands.Cog):
             ),
             color=discord.Color.blue()
         )
-        
+
         embed.add_field(
             name="🔒 Semillas Actuales (Activas)",
             value=(
                 f"**Hash del Servidor (Oculto):**\n`{server_hash}`\n"
                 f"**Tu Semilla de Cliente:**\n`{client_seed}`\n"
                 f"**Nonce (Jugadas):** `{nonce}`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚖️ Sistema de Dificultad Dinámica",
+            value=(
+                "Además de la generación criptográfica del resultado, el casino ajusta tus probabilidades base "
+                "según tu historial reciente (rachas, tasa de victorias, ganancias acumuladas). Esto es independiente "
+                "de la tirada en sí: una vez fijadas tus probabilidades, el resultado sigue siendo 100% verificable con "
+                "el esquema de semillas arriba.\n\n"
+                "Usa `/stats` para ver tu nivel de ajuste actual."
             ),
             inline=False
         )

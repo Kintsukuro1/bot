@@ -185,5 +185,66 @@ class TestCrashTicket(unittest.IsolatedAsyncioTestCase):
             "Crash: completó sin explotar x2.50" # desc_transaccion
         )
 
+class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
+    
+    @patch('src.commands.casino.crash.get_provably_fair_seeds')
+    @patch('src.commands.casino.crash.advance_provably_fair_nonce')
+    @patch('src.commands.casino.crash.get_uniform_float')
+    @patch('src.commands.casino.crash.ensure_user')
+    @patch('src.commands.casino.crash.deduct_balance')
+    @patch('src.commands.casino.crash.DynamicDifficulty.calculate_dynamic_difficulty')
+    @patch('src.commands.casino.crash.usuario_tiene_item')
+    @patch('src.commands.casino.crash.CrashView')
+    async def test_crash_game_generation_math(
+        self, mock_crash_view, mock_tiene_item, mock_calc_diff, 
+        mock_deduct, mock_ensure, mock_get_uniform, mock_advance_nonce, mock_get_seeds
+    ):
+        from src.commands.casino.crash import Crash
+        from unittest.mock import AsyncMock
+        
+        # Mocks setup
+        mock_get_seeds.return_value = {"server_seed": "server", "client_seed": "client", "nonce": 5}
+        mock_advance_nonce.return_value = 6
+        mock_ensure.return_value = None
+        mock_deduct.return_value = (True, 9000)
+        mock_calc_diff.return_value = (0.0, "normal") # difficulty modifier = 0.0 => edge = 0.04
+        mock_tiene_item.return_value = False
+        
+        # We will mock the Cog and interaction
+        bot = MagicMock()
+        cog = Crash(bot)
+        
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.user.name = "TestUser"
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        
+        mock_crash_view.return_value.run_crash = AsyncMock()
+        
+        # Test Case 1: U = 0.01 (which is <= edge, so val <= 1.0, should floor to 1.00)
+        mock_get_uniform.return_value = 0.01
+        await cog._crash_game(interaction, 1000, is_slash=True)
+        
+        # Verify CrashView was instantiated with crash_point = 1.00
+        mock_crash_view.assert_called_with(
+            interaction, interaction.user, 1000, 9000, 1.00, 0.0, "normal", False
+        )
+        
+        # Test Case 2: U = 0.5 (val = 0.96 / 0.5 = 1.92, crash_point should be 1.92)
+        mock_get_uniform.return_value = 0.5
+        await cog._crash_game(interaction, 1000, is_slash=True)
+        mock_crash_view.assert_called_with(
+            interaction, interaction.user, 1000, 9000, 1.92, 0.0, "normal", False
+        )
+
+        # Test Case 3: U = 0.9999 (val = 0.96 / 0.0001 = 9600.0, crash_point should cap at 1000.00)
+        mock_get_uniform.return_value = 0.9999
+        await cog._crash_game(interaction, 1000, is_slash=True)
+        mock_crash_view.assert_called_with(
+            interaction, interaction.user, 1000, 9000, 1000.00, 0.0, "normal", False
+        )
+
 if __name__ == '__main__':
     unittest.main()

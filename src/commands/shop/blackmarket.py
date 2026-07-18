@@ -59,19 +59,44 @@ class BlackMarket(commands.Cog):
 
     @app_commands.command(name="blackmarket", description="Muestra las mejoras permanentes del mercado negro.")
     async def blackmarket(self, interaction: discord.Interaction):
-        items = BLACK_MARKET
+        user_id = interaction.user.id
+        from src.db import get_user_prestige_level
+        prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
+
         embed = discord.Embed(
             title="🕶️ Black Market (Mejoras Permanentes)",
             description="Mejoras exclusivas para los más arriesgados.",
             color=discord.Color.dark_purple()
         )
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3062/3062634.png")
-        for item in items:
+
+        # Filtrar ítems visibles (prestige_required <= prestige_level)
+        visible_items = [item for item in BLACK_MARKET if item.get("prestige_required", 0) <= prestige_level]
+
+        # Separar en normales y exclusivos
+        normal_items = [item for item in visible_items if item.get("prestige_required", 0) < 2]
+        prestige_items = [item for item in visible_items if item.get("prestige_required", 0) >= 2]
+
+        for item in normal_items:
             embed.add_field(
                 name=f"{item['nombre']} — {item['precio']} 🪙",
                 value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
                 inline=False
             )
+
+        if prestige_items:
+            embed.add_field(
+                name="───────────────────",
+                value="🌟 **EXCLUSIVO PRESTIGIO II** 🌟",
+                inline=False
+            )
+            for item in prestige_items:
+                embed.add_field(
+                    name=f"{item['nombre']} — {item['precio']} 🪙",
+                    value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
+                    inline=False
+                )
+
         embed.set_footer(text="Usa /comprar_mejora <ID> para adquirir una mejora permanente.")
         await interaction.response.send_message(embed=embed)
 

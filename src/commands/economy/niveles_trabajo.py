@@ -6,7 +6,7 @@ añadiendo niveles de trabajo que aumentan las recompensas y capacidades.
 
 import discord
 from datetime import datetime
-from src.db import get_connection
+from src.db import get_connection, get_user_prestige_level
 from src.utils.pets_logic import get_pet_energy_discount
 
 # Constantes para el sistema de niveles
@@ -534,8 +534,9 @@ def calcular_energia_requerida(energia_base, user_id, tipo_trabajo):
     """
     bonificaciones = calcular_bonificaciones(user_id, tipo_trabajo)
     energia_reduccion = bonificaciones["energia_reduccion"]
-    
-    energia_requerida = int(energia_base * (1 - energia_reduccion) * get_pet_energy_discount(user_id))
+
+    prestige_discount = 0.95 if get_user_prestige_level(user_id) >= 1 else 1.0
+    energia_requerida = int(energia_base * (1 - energia_reduccion) * get_pet_energy_discount(user_id) * prestige_discount)
     return max(energia_requerida, 1)  # Mínimo 1 de energía
 
 def calcular_recompensa(recompensa_base, user_id, tipo_trabajo):

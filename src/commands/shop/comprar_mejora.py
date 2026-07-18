@@ -10,6 +10,13 @@ from src.db import (
 
 def _procesar_compra_mejora(user_id, user_name, item):
     ensure_user(user_id, user_name)
+    
+    # Verificar gate de prestigio
+    prestige_required = item.get("prestige_required", 0)
+    from src.db import get_user_prestige_level
+    if get_user_prestige_level(user_id) < prestige_required:
+        return "prestige_required", 0
+
     balance = get_balance(user_id)
 
     if balance < item["precio"]:
@@ -45,6 +52,10 @@ class ComprarMejora(commands.Cog):
         status, _balance = await asyncio.to_thread(
             _procesar_compra_mejora, user_id, user_name, item
         )
+
+        if status == "prestige_required":
+            await interaction.response.send_message(f"❌ Requieres Nivel de Prestigio {item['prestige_required']} para comprar esta mejora.", ephemeral=True)
+            return
 
         if status == "no_balance":
             await interaction.response.send_message("❌ No tienes suficiente saldo para comprar esta mejora.", ephemeral=True)

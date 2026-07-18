@@ -8,7 +8,7 @@ import os
 from datetime import datetime, time, timedelta
 from typing import Optional
 from src.services.lottery_service import LotteryService
-from src.db import ensure_user, get_balance, get_active_tickets
+from src.db import ensure_user, get_balance, get_active_tickets, get_user_prestige_level
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 logger = logging.getLogger(__name__)
@@ -59,12 +59,17 @@ class Loto(commands.Cog):
     @app_commands.command(name="loto", description="Muestra el pozo acumulado del loto del casino y tus boletos comprados hoy.")
     async def loto(self, interaction: discord.Interaction):
         await interaction.response.defer()
+
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
         state = await LotteryService.get_state()
         pool = state['pool']
         next_draw = state['next_draw']
+        
+        # Límite dinámico según Prestigio
+        prestige_lvl = await asyncio.to_thread(get_user_prestige_level, user_id)
+        ticket_limit = 6 if prestige_lvl >= 1 else 5
         
         # Obtener boletos activos del usuario
         tickets = await asyncio.to_thread(get_active_tickets)
@@ -80,20 +85,23 @@ class Loto(commands.Cog):
         next_draw_str = "Hoy a medianoche"
         if next_draw:
             next_draw_str = next_draw.strftime("%d/%m/%Y a las 00:00")
-            
+
+        prestige_note = " *(+1 por Prestigio 🌟)*" if prestige_lvl >= 1 else ""
         embed.description = (
             f"💰 **Pozo Acumulado Actual:** `{pool:,}` monedas\n"
             f"📅 **Próximo Sorteo:** `{next_draw_str}`\n"
             f"🎟️ **Precio del Boleto:** `500` monedas\n"
-            f"⚠️ **Límite diario:** `5` boletos por usuario"
+
+            f"⚠️ **Límite diario:** `{ticket_limit}` boletos por usuario{prestige_note}"
         )
         
         # Mostrar boletos del usuario
         if user_tickets:
             tickets_list = "\n".join(f"🎫 Boleto: `[{t.replace(',', ', ')}]`" for t in user_tickets)
-            embed.add_field(name=f"Tus Boletos Hoy ({len(user_tickets)}/5)", value=tickets_list, inline=False)
+            embed.add_field(name=f"Tus Boletos Hoy ({len(user_tickets)}/{ticket_limit})", value=tickets_list, inline=False)
         else:
-            embed.add_field(name="Tus Boletos Hoy (0/5)", value="No tienes boletos para el sorteo de hoy.\n¡Usa `/loto_comprar` para participar!", inline=False)
+            embed.add_field(name=f"Tus Boletos Hoy (0/{ticket_limit})", value="No tienes boletos para el sorteo de hoy.\n¡Usa `/loto_comprar` para participar!", inline=False)
+
             
         embed.add_field(
             name="🏆 Tabla de Premios", 
@@ -129,10 +137,14 @@ class Loto(commands.Cog):
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
+        # Límite dinámico: Prestigio I permite 6 boletos en vez de 5
+        prestige_lvl = await asyncio.to_thread(get_user_prestige_level, user_id)
+        ticket_limit = 6 if prestige_lvl >= 1 else 5
+        
         # Validar si el usuario ya tiene el límite de boletos antes de procesar
         current_count = await LotteryService.get_user_tickets(user_id)
-        if current_count >= 5:
-            await interaction.followup.send("❌ Ya has alcanzado el límite de 5 boletos de loto para hoy.", ephemeral=True)
+        if current_count >= ticket_limit:
+            await interaction.followup.send(f"❌ Ya has alcanzado el límite de {ticket_limit} boletos de loto para hoy.", ephemeral=True)
             return
 
         # Colectar los números ingresados

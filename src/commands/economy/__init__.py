@@ -1,5 +1,5 @@
 
-__all__ = ['plata', 'trabajo', 'energia', 'artista', 'chef', 'hacker', 'mecanico']
+__all__ = ['plata', 'trabajo', 'energia', 'artista', 'chef', 'hacker', 'mecanico', 'banco', 'prestigio']
 
 # Esta función permite cargar todos los cogs del módulo de una vez
 async def setup(bot):
@@ -38,3 +38,25 @@ async def setup(bot):
         print("Economy energia cog loaded successfully")
     except Exception as e:
         print(f"Error loading economy energia cog: {e}")
+
+    from .banco import setup as setup_banco
+    try:
+        await setup_banco(bot)
+        print("Banco Central cog loaded successfully")
+    except Exception as e:
+        print(f"Error loading Banco Central cog: {e}")
+
+    from .prestigio import setup as setup_prestigio
+    try:
+        await setup_prestigio(bot)
+        print("Prestigio cog loaded successfully")
+    except Exception as e:
+        print(f"Error loading Prestigio cog: {e}")
+
+    from .flex import setup as setup_flex
+    try:
+        await setup_flex(bot)
+        print("Flex cog loaded successfully")
+    except Exception as e:
+        print(f"Error loading Flex cog: {e}")
+

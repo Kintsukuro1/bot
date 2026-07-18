@@ -2,7 +2,7 @@ import discord
 import asyncio
 import random
 import time
-from src.db import get_balance, set_balance, registrar_transaccion, deduct_balance
+from src.db import get_balance, set_balance, registrar_transaccion, deduct_balance, pagar_recompensa_trabajo
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 from .job_fx import fase_previa_trabajo
@@ -252,8 +252,7 @@ async def iniciar_trabajo_ladron(interaction: discord.Interaction):
     if hack_view.input_recibido == respuesta_correcta:
         # ÉXITO
         recompensa = int(recompensa_base * multiplicador_pago)
-        set_balance(user_id, get_balance(user_id) + recompensa)
-        registrar_transaccion(user_id, recompensa, "Atraco al Banco (Éxito)")
+        await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa, tipo_trabajo)
         add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
         
         embed_final = discord.Embed(

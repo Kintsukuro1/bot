@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 from src.services import UserService, LeaderboardService
+from src.utils.prestige_config import format_username_with_prestige
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class Top(commands.Cog):
                 nombre = db_username
             else:
                 nombre = f"Usuario {db_user_id}"
-                
+            nombre = format_username_with_prestige(db_user_id, nombre)
             top_list.append((nombre, balance))
                 
         if not top_list:
@@ -114,7 +115,7 @@ class Top(commands.Cog):
                 nombre = db_username
             else:
                 nombre = f"Usuario {db_user_id}"
-                
+            nombre = format_username_with_prestige(db_user_id, nombre)
             top_list.append((nombre, minas_pisadas))
                 
         if not top_list:

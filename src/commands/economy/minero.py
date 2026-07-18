@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use, consumir_energia, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -79,9 +79,13 @@ class MineroView(discord.ui.View):
             
         # Calcular daño de estabilidad y mineral extraído
         daño = int(tunel["estabilidad_daño"] * random.uniform(0.85, 1.15))
-        has_mejora = await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 4)
-        if has_mejora:
-            daño = int(daño * 0.80)
+        has_prestige_mejora = await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 11)
+        if has_prestige_mejora:
+            daño = int(daño * 0.60)
+        else:
+            has_mejora = await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 4)
+            if has_mejora:
+                daño = int(daño * 0.80)
         self.estabilidad = max(0, self.estabilidad - daño)
         
         if self.estabilidad <= 0:
@@ -188,8 +192,13 @@ class MineroView(discord.ui.View):
             status = f"{nombre}: {val} u." if val > 0 else f"{nombre}: 🚫 vacío"
             minerales_status.append(status)
             
+        has_prestige_wolf = await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 11)
         has_wolf = await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 4)
-        wolf_msg = " (Pico de Wolframio activo ⛏️)" if has_wolf else ""
+        wolf_msg = ""
+        if has_prestige_wolf:
+            wolf_msg = " (Pico de Wolframio Prestigio activo ⛏️🌟)"
+        elif has_wolf:
+            wolf_msg = " (Pico de Wolframio activo ⛏️)"
         
         embed = discord.Embed(
             title="⛏️ Trabajo: Minero",
@@ -304,9 +313,7 @@ class MineroView(discord.ui.View):
 def _completar_minero_db(user_id, tipo_trabajo, recompensa_base, mineral_acumulado):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
     recompensa_final = int(mineral_acumulado * 1.2 * (recompensa_base_con_nivel / 300))
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, "Trabajo: Minería completada")
+    pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
     xp_ganada = int(mineral_acumulado * 0.4) + 10
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     return recompensa_final, resultado_nivel

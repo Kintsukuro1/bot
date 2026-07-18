@@ -1,7 +1,7 @@
 import discord
 import asyncio
 import random
-from src.db import get_balance, set_balance, registrar_transaccion
+from src.db import get_balance, set_balance, registrar_transaccion, pagar_recompensa_trabajo
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header, TIPOS_TRABAJO
 from .job_fx import tal_vez_cliente_especial
@@ -188,8 +188,7 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
             multiplicador = 1.5 if tiene_red else 1.2
             recompensa = int(recompensa_base * multiplicador)
             
-            set_balance(user_id, get_balance(user_id) + recompensa)
-            registrar_transaccion(user_id, recompensa, "Cazarrecompensas (Captura Viva)")
+            await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa, tipo_trabajo)
             add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
             
             embed_final = discord.Embed(
@@ -206,8 +205,7 @@ async def iniciar_trabajo_cazarrecompensas(interaction: discord.Interaction):
             recompensa_parcial = int(recompensa_base * 0.4)
             xp_parcial = int(xp_ganada * 0.5)
             
-            set_balance(user_id, get_balance(user_id) + recompensa_parcial)
-            registrar_transaccion(user_id, recompensa_parcial, "Cazarrecompensas (Venta de Información)")
+            await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa_parcial, tipo_trabajo)
             add_experiencia_trabajo(user_id, tipo_trabajo, xp_parcial)
             
             embed_final = discord.Embed(

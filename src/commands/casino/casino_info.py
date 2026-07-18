@@ -73,8 +73,8 @@ class CasinoInfo(commands.Cog):
             value="Crea una sala de Ruleta Rusa de hasta 6 jugadores. Puedes apuntar a otros (si fallas mueres tú), girar el cargador o agregar balas para subir la apuesta. Sobrevive para ganar el pozo.",
             inline=False
         )
-        
-        embed.set_footer(text="Usa los comandos para jugar y que la suerte esté de tu lado.")
+
+        embed.set_footer(text="Usa /provably_fair y /stats para conocer cómo se calculan y ajustan tus probabilidades.")
         embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild and interaction.guild.icon else None)
 
         await interaction.response.send_message(embed=embed)

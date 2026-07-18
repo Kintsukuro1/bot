@@ -145,7 +145,7 @@ class DifficultyStats(commands.Cog):
             
             # Último juego
             if stats['last_game']:
-                embed.set_footer(text=f"Último juego: {stats['last_game'].strftime('%d/%m/%Y %H:%M')}")
+                embed.set_footer(text=f"Último juego: {stats['last_game'].strftime('%d/%m/%Y %H:%M')} · Usa /provably_fair para ver el esquema criptográfico")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
