@@ -24,6 +24,7 @@ from src.db import (
     get_combat_wallet, add_combat_currency, get_gem_catalog, insert_gem, remove_gem,
     get_consumable_catalog, buy_consumable, get_user_consumables, use_consumable,
 )
+from src.utils.prestige_config import format_username_with_prestige
 from src.utils.combat_progression import (
     calc_base_stats, calc_duel_xp, get_duel_cooldown_minutes,
     calc_attack_damage, calc_special_damage, calc_defend_heal,
@@ -3607,6 +3608,7 @@ class DuelsCog(commands.Cog):
                 name = member.display_name if member else f"User {user_id}"
             except Exception:
                 name = f"User {user_id}"
+            name = format_username_with_prestige(user_id, name)
 
             total = wins + losses
             wr = (wins / total * 100) if total > 0 else 0

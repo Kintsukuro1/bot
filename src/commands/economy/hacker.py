@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia_atomico
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia_atomico, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -57,6 +57,7 @@ class HackerView(discord.ui.View):
         self.inyeccion_usada = False
         self.escaneo_usado = False
         self.has_mejora_6 = False
+        self.has_mejora_13 = False
         
         # Remover botones si no se cumple el nivel requerido
         if self.nivel < 5:
@@ -108,8 +109,11 @@ class HackerView(discord.ui.View):
         if posiciones_disponibles:
             pos = posiciones_disponibles[0]
             
-            # Chance de éxito: 95% si bypass está activo, de lo contrario 70% (80% con Procesador Cuántico)
-            base_chance = 0.80 if self.has_mejora_6 else 0.70
+            # Chance de éxito: 95% si bypass está activo, de lo contrario 70% (80% con Procesador Cuántico, 90% con Procesador Cuántico Prestigio)
+            if self.has_mejora_13:
+                base_chance = 0.90
+            else:
+                base_chance = 0.80 if self.has_mejora_6 else 0.70
             exito_chance = 0.95 if self.bypass_activo else base_chance
             self.bypass_activo = False  # Resetear bypass
             
@@ -209,9 +213,14 @@ class HackerView(discord.ui.View):
             color=discord.Color.blue()
         )
         
+        has_quant_prestige = self.has_mejora_13 if hasattr(self, 'has_mejora_13') else False
         has_quant = self.has_mejora_6
-        hack_pct = "80%" if has_quant else "70%"
-        quant_bonus = " (Procesador Cuántico activo ⚙️)" if has_quant else ""
+        hack_pct = "90%" if has_quant_prestige else ("80%" if has_quant else "70%")
+        quant_bonus = ""
+        if has_quant_prestige:
+            quant_bonus = " (Procesador Cuántico Prestigio activo ⚙️🌟)"
+        elif has_quant:
+            quant_bonus = " (Procesador Cuántico activo ⚙️)"
         controles_txt = (
             "🔍 **Escanear:** Revela 1-2 dígitos aleatorios (1 uso)\n"
             f"💻 **Hackear:** Intenta descifrar el siguiente dígito ({hack_pct} éxito){quant_bonus}\n"
@@ -363,9 +372,7 @@ class CodigoModal(discord.ui.Modal, title="🎯 Adivinar Código"):
 def _completar_hacker_db(user_id, tipo_trabajo, recompensa_base, bonus_eficiencia, xp_ganada):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
     recompensa_final = int(recompensa_base_con_nivel * bonus_eficiencia)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, "Trabajo: Hacker completado")
+    pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     return recompensa_final, resultado_nivel
 
@@ -374,6 +381,7 @@ def _iniciar_hacker_db(user_id, tipo_trabajo):
     energia_actual = get_energia(user_id)
     energia_base = 25
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
+    has_prestige_mejora = usuario_tiene_mejora(user_id, 13)
     has_mejora = usuario_tiene_mejora(user_id, 6)
     
     energia_consumida = False
@@ -383,14 +391,14 @@ def _iniciar_hacker_db(user_id, tipo_trabajo):
     bonificacion_recompensa = calcular_recompensa(1, user_id, tipo_trabajo) - 1
     bonificacion_energia = calcular_energia_requerida(100, user_id, tipo_trabajo) / 100
         
-    return nivel_info, energia_actual, energia_requerida, has_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida
+    return nivel_info, energia_actual, energia_requerida, has_mejora, has_prestige_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida
 
 async def iniciar_trabajo_hacker(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de hacker."""
     user_id = interaction.user.id
     tipo_trabajo = 'hacker'
     
-    nivel_info, energia_actual, energia_requerida, has_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida = await asyncio.to_thread(_iniciar_hacker_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, has_mejora, has_prestige_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida = await asyncio.to_thread(_iniciar_hacker_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
     if energia_actual < energia_requerida or not energia_consumida:
@@ -398,7 +406,7 @@ async def iniciar_trabajo_hacker(interaction: discord.Interaction):
             title="⚡ Sin Energía",
             description=(
                 f"❌ No tienes suficiente energía para trabajar (o alguien más la consumió justo antes).\n"
-                f"🔋 **Energía actual:** {energia_actual}/100\n"
+                f"🔋 **Organización actual:** {energia_actual}/100\n"
                 f"⚡ **Energía requerida:** {energia_requerida}\n\n"
                 f"💡 *La energía se recarga automáticamente*"
             ),
@@ -464,6 +472,7 @@ async def iniciar_trabajo_hacker(interaction: discord.Interaction):
     
     view = HackerView(interaction.user, codigo_secreto, recompensa_base, nivel)
     view.has_mejora_6 = has_mejora
+    view.has_mejora_13 = has_prestige_mejora
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, view=view)
     else:

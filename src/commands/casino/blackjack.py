@@ -181,6 +181,8 @@ class BlackjackView(discord.ui.View):
         from src.db import usuario_tiene_mejora
         if await asyncio.to_thread(usuario_tiene_mejora, user_id, 3):
             ganancia_bonus += 0.15
+        if await asyncio.to_thread(usuario_tiene_mejora, user_id, 10):
+            ganancia_bonus += 0.05
             
         for i, hand in enumerate(self.player_hands):
             player_value = hand_value(hand)
@@ -307,6 +309,8 @@ class Blackjack(commands.Cog):
                 from src.db import usuario_tiene_mejora
                 if await asyncio.to_thread(usuario_tiene_mejora, user_id, 3):
                     ganancia_bonus += 0.15
+                if await asyncio.to_thread(usuario_tiene_mejora, user_id, 10):
+                    ganancia_bonus += 0.05
                     
                 ganancia = int(apuesta * 1.5 * ganancia_bonus)
                 nuevo_saldo = saldo + apuesta + ganancia

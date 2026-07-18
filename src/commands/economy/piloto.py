@@ -1,7 +1,7 @@
 import discord
 import asyncio
 import random
-from src.db import get_balance, set_balance, registrar_transaccion
+from src.db import get_balance, set_balance, registrar_transaccion, pagar_recompensa_trabajo
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 from .job_fx import fase_previa_trabajo
@@ -279,9 +279,8 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
     # Variación aleatoria de ±15%, ajustada por el multiplicador de la ruta elegida
     recompensa = int(recompensa_base * random.uniform(0.85, 1.15) * multiplicador_ruta)
     
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa)
-    registrar_transaccion(user_id, recompensa, "Trabajo: Piloto")
+    neto, retencion = await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa, tipo_trabajo)
+    mora_txt = f" (mora: -{retencion:,} retenidos)" if retencion > 0 else ""
     
     xp_ganada = 25
     resultado_xp = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
@@ -292,7 +291,7 @@ async def iniciar_trabajo_piloto(interaction: discord.Interaction):
         color=discord.Color.gold()
     )
     embed_final.add_field(name="🗺️ Ruta", value=ruta_elegida['nombre'])
-    embed_final.add_field(name="💰 Pago Recibido", value=f"**{recompensa}** monedas")
+    embed_final.add_field(name="💰 Pago Recibido", value=f"**{neto}** monedas{mora_txt}")
     
     xp_msg = f"+{resultado_xp['xp_ganada_final']} XP"
     if resultado_xp['pocion_usada']:

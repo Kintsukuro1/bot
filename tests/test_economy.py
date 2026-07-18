@@ -251,6 +251,313 @@ class TestEnergyItemUsage(unittest.TestCase):
         self.assertEqual(status, 'blocked_start')
         self.assertEqual(time_remaining, 86400)
 
+class TestBancoCentral(unittest.TestCase):
+    @patch('src.db.db_cursor')
+    def test_get_bank_reserves(self, mock_db_cursor):
+        from src.db import get_bank_reserves
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (150000,)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        reserves = get_bank_reserves()
+        self.assertEqual(reserves, 150000)
+        mock_cursor.execute.assert_called_with("SELECT Reservas FROM BancoCentral WHERE ID = 1")
+
+    @patch('src.db.db_cursor')
+    def test_add_to_bank_reserves(self, mock_db_cursor):
+        from src.db import add_to_bank_reserves
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        add_to_bank_reserves(5000)
+        mock_cursor.execute.assert_called_with("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (5000,))
+
+    @patch('src.db.db_cursor')
+    def test_get_user_loan_none(self, mock_db_cursor):
+        from src.db import get_user_loan
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        loan = get_user_loan(12345)
+        self.assertIsNone(loan)
+
+    @patch('src.db.db_cursor')
+    def test_get_user_loan_exists(self, mock_db_cursor):
+        from src.db import get_user_loan
+        import datetime
+        mock_cursor = MagicMock()
+        venc = datetime.datetime.now()
+        mock_cursor.fetchone.return_value = (50000, None, venc, 200000, 1, True)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        loan = get_user_loan(12345)
+        self.assertIsNotNone(loan)
+        self.assertEqual(loan['MontoAdeudado'], 50000)
+        self.assertEqual(loan['LimitePrestamo'], 200000)
+        self.assertEqual(loan['EnMora'], True)
+
+    @patch('src.db.db_cursor')
+    def test_pagar_recompensa_trabajo_no_mora(self, mock_db_cursor):
+        from src.db import pagar_recompensa_trabajo
+        mock_cursor = MagicMock()
+        # EnMora query fetchone -> (False,)
+        mock_cursor.fetchone.return_value = (False,)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        neto, retencion = pagar_recompensa_trabajo(12345, 1000, "minero")
+        self.assertEqual(neto, 1000)
+        self.assertEqual(retencion, 0)
+        
+        # Verify set_balance counterpart (Users table update)
+        mock_cursor.execute.assert_any_call(
+            "\n                INSERT INTO Users (UserID, Balance) VALUES (%s, %s)\n                ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance\n            ", 
+            (12345, 1000)
+        )
+
+    @patch('src.db.db_cursor')
+    def test_pagar_recompensa_trabajo_with_mora(self, mock_db_cursor):
+        from src.db import pagar_recompensa_trabajo
+        mock_cursor = MagicMock()
+        # EnMora query fetchone -> (True,)
+        mock_cursor.fetchone.return_value = (True,)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        neto, retencion = pagar_recompensa_trabajo(12345, 1000, "minero")
+        self.assertEqual(neto, 900)
+        self.assertEqual(retencion, 100)
+        
+        # Verify user gets neto (900)
+        mock_cursor.execute.assert_any_call(
+            "\n                INSERT INTO Users (UserID, Balance) VALUES (%s, %s)\n                ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance\n            ", 
+            (12345, 900)
+        )
+        
+        # Verify loan amount is reduced by 100
+        mock_cursor.execute.assert_any_call(
+            "\n                UPDATE UserLoans\n                SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)\n                WHERE UserID = %s\n                RETURNING MontoAdeudado\n            ",
+            (100, 12345)
+        )
+        
+        # Verify bank reserves receive the retencion (100)
+        mock_cursor.execute.assert_any_call(
+            "UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1",
+            (100,)
+        )
+
+    @patch('src.db.db_cursor')
+    def test_pagar_recompensa_trabajo_clears_mora(self, mock_db_cursor):
+        from src.db import pagar_recompensa_trabajo
+        mock_cursor = MagicMock()
+        # side_effect returns (True,) (EnMora) first, and (0,) (MontoAdeudado after retencion) second
+        mock_cursor.fetchone.side_effect = [(True,), (0,)]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        neto, retencion = pagar_recompensa_trabajo(12345, 1000, "minero")
+        self.assertEqual(neto, 900)
+        self.assertEqual(retencion, 100)
+
+        # Verify UserLoans EnMora set to FALSE update was executed
+        mock_cursor.execute.assert_any_call(
+            "\n                    UPDATE UserLoans\n                    SET FechaPrestamo = NULL,\n                        FechaVencimiento = NULL,\n                        EnMora = FALSE\n                    WHERE UserID = %s\n                ",
+            (12345,)
+        )
+
+    @patch('src.db.db_cursor')
+    def test_get_protection_minutes_no_payment(self, mock_db_cursor):
+        from src.utils.robo_progression import get_protection_minutes
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        minutes = get_protection_minutes(12345)
+        self.assertEqual(minutes, 3)
+
+    @patch('src.db.db_cursor')
+    def test_get_protection_minutes_recent_payment(self, mock_db_cursor):
+        from src.utils.robo_progression import get_protection_minutes
+        import datetime
+        mock_cursor = MagicMock()
+        recent = datetime.datetime.now() - datetime.timedelta(hours=2)
+        mock_cursor.fetchone.return_value = (recent, 5000)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        minutes = get_protection_minutes(12345)
+        self.assertEqual(minutes, 30)
+
+    @patch('src.db.db_cursor')
+    def test_get_protection_minutes_old_payment(self, mock_db_cursor):
+        from src.utils.robo_progression import get_protection_minutes
+        import datetime
+        mock_cursor = MagicMock()
+        old = datetime.datetime.now() - datetime.timedelta(hours=25)
+        mock_cursor.fetchone.return_value = (old, 5000)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        minutes = get_protection_minutes(12345)
+        self.assertEqual(minutes, 3)
+
+    @patch('src.db.db_cursor')
+    def test_cobrar_cuotas_proteccion_db_sufficient_balance(self, mock_db_cursor):
+        from src.db import cobrar_cuotas_proteccion_db
+        mock_cursor = MagicMock()
+        # Mocking users with balance > 500k: (user_id, balance)
+        mock_cursor.fetchall.return_value = [
+            (111, 15500000),  # excedente: 15M -> cuota: 10M*0.01 + 5M*0.02 = 200,000
+            (222, 600000),    # excedente: 100k -> cuota: 1,000
+        ]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        resultados = cobrar_cuotas_proteccion_db()
+        self.assertEqual(len(resultados), 2)
+        
+        # User 111 check
+        res1 = next(r for r in resultados if r['user_id'] == 111)
+        self.assertEqual(res1['cobrado'], 200000)
+        self.assertTrue(res1['exito'])
+        self.assertEqual(res1['nuevo_saldo'], 15300000)
+        
+        # User 222 check
+        res2 = next(r for r in resultados if r['user_id'] == 222)
+        self.assertEqual(res2['cobrado'], 1000)
+        self.assertTrue(res2['exito'])
+        self.assertEqual(res2['nuevo_saldo'], 599000)
+
+        # Verify bank reserves update
+        mock_cursor.execute.assert_any_call("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (200000,))
+        mock_cursor.execute.assert_any_call("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (1000,))
+
+class TestPrestige(unittest.TestCase):
+    @patch('src.db.db_cursor')
+    def test_get_user_prestige_level_default(self, mock_db_cursor):
+        from src.db import get_user_prestige_level
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        level = get_user_prestige_level(12345)
+        self.assertEqual(level, 0)
+        mock_cursor.execute.assert_called_with("SELECT PrestigeLevel FROM UserPrestige WHERE UserID = %s", (12345,))
+
+    @patch('src.db.db_cursor')
+    def test_get_user_prestige_level_exists(self, mock_db_cursor):
+        from src.db import get_user_prestige_level
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (3,)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        level = get_user_prestige_level(12345)
+        self.assertEqual(level, 3)
+
+    @patch('src.db.db_cursor')
+    def test_set_user_prestige_db(self, mock_db_cursor):
+        from src.db import set_user_prestige_db
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        set_user_prestige_db(12345, 2)
+        self.assertTrue(mock_cursor.execute.called)
+
+    @patch('src.utils.prestige_config.get_user_prestige_level')
+    def test_get_next_prestige_tier(self, mock_get_prestige_level):
+        from src.utils.prestige_config import get_next_prestige_tier
+        
+        # User prestige is 0
+        mock_get_prestige_level.return_value = 0
+        tier = get_next_prestige_tier(12345)
+        self.assertIsNotNone(tier)
+        self.assertEqual(tier["level"], 1)
+        self.assertEqual(tier["threshold"], 100000)
+
+        # User prestige is 7 (max)
+        mock_get_prestige_level.return_value = 7
+        tier = get_next_prestige_tier(12345)
+        self.assertIsNone(tier)
+
+    @patch('src.utils.prestige_config.get_next_prestige_tier')
+    @patch('src.utils.prestige_config.get_balance')
+    def test_can_prestige(self, mock_get_balance, mock_get_next_tier):
+        from src.utils.prestige_config import can_prestige
+        
+        mock_get_next_tier.return_value = {"level": 1, "threshold": 100000, "title": "Prestigio I"}
+        
+        # Balance is 50,000 (not enough)
+        mock_get_balance.return_value = 50000
+        ok, tier = can_prestige(12345)
+        self.assertFalse(ok)
+        self.assertIsNone(tier)
+
+        # Balance is 120,000 (enough)
+        mock_get_balance.return_value = 120000
+        ok, tier = can_prestige(12345)
+        self.assertTrue(ok)
+        self.assertEqual(tier["level"], 1)
+
+    @patch('src.utils.prestige_config.registrar_transaccion')
+    @patch('src.utils.prestige_config.set_user_prestige_db')
+    @patch('src.utils.prestige_config.set_balance')
+    @patch('src.utils.prestige_config.get_user_prestige_level')
+    @patch('src.utils.prestige_config.get_balance')
+    @patch('src.db.db_cursor')
+    def test_do_prestige_success(self, mock_db_cursor, mock_get_balance, mock_get_prestige_level, mock_set_balance, mock_set_prestige_db, mock_registrar_tx):
+        from src.utils.prestige_config import do_prestige
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        # User has level 0 prestige and 150k balance
+        mock_get_prestige_level.return_value = 0
+        mock_get_balance.return_value = 150000
+
+        success, message = do_prestige(12345)
+        self.assertTrue(success)
+        self.assertIn("Prestigio I", message)
+
+        # Verify calls
+        mock_set_balance.assert_called_with(12345, 10000)
+        mock_set_prestige_db.assert_called_with(12345, 1)
+        mock_registrar_tx.assert_called_with(12345, -140000, "Prestigio alcanzado: Prestigio I")
+
+    @patch('src.db.db_cursor')
+    def test_pagar_bonos_prestigio_mensuales_db(self, mock_db_cursor):
+        from src.db import pagar_bonos_prestigio_mensuales_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        recent_date = datetime.datetime.now() - datetime.timedelta(days=10)
+        old_date = datetime.datetime.now() - datetime.timedelta(days=35)
+        
+        mock_cursor.fetchall.return_value = [
+            (1001, 3, None),
+            (1002, 4, old_date),
+            (1003, 3, recent_date)
+        ]
+        
+        resultados = pagar_bonos_prestigio_mensuales_db()
+        
+        # Should pay user 1001 and 1002
+        self.assertEqual(len(resultados), 2)
+        
+        u1 = next(r for r in resultados if r['user_id'] == 1001)
+        self.assertEqual(u1['monto'], 100000)
+        self.assertEqual(u1['prestige_level'], 3)
+        self.assertIsNone(u1['ultimo_pago_previo'])
+        
+        u2 = next(r for r in resultados if r['user_id'] == 1002)
+        self.assertEqual(u2['monto'], 100000)
+        self.assertEqual(u2['prestige_level'], 4)
+        self.assertEqual(u2['ultimo_pago_previo'], old_date)
+        
+        # Check that we didn't pay 1003
+        self.assertFalse(any(r['user_id'] == 1003 for r in resultados))
+        
+        # Verify db select was made
+        mock_cursor.execute.assert_any_call("""
+            SELECT UserID, PrestigeLevel, UltimoBonoMensual 
+            FROM UserPrestige 
+            WHERE PrestigeLevel >= 3
+        """)
+
 if __name__ == '__main__':
     unittest.main()
 

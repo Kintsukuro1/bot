@@ -115,19 +115,18 @@ def remove_thief_xp(current_level, current_xp, xp_lost):
     }
 
 
-def get_protection_hours(victim_balance):
-    """Calcula las horas de protección post-robo según el saldo de la víctima.
-    Los ricos reciben más protección (robos son más raros pero más lucrativos).
-    Los pobres reciben menos protección (no vale la pena robarles de todas formas).
-    """
-    if victim_balance >= 100_000:
-        return 6.0
-    elif victim_balance >= 25_000:
-        return 4.0
-    elif victim_balance >= 5_000:
-        return 2.0
-    else:
-        return 1.0
+def get_protection_minutes(user_id) -> int:
+    """Retorna 30 si el usuario pagó su Cuota de Protección en las últimas 24h, 3 si no."""
+    from src.db import get_user_protection_info
+    from datetime import datetime, timedelta
+
+    ultimo_pago, _ = get_user_protection_info(user_id)
+    if ultimo_pago:
+        if ultimo_pago.tzinfo is not None:
+            ultimo_pago = ultimo_pago.replace(tzinfo=None)
+        if datetime.now() - ultimo_pago < timedelta(hours=24):
+            return 30
+    return 3
 
 
 def calcular_robo_dinamico(saldo_ladron, saldo_victima, thief_level):

@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 from src.db import get_balance, ensure_user, obtener_ranking_trabajo
+from src.utils.prestige_config import format_username_with_prestige
 from .energia import get_energia
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
@@ -491,6 +492,7 @@ class Trabajo(commands.Cog):
                 posicion = medallas[i] if i < 3 else f"`#{i+1}`"
                 usuario = self.bot.get_user(user_id)
                 nombre = usuario.display_name if usuario else f"Usuario {user_id}"
+                nombre = format_username_with_prestige(user_id, nombre)
                 lineas.append(
                     f"{posicion} **{nombre}** — Nivel {nivel} ({experiencia} XP, {trabajos_completados} trabajos)"
                 )

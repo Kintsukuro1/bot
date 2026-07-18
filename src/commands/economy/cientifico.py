@@ -1,7 +1,7 @@
 import discord
 import asyncio
 import random
-from src.db import get_balance, set_balance, registrar_transaccion
+from src.db import get_balance, set_balance, registrar_transaccion, pagar_recompensa_trabajo
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header, TIPOS_TRABAJO
 from .job_fx import fase_previa_trabajo
@@ -241,12 +241,12 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         else:
             embed.description = f"✅ **Experimento Exitoso.** Has logrado sintetizar la fórmula con **{etiqueta_pureza}**."
             
-        set_balance(user_id, get_balance(user_id) + recompensa)
-        registrar_transaccion(user_id, recompensa, "Sueldo Científico")
+        embed.color = discord.Color.green()
+        neto, retencion = await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa, tipo_trabajo)
         add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
         
-        embed.color = discord.Color.green()
-        embed.add_field(name="Ganancia", value=f"💰 {recompensa} monedas ({etiqueta_pureza})\n📈 {xp_ganada} XP", inline=False)
+        mora_txt = f"\n⚠️ *Mora: {retencion:,} retenidos al banco.*" if retencion > 0 else ""
+        embed.add_field(name="Ganancia", value=f"💰 {neto} monedas ({etiqueta_pureza}){mora_txt}\n📈 {xp_ganada} XP", inline=False)
         
     elif game.status == "Explotado":
         embed.description = "💥 **¡BOOOM!** El nivel de inestabilidad superó el límite."
@@ -259,8 +259,7 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
             recompensa_parcial = int(recompensa * 0.3 * (game.ronda_actual - 1))
             xp_parcial = max(1, int(xp_ganada * 0.3))
             
-            set_balance(user_id, get_balance(user_id) + recompensa_parcial)
-            registrar_transaccion(user_id, recompensa_parcial, "Salvamento Científico")
+            await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa_parcial, tipo_trabajo)
             add_experiencia_trabajo(user_id, tipo_trabajo, xp_parcial)
             
             embed.add_field(name="Salvamento de Datos", value=f"Lograste rescatar algo de la investigación.\n💰 {recompensa_parcial} monedas\n📈 {xp_parcial} XP", inline=False)

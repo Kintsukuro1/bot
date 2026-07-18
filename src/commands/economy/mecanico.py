@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -310,10 +310,13 @@ class MecanicoView(discord.ui.View):
         problemas_reparados_correctos = len([p for p in self.reparaciones_realizadas if p in problemas_objetivo])
         precision_reparacion = (problemas_reparados_correctos / len(problemas_objetivo)) * 50
         
+        has_prestige_tools = self.has_mejora_16 if hasattr(self, 'has_mejora_16') else False
         has_precision_tools = self.has_mejora_9
         bonus_diagnostico = len(problemas_reales_detectados) * 10
-        penalizacion_falsos = len(problemas_falsos_detectados) * 8  # Aumentada levemente
-        if has_precision_tools:
+        penalizacion_falsos = len(problemas_falsos_detectados) * 8
+        if has_prestige_tools:
+            penalizacion_falsos = 0
+        elif has_precision_tools:
             penalizacion_falsos = int(penalizacion_falsos * 0.5)
         
         bonus_herramientas = min(20, len(self.herramientas_usadas) * 5)
@@ -425,8 +428,13 @@ class MecanicoView(discord.ui.View):
         xp_ganada_final = resultado_nivel.get("xp_ganada_final", xp_ganada)
         pocion_msg = "\n🧪 **¡Poción de Enfoque usada!** (+50% XP)" if resultado_nivel.get("pocion_usada") else ""
         
+        has_prestige_tools = self.has_mejora_16 if hasattr(self, 'has_mejora_16') else False
         has_precision_tools = self.has_mejora_9
-        tools_msg = " (Herramientas de Precisión activas 🛠️)" if has_precision_tools else ""
+        tools_msg = ""
+        if has_prestige_tools:
+            tools_msg = " (Herramientas Maestras Prestigio activas 🛠️🌟)"
+        elif has_precision_tools:
+            tools_msg = " (Herramientas de Precisión activas 🛠️)"
         
         # Obtener información del nivel para mostrar
         if nivel_nuevo < 10:
@@ -493,9 +501,7 @@ def _completar_mecanico_db(user_id, tipo_trabajo, recompensa_base, puntuacion, x
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     
     if recompensa_final > 0:
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa_final)
-        registrar_transaccion(user_id, recompensa_final, "Trabajo: Mecánico completado")
+        pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
         
     return recompensa_final, resultado_nivel
 
@@ -504,6 +510,7 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     energia_actual = get_energia(user_id)
     energia_base = 30
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
+    has_prestige_mejora = usuario_tiene_mejora(user_id, 16)
     has_mejora_9 = usuario_tiene_mejora(user_id, 9)
     
     energia_consumida = False
@@ -513,14 +520,14 @@ def _iniciar_mecanico_db(user_id, tipo_trabajo):
     bonificacion_recompensa = calcular_recompensa(1, user_id, tipo_trabajo) - 1
     bonificacion_energia = calcular_energia_requerida(100, user_id, tipo_trabajo) / 100
         
-    return nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida
+    return nivel_info, energia_actual, energia_requerida, has_mejora_9, has_prestige_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida
 
 async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de mecánico."""
     user_id = interaction.user.id
     tipo_trabajo = 'mecanico'
     
-    nivel_info, energia_actual, energia_requerida, has_mejora_9, bonificacion_recompensa, bonificacion_energia, energia_consumida = await asyncio.to_thread(_iniciar_mecanico_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, has_mejora_9, has_prestige_mejora, bonificacion_recompensa, bonificacion_energia, energia_consumida = await asyncio.to_thread(_iniciar_mecanico_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
     if energia_actual < energia_requerida or not energia_consumida:
@@ -650,6 +657,7 @@ async def iniciar_trabajo_mecanico(interaction: discord.Interaction):
     
     view = MecanicoView(interaction.user, vehiculo_objetivo, recompensa_base, nivel)
     view.has_mejora_9 = has_mejora_9
+    view.has_mejora_16 = has_prestige_mejora
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, view=view)
     else:

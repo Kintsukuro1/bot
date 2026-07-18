@@ -2,7 +2,7 @@ import discord
 import asyncio
 import random
 import unicodedata
-from src.db import get_balance, set_balance, registrar_transaccion
+from src.db import get_balance, set_balance, registrar_transaccion, pagar_recompensa_trabajo
 from .energia import consumir_energia, get_energia
 from .niveles_trabajo import get_nivel_trabajo, add_experiencia_trabajo, get_energia_trabajo, get_recompensa_trabajo, get_job_header
 from .job_fx import fase_previa_trabajo
@@ -239,9 +239,8 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
     recompensa_base = get_recompensa_trabajo(tipo_trabajo, user_id)
     recompensa = int(recompensa_base * random.uniform(0.9, 1.1))
     
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa)
-    registrar_transaccion(user_id, recompensa, "Trabajo: Médico")
+    neto, retencion = await asyncio.to_thread(pagar_recompensa_trabajo, user_id, recompensa, tipo_trabajo)
+    mora_txt = f" (mora: -{retencion:,} retenidos)" if retencion > 0 else ""
     
     xp_ganada = 15
     resultado_xp = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
@@ -251,7 +250,7 @@ async def iniciar_trabajo_medico(interaction: discord.Interaction):
         description="El paciente está estable y en recuperación. ¡Buen trabajo, doc!",
         color=discord.Color.green()
     )
-    embed_final.add_field(name="💰 Sueldo Cobrado", value=f"**{recompensa}** monedas")
+    embed_final.add_field(name="💰 Sueldo Cobrado", value=f"**{neto}** monedas{mora_txt}")
     
     xp_msg = f"+{resultado_xp['xp_ganada_final']} XP"
     if resultado_xp['pocion_usada']:

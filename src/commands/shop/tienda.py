@@ -6,18 +6,20 @@ from datetime import datetime, timedelta
 from src.db import (
     get_balance, set_balance, ensure_user, registrar_transaccion, 
     agregar_item_usuario, usuario_tiene_item, get_user_items, usar_item_usuario,
-    get_energia, set_energia,     check_and_register_energy_use, comprar_item_tienda
+    get_energia, set_energia,     check_and_register_energy_use, comprar_item_tienda,
+    get_user_prestige_level
 )
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
 TIENDA = [
-    {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`. Límite diario de 4 usos.", "caracteristica": "positiva"},
-    {"id": 4, "nombre": "Poción de Enfoque 🧪", "precio": 1000, "descripcion": "Tu siguiente trabajo da +50% de XP. Se consume automáticamente al trabajar.", "caracteristica": "positiva"},
-    {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica premio al ganar (con debuff 35% de protección). Se consume al ganar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
-    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash. Reembolsa si explota <x1.50 (apuestas hasta 5k). Consumo al inicio. Límite diario de 3 escudos.", "caracteristica": "positiva"},
-    {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita derrumbe/rotura en minería/pesca (1 uso). Se consume al fallar. Límite diario de 3 escudos.", "caracteristica": "positiva"},
-    {"id": 11, "nombre": "Special Mute 🔇", "precio": 3000, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral"},
-    {"id": 12, "nombre": "Escudo Anti-Mute 🛡️", "precio": 1000, "descripcion": "Te protege automáticamente del próximo `/specialmute` lanzado en tu contra (1 uso). Se consume al activarse.", "caracteristica": "positiva"},
+    {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`. Límite diario de 4 usos.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 4, "nombre": "Poción de Enfoque 🧪", "precio": 1000, "descripcion": "Tu siguiente trabajo da +50% de XP. Se consume automáticamente al trabajar.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 5, "nombre": "Ticket de Suerte Slots 🎟️", "precio": 1500, "descripcion": "Duplica premio al ganar (con debuff 35% de protección). Se consume al ganar. Límite diario de 3 escudos.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 6, "nombre": "Ticket de Suerte Crash 🎫", "precio": 2000, "descripcion": "Seguro de crash. Reembolsa si explota <x1.50 (apuestas hasta 5k). Consumo al inicio. Límite diario de 3 escudos.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 7, "nombre": "Amuleto de Protección 🪬", "precio": 1200, "descripcion": "Evita derrumbe/rotura en minería/pesca (1 uso). Se consume al fallar. Límite diario de 3 escudos.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 11, "nombre": "Special Mute 🔇", "precio": 3000, "descripcion": "Usa el comando `/specialmute` una vez. Permite silenciar temporalmente a un miembro.", "caracteristica": "neutral", "prestige_required": 0},
+    {"id": 12, "nombre": "Escudo Anti-Mute 🛡️", "precio": 1000, "descripcion": "Te protege automáticamente del próximo `/specialmute` lanzado en tu contra (1 uso). Se consume al activarse.", "caracteristica": "positiva", "prestige_required": 0},
+    {"id": 13, "nombre": "Escudo Total 🛡️🌟", "precio": 5000, "descripcion": "[Prestigio II] Te otorga inmunidad total contra robos por 24 horas. Actívalo con `/usar 13`.", "caracteristica": "positiva", "prestige_required": 2},
 ]
 
 def _get_inventory_db(user_id, user_name):
@@ -26,12 +28,22 @@ def _get_inventory_db(user_id, user_name):
 
 def _comprar_articulo_db(user_id, user_name, item):
     ensure_user(user_id, user_name)
+    
+    prestige_level = get_user_prestige_level(user_id)
+    if item.get("prestige_required", 0) > prestige_level:
+        return "prestige_required"
+        
     expiry_date = datetime.now() + timedelta(days=3650)
-    result = comprar_item_tienda(user_id, item["id"], item["precio"], expiry_date)
+
+    # -5% descuento para usuarios con Prestigio I o superior
+    prestige_discount = prestige_level >= 1
+    precio_final = int(item["precio"] * 0.95) if prestige_discount else item["precio"]
+
+    result = comprar_item_tienda(user_id, item["id"], precio_final, expiry_date)
     if result == "no_balance":
         return "no_balance"
-    registrar_transaccion(user_id, -item["precio"], f"Compra: {item['nombre']}")
-    return "ok"
+    registrar_transaccion(user_id, -precio_final, f"Compra: {item['nombre']}")
+    return "ok", precio_final, prestige_discount
 
 def _usar_articulo_db(user_id, user_name, articulo_id):
     ensure_user(user_id, user_name)
@@ -59,6 +71,14 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
     if articulo_id == 4:
         return "focus_auto", None
 
+    if articulo_id == 13:
+        if usar_item_usuario(user_id, 13):
+            from src.db import set_robar_shield
+            set_robar_shield(user_id)
+            return "shield_activated", None
+        else:
+            return "missing", None
+
     if articulo_id in [5, 6, 7, 12]:
         return "auto_item", None
 
@@ -71,6 +91,9 @@ class Tienda(commands.Cog):
 
     @app_commands.command(name="tienda", description="Muestra los artículos consumibles de un solo uso disponibles.")
     async def tienda(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
+        
         embed = discord.Embed(
             title="🛒 Tienda de Consumibles",
             description="¡Compra artículos de un solo uso para potenciar tus juegos y trabajos!",
@@ -78,11 +101,13 @@ class Tienda(commands.Cog):
         )
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/263/263142.png")
         for item in TIENDA:
-            embed.add_field(
-                name=f"{item['nombre']} — {item['precio']} 🪙",
-                value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
-                inline=False
-            )
+            req = item.get("prestige_required", 0)
+            if prestige_level >= req:
+                embed.add_field(
+                    name=f"{item['nombre']} — {item['precio']} 🪙",
+                    value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
+                    inline=False
+                )
         embed.set_footer(text="Usa /comprar <ID> para adquirir un artículo. Usa /usar <ID> para consumir artículos.")
         await interaction.response.send_message(embed=embed)
 
@@ -147,13 +172,23 @@ class Tienda(commands.Cog):
 
         status = await asyncio.to_thread(_comprar_articulo_db, user_id, user_name, item)
 
-        if status == "no_balance":
-            await interaction.response.send_message("❌ No tienes suficiente saldo para comprar este artículo.", ephemeral=True)
+        if status == "prestige_required" or (isinstance(status, tuple) and status[0] == "prestige_required"):
+            await interaction.response.send_message("❌ No cumples con el nivel de Prestigio requerido para comprar este artículo.", ephemeral=True)
             return
 
-        if status == "item_error":
-            await interaction.response.send_message("❌ Error al agregar el artículo a tu inventario. Dinero reembolsado.", ephemeral=True)
+        if status == "no_balance" or (isinstance(status, tuple) and status[0] == "no_balance"):
+            await interaction.response.send_message("\u274c No tienes suficiente saldo para comprar este artículo.", ephemeral=True)
             return
+
+        if status == "item_error" or (isinstance(status, tuple) and status[0] == "item_error"):
+            await interaction.response.send_message("\u274c Error al agregar el artículo a tu inventario. Dinero reembolsado.", ephemeral=True)
+            return
+
+        # Desempacar resultado (ok, precio_final, prestige_discount)
+        precio_pagado = item["precio"]
+        used_prestige_discount = False
+        if isinstance(status, tuple) and status[0] == "ok":
+            _, precio_pagado, used_prestige_discount = status
         
         if item["id"] == 3:
             msg = "🥤 ¡Has comprado una Bebida Energética! Puedes consumirla de inmediato usando `/usar 3` para obtener +50 de energía."
@@ -193,9 +228,14 @@ class Tienda(commands.Cog):
             msg = "¡Compra realizada con éxito!"
             
         embed = discord.Embed(
-            title="✅ Compra exitosa",
+            title="\u2705 Compra exitosa",
             description=msg,
             color=discord.Color.green()
+        )
+        embed.add_field(
+            name="\ud83d\udcb0 Precio pagado",
+            value=f"**{precio_pagado:,}** monedas" + (" *(\ud83c\udf1f -5% Descuento Prestigio aplicado)*" if used_prestige_discount else ""),
+            inline=False
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -229,6 +269,10 @@ class Tienda(commands.Cog):
 
         if status == "focus_auto":
             await interaction.response.send_message("🧪 **La Poción de Enfoque se consume automáticamente** al finalizar tu próximo trabajo, aumentando tu XP en un 50%.", ephemeral=True)
+            return
+
+        if status == "shield_activated":
+            await interaction.response.send_message("🛡️🌟 **¡Escudo Total activado!** Estás protegido contra robos durante las próximas 24 horas.", ephemeral=True)
             return
 
         if status == "auto_item":

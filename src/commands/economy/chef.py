@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, consumir_energia, consumir_energia_atomico, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -392,7 +392,7 @@ class ChefView(discord.ui.View):
         user_id = self.user.id
         tipo_trabajo = 'chef'
         
-        recompensa_final, resultado_nivel, has_knife, xp_ganada = await asyncio.to_thread(
+        recompensa_final, resultado_nivel, has_knife, has_prestige_knife, xp_ganada = await asyncio.to_thread(
             _completar_chef_db, user_id, tipo_trabajo, self.recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, self.emplatado_multiplicador, secreto_xp_bonus, self.preparacion_perfecta
         )
         
@@ -420,7 +420,12 @@ class ChefView(discord.ui.View):
         
         xp_ganada_final = resultado_nivel.get("xp_ganada_final", xp_ganada)
         pocion_msg = "\n🧪 **¡Poción de Enfoque usada!** (+50% XP)" if resultado_nivel.get("pocion_usada") else ""
-        knife_msg = "\n🔪 **Cuchillo de Chef activo:** +15% Monedas y XP" if has_knife else ""
+        
+        knife_msg = ""
+        if has_prestige_knife:
+            knife_msg = "\n🔪 **Cuchillo de Damasco Prestigio activo:** +30% Monedas y XP"
+        elif has_knife:
+            knife_msg = "\n🔪 **Cuchillo de Chef activo:** +15% Monedas y XP"
         
         # Obtener información del nivel para mostrar
         if nivel_nuevo < 10:
@@ -479,11 +484,15 @@ class ChefView(discord.ui.View):
 
 def _completar_chef_db(user_id, tipo_trabajo, recompensa_base, puntuacion, secreto_multiplier, temp_multiplier, emplatado_multiplier, secreto_xp_bonus, preparacion_perfecta):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
+    has_prestige_knife = usuario_tiene_mejora(user_id, 14)
     has_knife = usuario_tiene_mejora(user_id, 7)
     
     multiplicador = puntuacion / 100
     recompensa_final = int(recompensa_base_con_nivel * multiplicador * secreto_multiplier * temp_multiplier * emplatado_multiplier)
-    if has_knife:
+    
+    if has_prestige_knife:
+        recompensa_final = int(recompensa_final * 1.30)
+    elif has_knife:
         recompensa_final = int(recompensa_final * 1.15)
         
     xp_ganada = int(puntuacion / 5) + secreto_xp_bonus
@@ -491,16 +500,17 @@ def _completar_chef_db(user_id, tipo_trabajo, recompensa_base, puntuacion, secre
         xp_ganada += 10
     if emplatado_multiplier >= 1.3:
         xp_ganada += 8
-    if has_knife:
+        
+    if has_prestige_knife:
+        xp_ganada = int(xp_ganada * 1.30)
+    elif has_knife:
         xp_ganada = int(xp_ganada * 1.15)
         
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     if recompensa_final > 0:
-        saldo_actual = get_balance(user_id)
-        set_balance(user_id, saldo_actual + recompensa_final)
-        registrar_transaccion(user_id, recompensa_final, "Trabajo: Chef completado")
+        pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
         
-    return recompensa_final, resultado_nivel, has_knife, xp_ganada
+    return recompensa_final, resultado_nivel, has_knife, has_prestige_knife, xp_ganada
 
 def _iniciar_chef_db(user_id, tipo_trabajo):
     nivel_info = get_nivel_trabajo(user_id, tipo_trabajo)

@@ -1,6 +1,6 @@
 import discord
 import random
-from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use, consumir_energia
+from src.db import get_balance, set_balance, registrar_transaccion, usuario_tiene_mejora, usuario_tiene_item, usar_item_usuario, check_and_register_shield_use, consumir_energia, pagar_recompensa_trabajo
 from .energia import get_energia, set_energia
 from .niveles_trabajo import (
     add_experiencia_trabajo, 
@@ -203,8 +203,13 @@ class PescadorView(discord.ui.View):
                 
         barra_txt = "".join(barra)
         
+        has_rod_12 = self.has_mejora_12 if hasattr(self, 'has_mejora_12') else False
         has_rod = self.has_mejora_5
-        rod_msg = " (Caña de Fibra activa 🎣)" if has_rod else ""
+        rod_msg = ""
+        if has_rod_12:
+            rod_msg = " (Caña de Carbono Prestigio activa 🎣🌟)"
+        elif has_rod:
+            rod_msg = " (Caña de Fibra activa 🎣)"
         
         embed = discord.Embed(
             title="🎣 Trabajo: Pescador",
@@ -382,9 +387,7 @@ class PescadorView(discord.ui.View):
 def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pez_objetivo):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
     recompensa_final = int(recompensa_base_con_nivel * precision)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, f"Trabajo: Capturado {pez_objetivo}")
+    pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
     xp_ganada = int(recompensa_base * 0.08) + (20 if precision > 0.9 else 10)
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     return recompensa_final, resultado_nivel
@@ -392,9 +395,7 @@ def _completar_pescador_db(user_id, tipo_trabajo, recompensa_base, precision, pe
 def _finalizar_con_red_db(user_id, tipo_trabajo, recompensa_base):
     recompensa_base_con_nivel = calcular_recompensa(recompensa_base, user_id, tipo_trabajo)
     recompensa_final = int(recompensa_base_con_nivel * 0.95)
-    saldo_actual = get_balance(user_id)
-    set_balance(user_id, saldo_actual + recompensa_final)
-    registrar_transaccion(user_id, recompensa_final, "Trabajo: Pesca con Red de Arrastre")
+    pagar_recompensa_trabajo(user_id, recompensa_final, tipo_trabajo)
     xp_ganada = int(recompensa_base * 0.04) + 5
     resultado_nivel = add_experiencia_trabajo(user_id, tipo_trabajo, xp_ganada)
     return recompensa_final, resultado_nivel
@@ -404,20 +405,23 @@ def _iniciar_pescador_db(user_id, tipo_trabajo):
     energia_actual = get_energia(user_id)
     energia_base = 20
     energia_requerida = calcular_energia_requerida(energia_base, user_id, tipo_trabajo)
+    
+    # Verificar mejoras
+    has_prestige_mejora = usuario_tiene_mejora(user_id, 12)
     has_mejora = usuario_tiene_mejora(user_id, 5)
     
     energia_consumida = False
     if energia_actual >= energia_requerida:
         energia_consumida = consumir_energia(user_id, energia_requerida)
         
-    return nivel_info, energia_actual, energia_requerida, has_mejora, energia_consumida
+    return nivel_info, energia_actual, energia_requerida, has_mejora, has_prestige_mejora, energia_consumida
 
 async def iniciar_trabajo_pescador(interaction: discord.Interaction):
     """Función principal para iniciar el trabajo de pescador."""
     user_id = interaction.user.id
     tipo_trabajo = 'pescador'
     
-    nivel_info, energia_actual, energia_requerida, has_mejora, energia_consumida = await asyncio.to_thread(_iniciar_pescador_db, user_id, tipo_trabajo)
+    nivel_info, energia_actual, energia_requerida, has_mejora, has_prestige_mejora, energia_consumida = await asyncio.to_thread(_iniciar_pescador_db, user_id, tipo_trabajo)
     nivel = nivel_info["nivel"]
     
     if energia_actual < energia_requerida or not energia_consumida:
@@ -494,7 +498,12 @@ async def iniciar_trabajo_pescador(interaction: discord.Interaction):
     
     view = PescadorView(interaction.user, zona_info, recompensa_base, nivel)
     view.has_mejora_5 = has_mejora
-    if has_mejora:
+    view.has_mejora_12 = has_prestige_mejora
+    
+    if has_prestige_mejora:
+        view.zona_min = max(0, view.zona_min - 10)
+        view.zona_max = min(100, view.zona_max + 10)
+    elif has_mejora:
         view.zona_min = max(0, view.zona_min - 5)
         view.zona_max = min(100, view.zona_max + 5)
     

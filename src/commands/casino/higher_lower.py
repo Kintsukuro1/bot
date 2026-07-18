@@ -4,7 +4,8 @@ from discord import app_commands
 import random
 import asyncio
 from typing import Optional, Dict, Any
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, set_balance, ensure_user
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -16,7 +17,7 @@ CARD_VALUES = {
 
 async def _prepare_higher_lower_db(user_id, user_name, apuesta):
     await asyncio.to_thread(ensure_user, user_id, user_name)
-    success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+    success, saldo = await CasinoService.place_bet(user_id, apuesta, 'higher_lower')
     difficulty_modifier, difficulty_explanation = await asyncio.to_thread(
         DynamicDifficulty.calculate_dynamic_difficulty, user_id, apuesta, 'higher_lower'
     )
@@ -237,20 +238,21 @@ class HigherLowerView(discord.ui.View):
         from src.db import usuario_tiene_mejora
         if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 3):  # Magnate
             ganancia_bonus += 0.15
+        if await asyncio.to_thread(usuario_tiene_mejora, self.user.id, 10):  # Corona
+            ganancia_bonus += 0.05
         # ----------------------------
         
         winnings = int(self.apuesta * self.total_multiplier * ganancia_bonus)
         profit = winnings - self.apuesta
-        
-        # Actualizar balance
-        new_balance = self.saldo + winnings
-        await asyncio.to_thread(add_balance, self.user.id, winnings)
-        await asyncio.to_thread(registrar_transaccion, self.user.id, profit, f"Higher/Lower: {self.consecutive_wins} aciertos consecutivos")
-        
-        # Registrar resultado para dificultad
-        await asyncio.to_thread(record_game_result,
-            self.user.id, 'higher_lower', self.apuesta, 'win', 
-            profit, self.difficulty_modifier, new_balance
+
+        winnings_total = winnings  # incluye la apuesta ya descontada
+        new_balance = await CasinoService.settle_win(
+            self.user.id,
+            self.apuesta,
+            winnings_total,
+            'higher_lower',
+            self.difficulty_modifier,
+            self.saldo
         )
         
         embed = discord.Embed(
@@ -282,7 +284,7 @@ class HigherLowerView(discord.ui.View):
         # Desactivar botones
         for item in self.children:
             try:
-                item.disabled = True
+                item.disabled = True  # type: ignore[attr-defined]
             except AttributeError:
                 pass
         
@@ -299,13 +301,12 @@ class HigherLowerView(discord.ui.View):
         
         if not won:
             # Perdió - solo pierde la apuesta
-            new_balance = self.saldo
-            await asyncio.to_thread(registrar_transaccion, self.user.id, -self.apuesta, "Higher/Lower: perdió")
-            
-            # Registrar resultado para dificultad
-            await asyncio.to_thread(record_game_result,
-                self.user.id, 'higher_lower', self.apuesta, 'loss', 
-                0, self.difficulty_modifier, new_balance
+            new_balance = await CasinoService.settle_loss(
+                self.user.id,
+                self.apuesta,
+                'higher_lower',
+                self.difficulty_modifier,
+                self.saldo
             )
             
             embed.add_field(
@@ -331,7 +332,7 @@ class HigherLowerView(discord.ui.View):
         # Desactivar botones
         for item in self.children:
             try:
-                item.disabled = True
+                item.disabled = True  # type: ignore[attr-defined]
             except AttributeError:
                 pass
         
@@ -347,17 +348,17 @@ class HigherLowerView(discord.ui.View):
                 # El timeout cobra automáticamente las ganancias
                 winnings = int(self.apuesta * self.total_multiplier)
                 profit = winnings - self.apuesta
-                new_balance = self.saldo + winnings
-                await asyncio.to_thread(add_balance, self.user.id, winnings)
-                await asyncio.to_thread(registrar_transaccion, self.user.id, profit, f"Higher/Lower: timeout con {self.consecutive_wins} aciertos")
-                
-                await asyncio.to_thread(record_game_result,
-                    self.user.id, 'higher_lower', self.apuesta, 'win', 
-                    profit, self.difficulty_modifier, new_balance
+                await CasinoService.settle_win(
+                    self.user.id,
+                    self.apuesta,
+                    winnings,
+                    'higher_lower',
+                    self.difficulty_modifier,
+                    self.saldo
                 )
             else:
                 # Refund if they timed out without playing
-                await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
+                await CasinoService.refund_bet(self.user.id, self.apuesta, 'higher_lower', 'Timeout sin jugar')
 
 class HigherLower(commands.Cog):
     """Cog para el juego Higher or Lower."""

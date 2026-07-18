@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 from src.db import get_balance, ensure_user, add_balance, registrar_transaccion
+from src.utils.prestige_config import format_username_with_prestige
 
 def _get_user_balance(user_id, user_name):
     ensure_user(user_id, user_name)
@@ -24,12 +25,12 @@ class Plata(commands.Cog):
         await interaction.response.defer()
         if usuario:
             balance = await asyncio.to_thread(_get_user_balance, usuario.id, usuario.name)
-            nombre = usuario.display_name
+            nombre = await asyncio.to_thread(format_username_with_prestige, usuario.id, usuario.display_name)
         else:
             balance = await asyncio.to_thread(
                 _get_user_balance, interaction.user.id, interaction.user.name
             )
-            nombre = interaction.user.display_name
+            nombre = await asyncio.to_thread(format_username_with_prestige, interaction.user.id, interaction.user.display_name)
         embed = discord.Embed(
             title=f"💰 Balance de {nombre}",
             description=f"Saldo actual: **{balance}** monedas",

@@ -18,7 +18,7 @@ from src.utils.robo_progression import (
     get_rank_name,
     format_progress_bar,
     calc_xp_needed,
-    get_protection_hours,
+    get_protection_minutes,
     calcular_robo_dinamico,
     get_bad_luck_bonus,
     THIEF_MILESTONES,
@@ -110,17 +110,28 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
         if saldo_victima < VICTIMA_MIN_SALDO:
             return 'no_money', {}
         
-        # Verificar protección de la víctima (ESCALONADA según su saldo)
-        protection_hours = get_protection_hours(saldo_victima)
+        # Verificar si la víctima tiene un Escudo Total activo
+        cursor.execute("SELECT ShieldExpiry FROM RoboStats WHERE UserID = %s", (victima_id,))
+        res_shield = cursor.fetchone()
+        shield_expiry = res_shield[0] if res_shield else None
+        if shield_expiry and shield_expiry.tzinfo is not None:
+            shield_expiry = shield_expiry.replace(tzinfo=None)
+            
+        if shield_expiry and ahora_db < shield_expiry:
+            tiempo_restante = shield_expiry - ahora_db
+            return 'shield_active', {'tiempo_restante': tiempo_restante}
+
+        # Verificar protección de la víctima (según Cuota de Protección)
+        protection_minutes = get_protection_minutes(victima_id)
         cursor.execute("SELECT LastRobadoTime FROM RoboStats WHERE UserID = %s", (victima_id,))
         result = cursor.fetchone()
         last_robado = result[0] if result else None
         if last_robado and last_robado.tzinfo is not None:
             last_robado = last_robado.replace(tzinfo=None)
         
-        if last_robado and ahora_db - last_robado < timedelta(hours=protection_hours):
-            tiempo_restante = last_robado + timedelta(hours=protection_hours) - ahora_db
-            return 'protection', {'tiempo_restante': tiempo_restante, 'protection_hours': protection_hours}
+        if last_robado and ahora_db - last_robado < timedelta(minutes=protection_minutes):
+            tiempo_restante = last_robado + timedelta(minutes=protection_minutes) - ahora_db
+            return 'protection', {'tiempo_restante': tiempo_restante, 'protection_minutes': protection_minutes}
         
         # ============================================================
         # CÁLCULO DINÁMICO DEL ROBO
@@ -220,7 +231,7 @@ def _ejecutar_robo_db(ladron_id, victima_id, ladron_name, victima_name):
                 'previous_level': xp_result["previous_level"],
                 'rank': xp_result["rank"],
                 'cooldown_minutes': get_cooldown_minutes(xp_result["level"]),
-                'protection_hours': protection_hours,
+                'protection_minutes': protection_minutes,
                 'robo_params': robo_params,
                 'prob_exito_final': int(prob_exito),
             }
@@ -439,11 +450,21 @@ class Robar(commands.Cog):
                     await ctx_or_interaction.send(respuesta)
                 return
                 
+            if status == 'shield_active':
+                tr = data['tiempo_restante']
+                tiempo_str = _format_timedelta(tr, show_seconds=False)
+                respuesta = f"🛡️🌟 {victima.mention} tiene un **Escudo Total** activo. Es inmune a robos por {tiempo_str} más."
+                if is_slash:
+                    await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
+                else:
+                    await ctx_or_interaction.send(respuesta)
+                return
+
             if status == 'protection':
                 tr = data['tiempo_restante']
                 tiempo_str = _format_timedelta(tr, show_seconds=False)
-                prot_h = data['protection_hours']
-                respuesta = f"🛡️ {victima.mention} tiene protección por {tiempo_str} más (protección de {prot_h:.0f}h por su saldo)."
+                prot_m = data['protection_minutes']
+                respuesta = f"🛡️ {victima.mention} tiene protección por {tiempo_str} más (protección de {prot_m} min tras robo)."
                 if is_slash:
                     await ctx_or_interaction.response.send_message(respuesta, ephemeral=True)
                 else:
@@ -532,7 +553,7 @@ class Robar(commands.Cog):
                     )
                 embed_exito.add_field(name="Nuevo Saldo (Ladrón)", value=f"{data['nuevo_saldo_ladron']:,} monedas", inline=True)
                 embed_exito.add_field(name="Nuevo Saldo (Víctima)", value=f"{data['nuevo_saldo_victima']:,} monedas", inline=True)
-                embed_exito.set_footer(text=f"{victima_name} tiene protección {data['protection_hours']:.0f}h · Próximo robo en {data['cooldown_minutes']:.0f} min")
+                embed_exito.set_footer(text=f"{victima_name} tiene protección {data['protection_minutes']} min · Próximo robo en {data['cooldown_minutes']:.0f} min")
                 await msg.edit(content=f"🔔 {victima.mention}", embed=embed_exito)
                 
             else:  # status == 'fail'
