@@ -56,12 +56,13 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
         if energia_actual >= 100:
             return "energy_full", energia_actual
 
-        # Verificar límites de uso diario de energía (máximo 4 al día)
         status, time_remaining = check_and_register_energy_use(user_id, 3)
         if status == 'blocked':
             return "blocked", time_remaining
         elif status == 'blocked_start':
             return "blocked_start", time_remaining
+        elif status == 'error':
+            return "db_error", None
 
         nueva_energia = min(100, energia_actual + 50)
         set_energia(user_id, nueva_energia)
@@ -251,6 +252,10 @@ class Tienda(commands.Cog):
 
         if status == "missing":
             await interaction.response.send_message("❌ No tienes este artículo en tu inventario o ya fue consumido.", ephemeral=True)
+            return
+
+        if status == "db_error":
+            await interaction.response.send_message("❌ Hubo un error de base de datos al verificar el uso diario. Inténtalo de nuevo más tarde.", ephemeral=True)
             return
 
         if status == "energy_full":

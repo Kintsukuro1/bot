@@ -6,10 +6,23 @@ import psycopg2
 import os
 import threading
 import logging
+import hashlib
 from contextlib import contextmanager
 from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
-from typing import Tuple
+from typing import Tuple, Optional
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass
+class InvestmentStartResult:
+    success: bool
+    user_id: int
+    amount: int
+    new_balance: Optional[int] = None
+    started_at: Optional[datetime] = None
+    vencimiento: Optional[datetime] = None
+    reason: Optional[str] = None
 
 # Cargar variables de entorno del archivo .env ubicado en la raíz del proyecto
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
@@ -28,9 +41,10 @@ if not password:
 
 pool_min = int(os.getenv('DB_POOL_MIN', '1'))
 pool_max = int(os.getenv('DB_POOL_MAX', '10'))
-
 _pool = None
 _pool_lock = threading.Lock()
+_pool_init_failed = False
+_pool_init_error = None
 
 def _connect_direct(database_name=None):
     return psycopg2.connect(
@@ -42,20 +56,83 @@ def _connect_direct(database_name=None):
     )
 
 def _get_pool():
-    global _pool
-    if _pool is None:
-        with _pool_lock:
-            if _pool is None:
-                _pool = ThreadedConnectionPool(
-                    minconn=pool_min,
-                    maxconn=pool_max,
-                    host=host,
-                    port=port,
-                    database=database,
-                    user=username,
-                    password=password
-                )
-    return _pool
+    """
+    Inicializa el ThreadedConnectionPool de forma lazy con manejo explícito de errores
+    de conexión. Si la creación falla, se marca el estado de fallo para evitar
+    bucles de reintentos y se devuelve una excepción consistente a las capas superiores.
+    """
+    global _pool, _pool_init_failed, _pool_init_error
+
+    # Si ya se marcó que la inicialización falló anteriormente, no volver a intentar
+    if _pool_init_failed:
+        # Re-lanzamos la última excepción registrada para mantener trazabilidad
+        raise RuntimeError(
+            "Error inicializando el pool de conexiones a la base de datos."
+        ) from _pool_init_error
+
+    # Si ya existe un pool inicializado correctamente, lo reutilizamos
+    if _pool is not None:
+        return _pool
+
+    # Inicialización lazy con doble chequeo bajo lock para seguridad en concurrencia
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+
+        try:
+            logger.info(
+                "Inicializando ThreadedConnectionPool (minconn=%s, maxconn=%s, host=%s, db=%s, user=%s)",
+                pool_min,
+                pool_max,
+                host,
+                database,
+                username,
+            )
+            _pool = ThreadedConnectionPool(
+                minconn=pool_min,
+                maxconn=pool_max,
+                host=host,
+                port=port,
+                database=database,
+                user=username,
+                password=password,
+            )
+            logger.info("ThreadedConnectionPool inicializado correctamente.")
+            return _pool
+        except psycopg2.OperationalError as e:
+            # Errores típicos de conexión: credenciales inválidas, DB caída, etc.
+            _pool_init_failed = True
+            _pool_init_error = e
+            logger.error(
+                "Fallo al inicializar el ThreadedConnectionPool (error de conexión): %s",
+                str(e),
+                exc_info=True,
+            )
+            raise RuntimeError(
+                "No se pudo establecer el pool de conexiones a la base de datos "
+                "(error de conexión)."
+            ) from e
+        except Exception as e:
+            # Cualquier otro tipo de error inesperado también marca fallo
+            _pool_init_failed = True
+            _pool_init_error = e
+            logger.error(
+                "Fallo inesperado al inicializar el ThreadedConnectionPool: %s",
+                str(e),
+                exc_info=True,
+            )
+            raise RuntimeError(
+                "Error inesperado al inicializar el pool de conexiones a la base de datos."
+            ) from e
+
+def close_connection_pool():
+    """Cierra todas las conexiones del pool si fue inicializado."""
+    global _pool, _pool_init_failed, _pool_init_error
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+    _pool_init_failed = False
+    _pool_init_error = None
 
 def get_connection():
     """Retorna una conexión directa a PostgreSQL.
@@ -149,26 +226,32 @@ def add_combat_currency(user_id, bronze_amount, cursor=None):
         with db_cursor() as cursor:
             cursor.execute(query, (user_id, bronze_amount))
 
-def spend_combat_currency(user_id, bronze_amount):
+def spend_combat_currency(user_id, bronze_amount, cursor=None):
     """Intenta gastar Bronce. Retorna (True, nuevo_saldo) si alcanzaba, (False, saldo_actual) si no.
     Debe ser atómico (verificar saldo y descontar en la misma transacción, evitar condiciones de
     carrera si dos compras ocurren casi al mismo tiempo) — seguir el mismo patrón de `deduct_balance`
     adaptado a esta tabla."""
-    with db_cursor() as cursor:
-        cursor.execute("""
+    def _execute_spend(cur):
+        cur.execute("""
             UPDATE CombatWallet 
             SET Bronze = Bronze - %s 
             WHERE UserID = %s AND Bronze >= %s
             RETURNING Bronze
         """, (bronze_amount, user_id, bronze_amount))
-        row = cursor.fetchone()
+        row = cur.fetchone()
         if row:
             return True, row[0]
         
         # Si no alcanzó, obtenemos el saldo actual para retornarlo
-        cursor.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
-        row = cursor.fetchone()
+        cur.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
+        row = cur.fetchone()
         return False, row[0] if row else 0
+
+    if cursor is not None:
+        return _execute_spend(cursor)
+    else:
+        with db_cursor() as db_cur:
+            return _execute_spend(db_cur)
 
 def ensure_user(user_id, user_name=None):
     """Verifica si el usuario existe en la base de datos y lo crea si no."""
@@ -303,28 +386,23 @@ def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
                 """, (user_id, item_id, quantity, expiry))
             return True
     except Exception as e:
-        print(f"Error agregando ítem al usuario: {e}")
+        logger.error(f"Error agregando ítem al usuario: {e}", exc_info=e)
         return False
 
 def usuario_tiene_item(user_id, item_id):
     """Verifica si un usuario tiene un ítem específico en su inventario."""
     try:
         with db_cursor() as cursor:
-            # Check if it's a MagicMock to avoid unit test false positives
-            is_mock = hasattr(cursor, '__class__') and cursor.__class__.__name__ == 'MagicMock'
-            if is_mock:
-                return False
-
             cursor.execute("""
-                SELECT COUNT(*) FROM UserItems 
+                SELECT 1 FROM UserItems 
                 WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0
                 AND Expiry > NOW()
+                LIMIT 1
             """, (user_id, item_id))
             row = cursor.fetchone()
-            count = row[0] if row else 0
-            return count > 0
+            return row is not None
     except Exception as e:
-        print(f"Error de base de datos al verificar ítem de usuario: {e}")
+        logger.error(f"Error de base de datos al verificar ítem de usuario: {e}")
         return False
 
 def usuario_tiene_mejora(user_id, item_id):
@@ -356,7 +434,7 @@ def get_user_items(user_id):
                 })
             return items
     except Exception as e:
-        print(f"Error obteniendo ítems de usuario: {e}")
+        logger.error(f"Error obteniendo ítems de usuario: {e}", exc_info=e)
         return []
 
 def usar_item_usuario(user_id, item_id):
@@ -389,7 +467,7 @@ def usar_item_usuario(user_id, item_id):
             """, (row_id,))
             return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error usando ítem: {e}")
+        logger.error(f"Error usando ítem: {e}", exc_info=e)
         return False
 
 def check_and_register_energy_use(user_id, item_id):
@@ -448,9 +526,8 @@ def check_and_register_energy_use(user_id, item_id):
                 """, (user_id, item_id))
                 return 'ok', None
     except Exception as e:
-        print(f"Error en check_and_register_energy_use: {e}")
-        # En caso de error de BD, por seguridad permitimos el uso
-        return 'ok', None
+        logger.error(f"Error en check_and_register_energy_use: {e}", exc_info=e)
+        return 'error', None
 
 def check_and_register_shield_use(user_id, shield_item_group_id=999):
     """
@@ -515,8 +592,8 @@ def check_and_register_shield_use(user_id, shield_item_group_id=999):
                 """, (user_id, shield_item_group_id))
                 return 'ok', None
     except Exception as e:
-        print(f"Error comprobando cooldown de escudos: {e}")
-        return 'ok', None
+        logger.error(f"Error comprobando cooldown de escudos: {e}", exc_info=e)
+        return 'error', None
 
 
 # Funciones para el sistema de dificultad dinámica
@@ -574,6 +651,9 @@ def _record_game_result_inner(cursor, user_id, game_type, bet_amount, result, wi
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (user_id, game_type, bet_amount, result_str.upper(), win_amount, datetime.now(), difficulty_applied, user_balance))
         
+        # Initialize default risk profile once for consistency
+        risk_profile = 'BALANCED'
+
         # Obtener estadísticas de UserGameStats
         cursor.execute("""
             SELECT TotalGamesPlayed, TotalWins, TotalLosses, TotalAmountBet, TotalAmountWon, WinRate, AvgBetSize, HotStreak, ColdStreak, RiskProfile, DifficultyLevel 
@@ -810,8 +890,14 @@ def claim_daily(user_id):
             elif last_login:
                 try:
                     last_login = datetime.strptime(str(last_login).split(' ')[0], '%Y-%m-%d').date()
-                except Exception:
-                    last_login = today - timedelta(days=2)
+                except Exception as exc:
+                    logger.warning(
+                        "No se pudo parsear LastLogin para user_id=%s (valor=%r): %s",
+                        user_id,
+                        last_login,
+                        exc
+                    )
+                    last_login = None
         else:
             last_login, streak, balance = None, 0, 500
             
@@ -869,6 +955,35 @@ def init_energia_db():
             WHERE Energia IS NULL OR UltimaRecarga IS NULL
         """, (tiempo_actual,))
 
+def _recalculate_energia(cursor, user_id: int, energia_actual: Optional[int], ultima_recarga: Optional[int]) -> int:
+    """
+    Recalcula la energía del usuario en base al tiempo transcurrido desde la última recarga.
+    Esta función encapsula la lógica de recarga automática para evitar duplicaciones y
+    divergencias de estado entre get_energia y consumir_energia.
+    """
+    import time
+    tiempo_actual = int(time.time())
+
+    if energia_actual is None or ultima_recarga is None:
+        energia_actual = 100
+        ultima_recarga = tiempo_actual
+        cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
+        return energia_actual
+
+    if energia_actual >= 100:
+        return energia_actual
+
+    tiempo_transcurrido = tiempo_actual - ultima_recarga
+    puntos_recarga = tiempo_transcurrido // 180
+    
+    if puntos_recarga > 0:
+        energia_actual = min(100, energia_actual + puntos_recarga)
+        ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+        cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
+
+    return energia_actual
+
+
 def get_energia(user_id: int) -> int:
     """Obtener la energía actual del usuario, aplicando recarga automática."""
     import time
@@ -883,29 +998,8 @@ def get_energia(user_id: int) -> int:
             return 100
         
         energia_actual, ultima_recarga = result[0], result[1]
-        
-        if energia_actual is None:
-            energia_actual = 100
-            ultima_recarga = int(time.time())
-            cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
-            return energia_actual
-        
-        if ultima_recarga is None:
-            ultima_recarga = int(time.time())
-            cursor.execute("UPDATE Users SET UltimaRecarga = %s WHERE UserID = %s", (ultima_recarga, user_id))
-            return energia_actual
-        
-        if energia_actual < 100:
-            tiempo_actual = int(time.time())
-            tiempo_transcurrido = tiempo_actual - ultima_recarga
-            puntos_recarga = tiempo_transcurrido // 180
-            
-            if puntos_recarga > 0:
-                energia_actual = min(100, energia_actual + puntos_recarga)
-                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
-                cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
-        
-        return energia_actual
+        return _recalculate_energia(cursor, user_id, energia_actual, ultima_recarga)
+
 
 def consumir_energia(user_id: int, cantidad: int) -> bool:
     """Consume energía de forma atómica. Retorna True si se descontó correctamente."""
@@ -920,21 +1014,10 @@ def consumir_energia(user_id: int, cantidad: int) -> bool:
         if not row:
             return False
 
-        energia_actual = row[0] if row[0] is not None else 100
-        ultima_recarga = row[1] if row[1] is not None else int(time.time())
-
-        if energia_actual < 100:
-            tiempo_actual = int(time.time())
-            puntos_recarga = (tiempo_actual - ultima_recarga) // 180
-            if puntos_recarga > 0:
-                energia_actual = min(100, energia_actual + puntos_recarga)
-                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+        energia_actual, ultima_recarga = row[0], row[1]
+        energia_actual = _recalculate_energia(cursor, user_id, energia_actual, ultima_recarga)
 
         if energia_actual < cantidad:
-            cursor.execute(
-                "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
-                (energia_actual, ultima_recarga, user_id),
-            )
             return False
 
         tiempo_actual = int(time.time())
@@ -1056,9 +1139,47 @@ def get_multiplayer_game(game_id: str):
     with db_cursor() as cursor:
         cursor.execute("SELECT GameState FROM ActiveMultiplayerGames WHERE GameID = %s", (game_id,))
         row = cursor.fetchone()
-        if row:
-            return row[0] if isinstance(row[0], dict) else json.loads(row[0])
-        return None
+        if not row:
+            return None
+
+        game_state = row[0]
+        if isinstance(game_state, dict):
+            return {
+                "status": "ok",
+                "state": game_state,
+            }
+
+        if isinstance(game_state, (str, bytes)):
+            try:
+                parsed_state = json.loads(game_state)
+                return {
+                    "status": "ok",
+                    "state": parsed_state,
+                }
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "Error al parsear GameState para GameID %s: %s (valor=%r)",
+                    game_id,
+                    exc,
+                    game_state,
+                )
+                return {
+                    "status": "invalid_state",
+                    "raw": game_state,
+                    "error": str(exc),
+                }
+
+        logger.warning(
+            "Tipo inesperado en GameState para GameID %s: %s (valor=%r)",
+            game_id,
+            type(game_state).__name__,
+            game_state,
+        )
+        return {
+            "status": "invalid_state",
+            "raw": game_state,
+            "error": "Unexpected data type",
+        }
 
 def delete_multiplayer_game(game_id: str):
     """Elimina un juego multijugador activo."""
@@ -1165,7 +1286,7 @@ RARITY_UPGRADE = {
 
 def get_fusionable_pets(user_id: int):
     """
-    Busca mascotas que el usuario tiene 5+ duplicados (mismo PetID).
+    Busca mascotas que el usuario tiene 5+ duplicados (mismo PetID), excluyendo la mascota activa.
     Retorna lista de dicts: [{pet_id, name, emoji, rarity, count}, ...]
     """
     with db_cursor() as cursor:
@@ -1173,7 +1294,7 @@ def get_fusionable_pets(user_id: int):
             SELECT up.PetID, pc.Name, pc.Emoji, pc.Rarity, COUNT(*) as cnt
             FROM UserPets up
             JOIN PetsCatalog pc ON up.PetID = pc.PetID
-            WHERE up.UserID = %s AND up.Status != 'Escapó'
+            WHERE up.UserID = %s AND up.Status != 'Escapó' AND COALESCE(up.IsActive, 0) = 0
             GROUP BY up.PetID, pc.Name, pc.Emoji, pc.Rarity
             HAVING COUNT(*) >= 5
             ORDER BY pc.Rarity DESC, cnt DESC
@@ -1187,17 +1308,17 @@ def get_fusionable_pets(user_id: int):
 
 def fuse_pets(user_id: int, pet_id: int):
     """
-    Fusiona 5 mascotas del mismo PetID en 1 mascota aleatoria de rareza superior.
+    Fusiona 5 mascotas inactivas del mismo PetID en 1 mascota aleatoria de rareza superior.
     Retorna (success: bool, result: dict o str).
     result dict: {new_pet_name, new_pet_emoji, new_rarity, new_user_pet_id, flavor_text, is_mythic_boost}
     """
     with db_cursor() as cursor:
-        # 1. Verificar que tiene al menos 5 del mismo PetID
+        # 1. Verificar que tiene al menos 5 del mismo PetID (excluyendo activa)
         cursor.execute("""
             SELECT up.UserPetID
             FROM UserPets up
-            WHERE up.UserID = %s AND up.PetID = %s AND up.Status != 'Escapó'
-            ORDER BY up.IsActive ASC, up.Loyalty ASC
+            WHERE up.UserID = %s AND up.PetID = %s AND up.Status != 'Escapó' AND COALESCE(up.IsActive, 0) = 0
+            ORDER BY up.Loyalty ASC
             LIMIT 5
         """, (user_id, pet_id))
         victims = cursor.fetchall()
@@ -1288,34 +1409,42 @@ def registrar_mina_pisada(user_id):
 
 def get_top_minas(limit=10, member_ids=None):
     """Obtiene el top de usuarios que más minas han pisado."""
+    if member_ids is not None and len(member_ids) == 0:
+        return []
+
     with db_cursor() as cursor:
+        base_query = """
+            SELECT m.UserID, m.MinasPisadas, u.UserName
+            FROM MinaStats m
+            LEFT JOIN Users u ON m.UserID = u.UserID
+        """
+
+        params = []
+
         if member_ids:
             if len(member_ids) == 1:
-                cursor.execute("""
-                    SELECT m.UserID, m.MinasPisadas, u.UserName 
-                    FROM MinaStats m
-                    LEFT JOIN Users u ON m.UserID = u.UserID
-                    WHERE m.UserID = %s
-                    ORDER BY m.MinasPisadas DESC
-                    LIMIT %s
-                """, (member_ids[0], limit))
+                query = base_query + """
+            WHERE m.UserID = %s
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+                """
+                params = [member_ids[0], limit]
             else:
-                cursor.execute("""
-                    SELECT m.UserID, m.MinasPisadas, u.UserName 
-                    FROM MinaStats m
-                    LEFT JOIN Users u ON m.UserID = u.UserID
-                    WHERE m.UserID IN %s
-                    ORDER BY m.MinasPisadas DESC
-                    LIMIT %s
-                """, (tuple(member_ids), limit))
+                placeholders = ", ".join(["%s"] * len(member_ids))
+                query = base_query + f"""
+            WHERE m.UserID IN ({placeholders})
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+                """
+                params = list(member_ids) + [limit]
         else:
-            cursor.execute("""
-                SELECT m.UserID, m.MinasPisadas, u.UserName 
-                FROM MinaStats m
-                LEFT JOIN Users u ON m.UserID = u.UserID
-                ORDER BY m.MinasPisadas DESC
-                LIMIT %s
-            """, (limit,))
+            query = base_query + """
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+            """
+            params = [limit]
+
+        cursor.execute(query, params)
         return cursor.fetchall()
 
 def get_user_ticket_count(user_id):
@@ -1713,6 +1842,7 @@ def init_db():
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefXP BIGINT DEFAULT 0")
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS RobosFallidosConsecutivos INT DEFAULT 0")
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ShieldExpiry TIMESTAMP")
+            cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS LastBancoRoboTime TIMESTAMP")
             
             # Tabla: RoboLog
             cursor.execute("""
@@ -2876,13 +3006,12 @@ def insert_gem(user_id, slot, gem_key):
         if eq_row[0] is not None:
             return False, "Este slot ya tiene una gema equipada. Remuévela primero."
 
-    # Cobrar el precio de la gema
-    success, current_balance = spend_combat_currency(user_id, gem_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(gem_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar el precio de la gema
+        success, current_balance = spend_combat_currency(user_id, gem_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(gem_price)} (tienes {format_currency(current_balance)})."
 
-    # Realizar UPDATE
-    with db_cursor() as cursor:
+        # Realizar UPDATE
         cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
         return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}**."
 
@@ -2905,12 +3034,11 @@ def remove_gem(user_id, slot):
         gem_key, price, gem_name = row[0], row[1], row[2]
         cost = price // 2
 
-    # Cobrar la mitad del precio
-    success, current_balance = spend_combat_currency(user_id, cost)
-    if not success:
-        return False, f"No tienes suficiente Bronce para remover la gema. Requiere {format_currency(cost)} (tienes {format_currency(current_balance)})."
+        # Cobrar la mitad del precio
+        success, current_balance = spend_combat_currency(user_id, cost, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce para remover la gema. Requiere {format_currency(cost)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("UPDATE UserEquipment SET GemKey = NULL WHERE UserID = %s AND Slot = %s", (user_id, slot))
         return True, f"Removiste **{gem_name}** de tu pieza de **{slot}** por un costo de {format_currency(cost)}."
 
@@ -3227,12 +3355,11 @@ def buy_consumable(user_id, consumable_key, quantity=1):
         price, name = row[0], row[1]
         total_cost = price * quantity
 
-    # Cobrar total
-    success, current_balance = spend_combat_currency(user_id, total_cost)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(total_cost)} (tienes {format_currency(current_balance)})."
+        # Cobrar total
+        success, current_balance = spend_combat_currency(user_id, total_cost, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(total_cost)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("""
             INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
             VALUES (%s, %s, %s)
@@ -3277,12 +3404,11 @@ def buy_consumable_discounted(user_id, consumable_key, discounted_price):
             return False, "El consumible especificado no existe."
         name = row[0]
 
-    # Cobrar
-    success, current_balance = spend_combat_currency(user_id, discounted_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar
+        success, current_balance = spend_combat_currency(user_id, discounted_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("""
             INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
             VALUES (%s, %s, 1)
@@ -3310,12 +3436,11 @@ def insert_gem_discounted(user_id, slot, gem_key, discounted_price):
         if eq_row[0] is not None:
             return False, "Este slot ya tiene una gema equipada. Remuévela primero."
 
-    # Cobrar
-    success, current_balance = spend_combat_currency(user_id, discounted_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar
+        success, current_balance = spend_combat_currency(user_id, discounted_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
         return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}** por {format_currency(discounted_price)}."
 
@@ -3440,41 +3565,23 @@ def pagar_recompensa_trabajo(user_id, recompensa_bruta: int, tipo_trabajo: str) 
             if mora_loans:
                 target_slot = mora_loans[0][0]
                 # Aplicar retención al préstamo seleccionado
-                is_mock = hasattr(cursor, '__class__') and cursor.__class__.__name__ == 'MagicMock'
-                if is_mock:
-                    cursor.execute("""
-                UPDATE UserLoans
-                SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
-                WHERE UserID = %s
-                RETURNING MontoAdeudado
-            """, (retencion, user_id))
-                else:
-                    cursor.execute("""
-                        UPDATE UserLoans
-                        SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
-                        WHERE UserID = %s AND LoanSlot = %s
-                        RETURNING MontoAdeudado
-                    """, (retencion, user_id, target_slot))
+                cursor.execute("""
+                    UPDATE UserLoans
+                    SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
+                    WHERE UserID = %s AND LoanSlot = %s
+                    RETURNING MontoAdeudado
+                """, (retencion, user_id, target_slot))
                 row_loan = cursor.fetchone()
                 nuevo_monto = row_loan[0] if row_loan else 0
 
                 if nuevo_monto <= 0:
-                    if is_mock:
-                        cursor.execute("""
-                    UPDATE UserLoans
-                    SET FechaPrestamo = NULL,
-                        FechaVencimiento = NULL,
-                        EnMora = FALSE
-                    WHERE UserID = %s
-                """, (user_id,))
-                    else:
-                        cursor.execute("""
-                            UPDATE UserLoans
-                            SET FechaPrestamo = NULL,
-                                FechaVencimiento = NULL,
-                                EnMora = FALSE
-                            WHERE UserID = %s AND LoanSlot = %s
-                        """, (user_id, target_slot))
+                    cursor.execute("""
+                        UPDATE UserLoans
+                        SET FechaPrestamo = NULL,
+                            FechaVencimiento = NULL,
+                            EnMora = FALSE
+                        WHERE UserID = %s AND LoanSlot = %s
+                    """, (user_id, target_slot))
 
             cursor.execute(
                 "UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1",
@@ -3518,42 +3625,48 @@ def cobrar_cuotas_proteccion_db() -> list:
     resultados = []
     
     with db_cursor() as cursor:
-        cursor.execute("SELECT UserID, Balance FROM Users WHERE Balance > 500000 FOR UPDATE")
+        cursor.execute("""
+            SELECT u.UserID, u.Balance, COALESCE(up.PrestigeLevel, 0)
+            FROM Users u
+            LEFT JOIN UserPrestige up ON u.UserID = up.UserID
+            WHERE u.Balance > 500000 FOR UPDATE OF u
+        """)
         usuarios = cursor.fetchall()
         
-        for user_id, balance in usuarios:
+        for user_id, balance, prestige_level in usuarios:
             excedente = balance - 500000
-            cuota = 0.0
+            cuota = 0
             
-            # Tramo 1: hasta 10M (1%)
+            # Tramo 1: hasta 10M (1% = 100 bps)
             t1 = min(excedente, 10000000)
-            cuota += t1 * 0.01
+            cuota += (t1 * 100) // 10000
             excedente -= t1
             
             if excedente > 0:
-                # Tramo 2: de 10M a 100M (2%)
+                # Tramo 2: de 10M a 100M (2% = 200 bps)
                 t2 = min(excedente, 90000000)
-                cuota += t2 * 0.02
+                cuota += (t2 * 200) // 10000
                 excedente -= t2
                 
             if excedente > 0:
-                # Tramo 3: de 100M a 1000M (3%)
+                # Tramo 3: de 100M a 1000M (3% = 300 bps)
                 t3 = min(excedente, 900000000)
-                cuota += t3 * 0.03
+                cuota += (t3 * 300) // 10000
                 excedente -= t3
                 
             if excedente > 0:
-                # Tramo 4: más de 1000M (5%)
-                cuota += excedente * 0.05
+                # Tramo 4: más de 1000M (5% = 500 bps)
+                cuota += (excedente * 500) // 10000
                 
-            cuota_entera = int(cuota)
-            if get_user_prestige_level(user_id) >= 2:
-                cuota_entera = int(cuota_entera * 0.80)
-            if cuota_entera <= 0:
+            if prestige_level >= 2:
+                # Aplicar 20% descuento -> multiplicar por 8000 bps (80%)
+                cuota = (cuota * 8000) // 10000
+                
+            if cuota <= 0:
                 continue
                 
-            cobrado = min(cuota_entera, balance)
-            exito = (cobrado == cuota_entera)
+            cobrado = min(cuota, balance)
+            exito = (cobrado == cuota)
             nuevo_balance = balance - cobrado
             
             # Descontar saldo
@@ -3718,7 +3831,7 @@ def pagar_bonos_prestigio_mensuales_db() -> list:
     return resultados
 
 
-def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
+def start_investment_db(user_id: int, amount: int) -> InvestmentStartResult:
     """Operación de DB para iniciar una inversión. Bloqueante."""
     from datetime import datetime, timedelta
     
@@ -3731,24 +3844,47 @@ def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
         """, (user_id,))
         active_inv = cursor.fetchone()
         if active_inv:
-            return False, "❌ Ya tienes una inversión activa en curso. Debes esperar a que venza."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="ACTIVE_INVESTMENT_EXISTS"
+            )
             
         # 2. Verificar si está en mora en algún préstamo
         cursor.execute("SELECT 1 FROM UserLoans WHERE UserID = %s AND EnMora = TRUE", (user_id,))
         if cursor.fetchone():
-            return False, "❌ Estás en **mora** en uno de tus préstamos. No puedes realizar inversiones con el Banco Central."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="IN_MORA"
+            )
             
         # 3. Verificar saldo suficiente
         cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
         bal_row = cursor.fetchone()
         balance = bal_row[0] if bal_row else 0
         if balance < amount:
-            return False, f"❌ No tienes suficiente saldo para invertir {amount:,} monedas. Saldo actual: {balance:,} monedas."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                new_balance=balance,
+                reason="INSUFFICIENT_FUNDS"
+            )
             
         # 4. Descontar saldo
         cursor.execute("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (amount, user_id))
-        if not cursor.fetchone():
-            return False, "❌ Error al descontar saldo. Inténtalo de nuevo."
+        row = cursor.fetchone()
+        if not row:
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="DB_ERROR"
+            )
+        new_balance = row[0]
             
         # 5. Insertar / Upsert inversión
         ahora = datetime.now()
@@ -3766,7 +3902,14 @@ def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
         # Registrar transacción
         registrar_transaccion(user_id, -amount, "Banco Central: Inversión", cursor=cursor)
         
-        return True, f"✅ ¡Inversión de **{amount:,}** monedas iniciada! Vencerá el {vencimiento.strftime('%d/%m/%Y a las %H:%M')}."
+        return InvestmentStartResult(
+            success=True,
+            user_id=user_id,
+            amount=amount,
+            new_balance=new_balance,
+            started_at=ahora,
+            vencimiento=vencimiento
+        )
 
 
 def resolve_matured_investments_db() -> dict:
@@ -3796,7 +3939,12 @@ def resolve_matured_investments_db() -> dict:
         weights = [15, 25, 20, 25, 15]
         
         for user_id, monto, inicio, venc in matured:
-            outcome = random.choices(outcomes, weights=weights, k=1)[0]
+            seed_str = f"{user_id}:{monto}:{inicio.isoformat()}"
+            seed_hash = hashlib.sha256(seed_str.encode('utf-8')).hexdigest()
+            seed_int = int(seed_hash, 16) % (2**32)
+            
+            local_rng = random.Random(seed_int)
+            outcome = local_rng.choices(outcomes, weights=weights, k=1)[0]
             mult, label = outcome
             
             payout = int(monto * mult)

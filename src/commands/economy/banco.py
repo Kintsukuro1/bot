@@ -359,33 +359,33 @@ class BancoCog(commands.Cog):
         proyeccion = 0
         if balance > 500000:
             excedente = balance - 500000
-            cuota = 0.0
+            cuota = 0
             
-            # Tramo 1: hasta 10M
+            # Tramo 1: hasta 10M (1% = 100 bps)
             t1 = min(excedente, 10000000)
-            cuota += t1 * 0.01
+            cuota += (t1 * 100) // 10000
             excedente -= t1
             
             if excedente > 0:
-                # Tramo 2: de 10M a 100M
+                # Tramo 2: de 10M a 100M (2% = 200 bps)
                 t2 = min(excedente, 90000000)
-                cuota += t2 * 0.02
+                cuota += (t2 * 200) // 10000
                 excedente -= t2
                 
             if excedente > 0:
-                # Tramo 3: de 100M a 1000M
+                # Tramo 3: de 100M a 1000M (3% = 300 bps)
                 t3 = min(excedente, 900000000)
-                cuota += t3 * 0.03
+                cuota += (t3 * 300) // 10000
                 excedente -= t3
                 
             if excedente > 0:
-                # Tramo 4: más de 1000M
-                cuota += excedente * 0.05
+                # Tramo 4: más de 1000M (5% = 500 bps)
+                cuota += (excedente * 500) // 10000
                 
-            proyeccion = int(cuota)
+            proyeccion = cuota
             prestige_lvl = await asyncio.to_thread(get_user_prestige_level, user_id)
             if prestige_lvl >= 2:
-                proyeccion = int(proyeccion * 0.80)
+                proyeccion = (proyeccion * 8000) // 10000
 
         # Calcular estado del escudo extendido
         activo = False
@@ -537,25 +537,35 @@ class BancoCog(commands.Cog):
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
 
-        success, mensaje = await BankService.start_investment(user_id, monto)
+        result = await BankService.start_investment(user_id, monto)
         
-        color = discord.Color.green() if success else discord.Color.red()
-        titulo = "🏦 Inversión Iniciada" if success else "🏦 Error al Invertir"
-
-        embed = discord.Embed(title=titulo, description=mensaje, color=color)
-        
-        if success:
-            vencimiento = datetime.now() + timedelta(days=7)
+        if result.success:
+            color = discord.Color.green()
+            titulo = "🏦 Inversión Iniciada"
+            mensaje = f"✅ ¡Inversión de **{monto:,}** monedas iniciada! Vencerá el {result.vencimiento.strftime('%d/%m/%Y a las %H:%M')}."
+            embed = discord.Embed(title=titulo, description=mensaje, color=color)
             embed.add_field(
                 name="📊 Detalles de la Inversión",
                 value=(
                     f"🔒 **Monto Bloqueado:** `{monto:,}` monedas\n"
-                    f"📅 **Vencimiento:** `{vencimiento.strftime('%d/%m/%Y %H:%M')}`\n"
+                    f"📅 **Vencimiento:** `{result.vencimiento.strftime('%d/%m/%Y %H:%M')}`\n"
                     f"⚠️ **Nota:** No se permite el retiro anticipado. Los fondos se liberarán automáticamente al vencer."
                 ),
                 inline=False
             )
             embed.set_footer(text="¡Suerte con tu inversión!")
+        else:
+            color = discord.Color.red()
+            titulo = "🏦 Error al Invertir"
+            if result.reason == "ACTIVE_INVESTMENT_EXISTS":
+                mensaje = "❌ Ya tienes una inversión activa en curso. Debes esperar a que venza."
+            elif result.reason == "IN_MORA":
+                mensaje = "❌ Estás en **mora** en uno de tus préstamos. No puedes realizar inversiones con el Banco Central."
+            elif result.reason == "INSUFFICIENT_FUNDS":
+                mensaje = f"❌ No tienes suficiente saldo para invertir {monto:,} monedas. Saldo actual: {result.new_balance:,} monedas."
+            else:
+                mensaje = "❌ Error al descontar saldo o procesar la inversión. Inténtalo de nuevo."
+            embed = discord.Embed(title=titulo, description=mensaje, color=color)
             
         await interaction.followup.send(embed=embed)
 

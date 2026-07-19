@@ -84,9 +84,12 @@ class PescadorView(discord.ui.View):
                         )
                         return
                 else:
-                    hours = time_remaining // 3600
-                    minutes = (time_remaining % 3600) // 60
-                    await interaction.followup.send(f"⚠️ **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).", ephemeral=True)
+                    if status == 'error':
+                        await interaction.followup.send("⚠️ **No se pudo usar tu Amuleto de Protección debido a un error de base de datos.**", ephemeral=True)
+                    else:
+                        hours = time_remaining // 3600
+                        minutes = (time_remaining % 3600) // 60
+                        await interaction.followup.send(f"⚠️ **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).", ephemeral=True)
             await self._completar_trabajo(interaction, exito=False, motivo="rotura" if self.tension >= 100 else "escape")
             return
             
@@ -140,9 +143,12 @@ class PescadorView(discord.ui.View):
                         )
                         return
                 else:
-                    hours = time_remaining // 3600
-                    minutes = (time_remaining % 3600) // 60
-                    await interaction.followup.send(f"⚠️ **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).", ephemeral=True)
+                    if status == 'error':
+                        await interaction.followup.send("⚠️ **No se pudo usar tu Amuleto de Protección debido a un error de base de datos.**", ephemeral=True)
+                    else:
+                        hours = time_remaining // 3600
+                        minutes = (time_remaining % 3600) // 60
+                        await interaction.followup.send(f"⚠️ **No pudiste usar tu Amuleto de Protección.** Estás bloqueado por cooldown de escudos (Restante: {hours}h {minutes:02d}m).", ephemeral=True)
             await self._completar_trabajo(interaction, exito=False, motivo="rotura" if self.tension >= 100 else "escape")
             return
             

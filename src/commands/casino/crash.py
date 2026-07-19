@@ -123,9 +123,12 @@ class Crash(commands.Cog):
                             "Cooldown de 24h iniciado."
                         )
                 else:
-                    hours = time_remaining // 3600
-                    minutes = (time_remaining % 3600) // 60
-                    msg_cooldown_ticket = f"⚠️ **No se pudo usar tu Ticket de Crash.** Bloqueado por cooldown de ticket ({hours}h {minutes:02d}m restantes)."
+                    if status == 'error':
+                        msg_cooldown_ticket = "⚠️ **No se pudo usar tu Ticket de Crash debido a un error de base de datos.**"
+                    else:
+                        hours = time_remaining // 3600
+                        minutes = (time_remaining % 3600) // 60
+                        msg_cooldown_ticket = f"⚠️ **No se pudo usar tu Ticket de Crash.** Bloqueado por cooldown de ticket ({hours}h {minutes:02d}m restantes)."
 
         desc_msg = (
             f"💰 **Apuesta:** {apuesta} monedas\n"
