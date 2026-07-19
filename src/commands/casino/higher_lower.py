@@ -24,7 +24,8 @@ async def _prepare_higher_lower_db(user_id, user_name, apuesta):
     return success, saldo, difficulty_modifier, difficulty_explanation
 
 CARD_SUITS = ['♠️', '♥️', '♦️', '♣️']
-CARD_NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'JHOUSE_EDGE = 0.05
+CARD_NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+HOUSE_EDGE = 0.05
 
 class HigherLowerView(discord.ui.View):
     def __init__(self, user, apuesta: int, saldo: int, difficulty_modifier: float, difficulty_explanation: str):
