@@ -30,11 +30,13 @@ class BancoCog(commands.Cog):
         self.daily_interest_task.start()
         self.daily_protection_fee_task.start()
         self.monthly_prestige_bonus_task.start()
+        self.daily_investment_resolution_task.start()
 
     def cog_unload(self):
         self.daily_interest_task.cancel()
         self.daily_protection_fee_task.cancel()
         self.monthly_prestige_bonus_task.cancel()
+        self.daily_investment_resolution_task.cancel()
 
     # ──────────────────────────────────────────────
     # TAREAS DIARIAS (INTERÉS Y CUOTA DE PROTECCIÓN)
@@ -135,6 +137,55 @@ class BancoCog(commands.Cog):
 
     @monthly_prestige_bonus_task.before_loop
     async def before_monthly_prestige_bonus(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(time=time(hour=4, minute=0, second=0))
+    async def daily_investment_resolution_task(self):
+        """Revisa e inscribe los resultados de todas las inversiones de plazo fijo que han vencido."""
+        logger.info("[BancoCentral] Resolviendo inversiones de plazo fijo vencidas...")
+        try:
+            resultado = await BankService.resolve_matured_investments()
+            if resultado['count'] > 0:
+                logger.info(
+                    f"[BancoCentral] Inversiones resueltas: {resultado['count']} procesadas, "
+                    f"total pagado: {resultado['total_payout']:,} monedas."
+                )
+                # Notificar a cada usuario por DM
+                for res in resultado['results']:
+                    user_id = res['user_id']
+                    monto_inicial = res['monto_inicial']
+                    payout = res['payout']
+                    diff = res['diff']
+                    label = res['label']
+                    mult = res['mult']
+                    
+                    user = self.bot.get_user(user_id)
+                    if not user:
+                        try:
+                            user = await self.bot.fetch_user(user_id)
+                        except Exception:
+                            pass
+                    
+                    if user:
+                        try:
+                            sign = "+" if diff >= 0 else ""
+                            emoji = "📈" if diff > 0 else ("📉" if diff < 0 else "🟰")
+                            await user.send(
+                                f"🏦 **¡Tu Inversión en el Banco Central ha vencido!** {emoji}\n\n"
+                                f"💰 **Monto Invertido:** {monto_inicial:,} monedas\n"
+                                f"📊 **Resultado:** *{label}* (Multiplicador: x{mult:.2f})\n"
+                                f"💵 **Monto Recibido:** {payout:,} monedas\n"
+                                f"✨ **Diferencia:** `{sign}{diff:,}` monedas"
+                            )
+                        except Exception as dm_err:
+                            logger.warning(f"[BancoCentral] No se pudo enviar DM de inversión al usuario {user_id}: {dm_err}")
+            else:
+                logger.info("[BancoCentral] No hay inversiones de plazo fijo vencidas hoy.")
+        except Exception as e:
+            logger.error(f"[BancoCentral] Error en tarea de resolución de inversiones: {e}")
+
+    @daily_investment_resolution_task.before_loop
+    async def before_daily_investment_resolution(self):
         await self.bot.wait_until_ready()
 
     # ──────────────────────────────────────────────
@@ -413,6 +464,9 @@ class BancoCog(commands.Cog):
             # 3. Pagar bonos de prestigio mensual
             resultado_bonos = await asyncio.to_thread(pagar_bonos_prestigio_mensuales_db)
 
+            # 4. Resolver inversiones vencidas
+            resultado_inversiones = await BankService.resolve_matured_investments()
+
             embed = discord.Embed(
                 title="🏦 Ciclo Bancario Diario Aplicado (Manual)",
                 color=discord.Color.blue(),
@@ -426,11 +480,161 @@ class BancoCog(commands.Cog):
             embed.add_field(name="Total recaudado por protección", value=f"{total_cobrado_cuotas:,} monedas", inline=True)
             
             embed.add_field(name="Bonos Prestigio: Pagados", value=str(len(resultado_bonos)), inline=True)
+            embed.add_field(name="Inversiones: Resueltas", value=str(resultado_inversiones['count']), inline=True)
+            embed.add_field(name="Inversiones: Total pagado", value=f"{resultado_inversiones['total_payout']:,} monedas", inline=True)
             
+            # Notificar a los usuarios de las inversiones resueltas manualmente
+            if resultado_inversiones['count'] > 0:
+                for res in resultado_inversiones['results']:
+                    user_id = res['user_id']
+                    monto_inicial = res['monto_inicial']
+                    payout = res['payout']
+                    diff = res['diff']
+                    label = res['label']
+                    mult = res['mult']
+                    
+                    user = self.bot.get_user(user_id)
+                    if not user:
+                        try:
+                            user = await self.bot.fetch_user(user_id)
+                        except Exception:
+                            pass
+                    if user:
+                        try:
+                            sign = "+" if diff >= 0 else ""
+                            emoji = "📈" if diff > 0 else ("📉" if diff < 0 else "🟰")
+                            await user.send(
+                                f"🏦 **¡Tu Inversión en el Banco Central ha vencido! (Manual Tick)** {emoji}\n\n"
+                                f"💰 **Monto Invertido:** {monto_inicial:,} monedas\n"
+                                f"📊 **Resultado:** *{label}* (Multiplicador: x{mult:.2f})\n"
+                                f"💵 **Monto Recibido:** {payout:,} monedas\n"
+                                f"✨ **Diferencia:** `{sign}{diff:,}` monedas"
+                            )
+                        except Exception as dm_err:
+                            logger.warning(f"[BancoCentral] No se pudo enviar DM de inversión manual al usuario {user_id}: {dm_err}")
+
             await interaction.followup.send(embed=embed)
         except Exception as e:
             logger.error(f"[BancoCentral] Error en banco_tick: {e}")
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    # ──────────────────────────────────────────────
+    # COMANDO /banco_invertir
+    # ──────────────────────────────────────────────
+
+    @app_commands.command(
+        name="banco_invertir",
+        description="Invierte monedas a plazo fijo por 7 días con riesgo de ganancia/pérdida."
+    )
+    @app_commands.describe(monto="Cantidad de monedas a invertir")
+    @ECONOMY_COOLDOWN
+    async def banco_invertir(self, interaction: discord.Interaction, monto: int):
+        if monto <= 0:
+            await interaction.response.send_message("❌ El monto a invertir debe ser mayor a 0.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
+
+        success, mensaje = await BankService.start_investment(user_id, monto)
+        
+        color = discord.Color.green() if success else discord.Color.red()
+        titulo = "🏦 Inversión Iniciada" if success else "🏦 Error al Invertir"
+
+        embed = discord.Embed(title=titulo, description=mensaje, color=color)
+        
+        if success:
+            vencimiento = datetime.now() + timedelta(days=7)
+            embed.add_field(
+                name="📊 Detalles de la Inversión",
+                value=(
+                    f"🔒 **Monto Bloqueado:** `{monto:,}` monedas\n"
+                    f"📅 **Vencimiento:** `{vencimiento.strftime('%d/%m/%Y %H:%M')}`\n"
+                    f"⚠️ **Nota:** No se permite el retiro anticipado. Los fondos se liberarán automáticamente al vencer."
+                ),
+                inline=False
+            )
+            embed.set_footer(text="¡Suerte con tu inversión!")
+            
+        await interaction.followup.send(embed=embed)
+
+    # ──────────────────────────────────────────────
+    # COMANDO /banco_inversion
+    # ──────────────────────────────────────────────
+
+    @app_commands.command(
+        name="banco_inversion",
+        description="Muestra el estado de tu inversión activa en el Banco Central."
+    )
+    async def banco_inversion(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
+
+        inv = await BankService.get_active_investment(user_id)
+        
+        embed = discord.Embed(
+            title="🏦 Tu Inversión Activa",
+            color=discord.Color.blue(),
+            timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
+        )
+
+        if inv:
+            monto = inv['Monto']
+            inicio = inv['FechaInicio']
+            venc = inv['FechaVencimiento']
+            
+            if venc.tzinfo is not None:
+                venc = venc.replace(tzinfo=None)
+            
+            restante = venc - datetime.now()
+            if restante.total_seconds() > 0:
+                days = restante.days
+                hours, remainder = divmod(restante.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                
+                time_parts = []
+                if days > 0:
+                    time_parts.append(f"{days} día{'s' if days != 1 else ''}")
+                if hours > 0:
+                    time_parts.append(f"{hours} hora{'s' if hours != 1 else ''}")
+                if minutes > 0:
+                    time_parts.append(f"{minutes} minuto{'s' if minutes != 1 else ''}")
+                    
+                tiempo_restante_str = ", ".join(time_parts) if time_parts else "menos de un minuto"
+            else:
+                tiempo_restante_str = "Vencida (se resolverá en el próximo ciclo)"
+
+            embed.description = "Tienes una inversión a plazo fijo en curso."
+            embed.add_field(
+                name="💰 Monto Invertido",
+                value=f"`{monto:,}` monedas",
+                inline=True
+            )
+            embed.add_field(
+                name="⏱️ Tiempo Restante",
+                value=f"`{tiempo_restante_str}`",
+                inline=True
+            )
+            embed.add_field(
+                name="📅 Fechas",
+                value=(
+                    f"**Inicio:** {inicio.strftime('%d/%m/%Y %H:%M')}\n"
+                    f"**Vencimiento:** {venc.strftime('%d/%m/%Y %H:%M')}"
+                ),
+                inline=False
+            )
+            embed.set_footer(text="Los fondos se acreditarán con un rendimiento variable al vencer.")
+        else:
+            embed.description = (
+                "❌ **No tienes ninguna inversión activa en este momento.**\n\n"
+                "💡 Puedes empezar una usando `/banco_invertir <monto>`.\n"
+                "Invertirás monedas por 7 días fijos con retorno variable."
+            )
+            embed.set_footer(text="Riesgo real: pérdida de capital posible.")
+            
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

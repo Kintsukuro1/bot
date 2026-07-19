@@ -36,10 +36,15 @@ class Slots(commands.Cog):
                 DynamicDifficulty.calculate_dynamic_difficulty, user_id, apuesta, 'slots'
             )
 
-            symbols = ['🍒', '🍋', '🍉', '🍇', '🔔', '🍀', '⭐', '💎']
+            SYMBOL_WEIGHTS = {
+                '🍒': 100, '🍋': 70, '🍉': 45, '🍇': 35,
+                '🔔': 22, '🍀': 14, '⭐': 6, '💎': 3,
+            }
+            symbols = list(SYMBOL_WEIGHTS.keys())
+            weights = list(SYMBOL_WEIGHTS.values())
             
-            # 1. Tirar rodillos naturalmente
-            result = [random.choice(symbols) for _ in range(3)]
+            # 1. Tirar rodillos naturalmente con pesos ponderados
+            result = random.choices(symbols, weights=weights, k=3)
             
             # --- MEJORAS BLACK MARKET ---
             prob_bonus = 0.0
@@ -59,7 +64,7 @@ class Slots(commands.Cog):
 
             # Si el jugador tiene "Suerte Eterna", forzar un par si no se sacó nada
             if unique_count == 3 and prob_bonus > 0 and random.random() < prob_bonus:
-                sym = random.choice(symbols)
+                sym = random.choices(symbols, weights=weights, k=1)[0]
                 result = [sym, sym, random.choice([s for s in symbols if s != sym])]
                 unique_count = len(set(result))
 
@@ -127,7 +132,7 @@ class Slots(commands.Cog):
                 profit = winnings - apuesta
 
                 winnings_total = winnings
-                nuevo_saldo = await CasinoService.settle_win(
+                nuevo_saldo, impuesto = await CasinoService.settle_win(
                     user_id,
                     apuesta,
                     winnings_total,
@@ -143,7 +148,14 @@ class Slots(commands.Cog):
                 title = '🎰 ¡Felicidades! ¡Has ganado!'
                 color = discord.Color.green()
                 footer = f"{payout_desc}{ticket_desc}"
-                desc = f'**[ {result_display} ]**\n\n💰 Apuesta: **{apuesta}** monedas\n🎉 Premio: **{winnings:,}** monedas\n🪙 Nuevo saldo: **{nuevo_saldo:,}** monedas'
+                desc = (
+                    f'**[ {result_display} ]**\n\n'
+                    f'💰 Apuesta: **{apuesta}** monedas\n'
+                    f'🎉 Premio Bruto: **{winnings:,}** monedas\n'
+                    f'💸 Impuesto Casino (3%): **{impuesto:,}** monedas (destruido)\n'
+                    f'✨ Premio Neto: **{winnings - impuesto:,}** monedas\n'
+                    f'🪙 Nuevo saldo: **{nuevo_saldo:,}** monedas'
+                )
             else:
                 nuevo_saldo = await CasinoService.settle_loss(
                     user_id,

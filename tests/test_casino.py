@@ -47,16 +47,17 @@ class TestCasinoService(unittest.TestCase):
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
         # Settle a win of 2000 coins on a 1000 coin bet
-        nuevo_saldo = asyncio.run(
+        nuevo_saldo, impuesto = asyncio.run(
             CasinoService.settle_win(12345, 1000, 2000, "slots", 0.0, 3000)
         )
         
-        self.assertEqual(nuevo_saldo, 5000)
-        # Verificar que se añade el premio y se registra el resultado
+        self.assertEqual(nuevo_saldo, 4940) # 2000 - 3% (60) = 1940. 3000 + 1940 = 4940
+        self.assertEqual(impuesto, 60)
+        # Verificar que se añade el premio neto y se registra el resultado
         mock_cursor.execute.assert_any_call("""
             INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
             ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
-            """, (12345, 2000))
+            """, (12345, 1940))
 
     @patch('src.db.db_cursor')
     def test_settle_loss(self, mock_db_cursor):

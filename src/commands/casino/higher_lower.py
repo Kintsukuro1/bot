@@ -24,7 +24,7 @@ async def _prepare_higher_lower_db(user_id, user_name, apuesta):
     return success, saldo, difficulty_modifier, difficulty_explanation
 
 CARD_SUITS = ['♠️', '♥️', '♦️', '♣️']
-CARD_NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+CARD_NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'JHOUSE_EDGE = 0.05
 
 class HigherLowerView(discord.ui.View):
     def __init__(self, user, apuesta: int, saldo: int, difficulty_modifier: float, difficulty_explanation: str):
@@ -41,9 +41,13 @@ class HigherLowerView(discord.ui.View):
         self.total_multiplier = 1.0
         self.game_over = False
         self.max_rounds = 5
+        self.mult_higher = 0.0
+        self.mult_lower = 0.0
         
         # Generar primera carta
         self._generate_new_card()
+        # Calcular multiplicadores e inicializar botones
+        self._update_buttons_and_multipliers()
     
     def _generate_new_card(self):
         """Genera una nueva carta aleatoria."""
@@ -54,54 +58,67 @@ class HigherLowerView(discord.ui.View):
             'value': CARD_VALUES[name]
         }
     
-    def _generate_next_card_with_difficulty(self, player_choice: str):
-        """
-        Genera la siguiente carta aplicando dificultad dinámica (mediante redraw sutil).
-        """
+    def _generate_next_card(self):
+        """Genera la siguiente carta de forma natural sin empates con la actual."""
         if not self.current_card:
             return
             
         current_value = self.current_card['value']
         
-        # 1. Generar carta de forma 100% natural (sin empates)
         while True:
             next_name = random.choice(CARD_NAMES)
             next_value = CARD_VALUES[next_name]
             if next_value != current_value:
                 break
-        
-        # Evaluar si el jugador acertaría con esta carta
-        user_correct = False
-        if player_choice == 'higher' and next_value > current_value:
-            user_correct = True
-        elif player_choice == 'lower' and next_value < current_value:
-            user_correct = True
-            
-        # 2. Aplicar redraw sutil según dificultad
-        if self.difficulty_modifier > 0 and user_correct:
-            # Pequeña probabilidad de volver a barajar si es demasiado suertudo
-            penalty_chance = self.difficulty_modifier * 0.4 + (self.round_number - 1) * 0.05
-            if random.random() < min(0.6, penalty_chance):
-                while True:
-                    next_name = random.choice(CARD_NAMES)
-                    next_value = CARD_VALUES[next_name]
-                    if next_value != current_value:
-                        break
-        elif self.difficulty_modifier < 0 and not user_correct:
-            # Pequeña probabilidad de salvarlo de fallar si es desafortunado
-            save_chance = abs(self.difficulty_modifier) * 0.4
-            if random.random() < min(0.5, save_chance):
-                while True:
-                    next_name = random.choice(CARD_NAMES)
-                    next_value = CARD_VALUES[next_name]
-                    if next_value != current_value:
-                        break
-
+                
         self.next_card = {
             'name': next_name,
             'suit': random.choice(CARD_SUITS),
             'value': next_value
         }
+
+    def _update_buttons_and_multipliers(self):
+        """Calcula las probabilidades y actualiza el estado y etiquetas de los botones."""
+        if not self.current_card:
+            return
+        
+        val = self.current_card['value']
+        
+        # Probabilidades (As=1, Rey=13, 12 rangos posibles restantes por carta)
+        p_higher = (13 - val) / 12
+        p_lower = (val - 1) / 12
+        
+        # Botón MAYOR
+        higher_btn = self.children[0]
+        if val == 13: # King
+            higher_btn.disabled = True
+            higher_btn.label = "📈 MAYOR (Imposible)"
+            self.mult_higher = 0.0
+        else:
+            higher_btn.disabled = False
+            self.mult_higher = round((1.0 - HOUSE_EDGE) / p_higher + 1e-9, 2)
+            higher_btn.label = f"📈 MAYOR (x{self.mult_higher:.2f})"
+            
+        # Botón MENOR
+        lower_btn = self.children[1]
+        if val == 1: # Ace
+            lower_btn.disabled = True
+            lower_btn.label = "📉 MENOR (Imposible)"
+            self.mult_lower = 0.0
+        else:
+            lower_btn.disabled = False
+            self.mult_lower = round((1.0 - HOUSE_EDGE) / p_lower + 1e-9, 2)
+            lower_btn.label = f"📉 MENOR (x{self.mult_lower:.2f})"
+            
+        # Botón COBRAR
+        cash_btn = self.children[2]
+        if self.consecutive_wins == 0:
+            cash_btn.disabled = True
+            cash_btn.label = "💰 COBRAR"
+        else:
+            cash_btn.disabled = False
+            potential_winnings = int(self.apuesta * self.total_multiplier)
+            cash_btn.label = f"💰 COBRAR ({potential_winnings} monedas)"
     
     @discord.ui.button(label="📈 MAYOR", style=discord.ButtonStyle.success, emoji="⬆️")
     async def higher_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -136,8 +153,8 @@ class HigherLowerView(discord.ui.View):
         if not self.current_card:
             return
             
-        # Generar siguiente carta con dificultad
-        self._generate_next_card_with_difficulty(choice)
+        # Generar siguiente carta de forma natural sin redraws
+        self._generate_next_card()
         
         if not self.next_card:
             return
@@ -151,9 +168,6 @@ class HigherLowerView(discord.ui.View):
             correct = True
         elif choice == "lower" and next_value < current_value:
             correct = True
-        elif next_value == current_value:
-            # Ya no debería ocurrir, pero por seguridad
-            correct = False
         
         # Crear embed de resultado
         choice_emoji = "📈⬆️" if choice == "higher" else "📉⬇️"
@@ -178,19 +192,24 @@ class HigherLowerView(discord.ui.View):
             self.consecutive_wins += 1
             self.round_number += 1
             
-            # Calcular multiplicador progresivo
-            round_multiplier = 1.0 + (self.consecutive_wins * 0.3)  # 30% más por cada acierto
-            self.total_multiplier = round_multiplier
+            # Calcular multiplicador de esta ronda y multiplicador acumulado
+            round_multiplier = self.mult_higher if choice == "higher" else self.mult_lower
+            self.total_multiplier *= round_multiplier
             
             potential_winnings = int(self.apuesta * self.total_multiplier)
+            
+            # Actualizar carta actual
+            self.current_card = self.next_card
+            
+            # Actualizar los botones para la nueva carta actual
+            self._update_buttons_and_multipliers()
             
             embed.add_field(
                 name="✅ ¡Correcto!",
                 value=(
                     f"🎯 **Ronda:** {self.consecutive_wins}/{self.max_rounds}\n"
-                    f"📊 **Multiplicador:** x{self.total_multiplier:.1f}\n"
-                    f"💰 **Ganancias potenciales:** {potential_winnings} monedas\n"
-                    f"📈 **Siguiente ronda:** x{1.0 + (self.consecutive_wins * 0.3):.1f}"
+                    f"📊 **Multiplicador acumulado:** x{self.total_multiplier:.2f}\n"
+                    f"💰 **Ganancias potenciales:** {potential_winnings} monedas"
                 ),
                 inline=False
             )
@@ -202,29 +221,42 @@ class HigherLowerView(discord.ui.View):
                     value="Has completado todas las rondas. ¡Cobrando automáticamente!",
                     inline=False
                 )
-                await interaction.response.edit_message(embed=embed, view=None)
+                # Desactivar botones antes de cobrar
+                for item in self.children:
+                    try:
+                        item.disabled = True
+                    except AttributeError:
+                        pass
+                await interaction.response.edit_message(embed=embed, view=self)
                 await asyncio.sleep(2)
                 await self._cash_out(interaction, auto_cash=True)
                 return
             
-            # Actualizar carta actual
-            self.current_card = self.next_card
-            
+            # Opciones siguientes
+            next_opts = []
+            if self.current_card['value'] < 13:
+                next_opts.append(f"📈 Mayor: **x{self.mult_higher:.2f}**")
+            if self.current_card['value'] > 1:
+                next_opts.append(f"📉 Menor: **x{self.mult_lower:.2f}**")
+                
             embed.add_field(
-                name="🎮 Continuar",
-                value="¿La siguiente carta será mayor o menor que la actual?",
+                name="🎮 Siguiente Ronda",
+                value=(
+                    f"¿La siguiente carta será mayor o menor que la actual?\n"
+                    f"**Carta actual:** {self.current_card['name']}{self.current_card['suit']} (Valor: {self.current_card['value']})\n"
+                    f"**Opciones:**\n" + "\n".join(next_opts)
+                ),
                 inline=False
             )
+            
+            embed.set_footer(text=f"Tiempo límite: 60s • Ronda {self.consecutive_wins + 1}")
+            await interaction.response.edit_message(embed=embed, view=self)
             
         else:
             # Perdió
             self.game_over = True
             await self._end_game(interaction, embed, won=False)
             return
-        
-
-        embed.set_footer(text=f"Tiempo límite: 60s • Ronda {self.consecutive_wins + 1}")
-        await interaction.response.edit_message(embed=embed, view=self)
     
     async def _cash_out(self, interaction: discord.Interaction, auto_cash: bool = False):
         """Cobra las ganancias acumuladas."""
@@ -244,9 +276,9 @@ class HigherLowerView(discord.ui.View):
         
         winnings = int(self.apuesta * self.total_multiplier * ganancia_bonus)
         profit = winnings - self.apuesta
-
-        winnings_total = winnings  # incluye la apuesta ya descontada
-        new_balance = await CasinoService.settle_win(
+        winnings_total = winnings
+        
+        new_balance, impuesto = await CasinoService.settle_win(
             self.user.id,
             self.apuesta,
             winnings_total,
@@ -265,10 +297,12 @@ class HigherLowerView(discord.ui.View):
             name="🎯 Resultado Final",
             value=(
                 f"🎴 **Rondas completadas:** {self.consecutive_wins}\n"
-                f"📊 **Multiplicador final:** x{self.total_multiplier:.1f}\n"
+                f"📊 **Multiplicador final:** x{self.total_multiplier:.2f}\n"
                 f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
-                f"💵 **Total cobrado:** {winnings} monedas\n"
-                f"📈 **Ganancia neta:** +{profit} monedas"
+                f"💵 **Premio Bruto:** {winnings_total} monedas\n"
+                f"💸 **Impuesto Casino (3%):** {impuesto} monedas (destruido)\n"
+                f"✨ **Premio Neto:** {winnings_total - impuesto} monedas\n"
+                f"📈 **Ganancia neta:** +{(winnings_total - impuesto) - self.apuesta} monedas"
             ),
             inline=False
         )
@@ -284,7 +318,7 @@ class HigherLowerView(discord.ui.View):
         # Desactivar botones
         for item in self.children:
             try:
-                item.disabled = True  # type: ignore[attr-defined]
+                item.disabled = True
             except AttributeError:
                 pass
         
@@ -300,7 +334,6 @@ class HigherLowerView(discord.ui.View):
         self.game_over = True
         
         if not won:
-            # Perdió - solo pierde la apuesta
             new_balance = await CasinoService.settle_loss(
                 self.user.id,
                 self.apuesta,
@@ -323,7 +356,7 @@ class HigherLowerView(discord.ui.View):
                 potential_winnings = int(self.apuesta * self.total_multiplier)
                 embed.add_field(
                     name="💔 Tan Cerca...",
-                    value=f"Podrías haber ganado {potential_winnings} monedas si hubieras cobrado antes.",
+                    value=f"Podrías haber ganado {potential_winnings} monedas si hubieras cobrado antes. (Multiplicador alcanzado: x{self.total_multiplier:.2f})",
                     inline=False
                 )
         
@@ -332,7 +365,7 @@ class HigherLowerView(discord.ui.View):
         # Desactivar botones
         for item in self.children:
             try:
-                item.disabled = True  # type: ignore[attr-defined]
+                item.disabled = True
             except AttributeError:
                 pass
         
@@ -343,12 +376,9 @@ class HigherLowerView(discord.ui.View):
         """Se ejecuta cuando se agota el tiempo."""
         if not self.game_over:
             self.game_over = True
-            # Si tiene ganancias acumuladas, las cobra automáticamente
             if self.consecutive_wins > 0:
-                # El timeout cobra automáticamente las ganancias
                 winnings = int(self.apuesta * self.total_multiplier)
-                profit = winnings - self.apuesta
-                await CasinoService.settle_win(
+                _, _ = await CasinoService.settle_win(
                     self.user.id,
                     self.apuesta,
                     winnings,
@@ -357,7 +387,6 @@ class HigherLowerView(discord.ui.View):
                     self.saldo
                 )
             else:
-                # Refund if they timed out without playing
                 await CasinoService.refund_bet(self.user.id, self.apuesta, 'higher_lower', 'Timeout sin jugar')
 
 class HigherLower(commands.Cog):
@@ -422,6 +451,19 @@ class HigherLower(commands.Cog):
         embed.add_field(
             name="🎴 Carta Actual",
             value=f"**{view.current_card['name'] if view.current_card else 'Error'}{view.current_card['suit'] if view.current_card else ''}** (Valor: {view.current_card['value'] if view.current_card else 0})",
+            inline=True
+        )
+        
+        # Opciones iniciales
+        opts = []
+        if view.current_card['value'] < 13:
+            opts.append(f"📈 Mayor: **x{view.mult_higher:.2f}**")
+        if view.current_card['value'] > 1:
+            opts.append(f"📉 Menor: **x{view.mult_lower:.2f}**")
+            
+        embed.add_field(
+            name="📊 Multiplicadores",
+            value="\n".join(opts),
             inline=True
         )
         

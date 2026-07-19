@@ -74,7 +74,7 @@ class TestEconomyService(unittest.TestCase):
         mock_cursor.fetchone.side_effect = [
             (5000,), # Balance remitente
             (4000,), # Nuevo balance remitente después de restar
-            (1000,)  # Nuevo balance destinatario después de sumar
+            (980,)   # Nuevo balance destinatario después de sumar el monto neto (1000 - 2% = 980)
         ]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
@@ -84,7 +84,7 @@ class TestEconomyService(unittest.TestCase):
         
         self.assertTrue(success)
         self.assertEqual(from_bal, 4000)
-        self.assertEqual(to_bal, 1000)
+        self.assertEqual(to_bal, 980)
 
     @patch('src.db.db_cursor')
     def test_transfer_balance_fail_no_money(self, mock_db_cursor):
@@ -557,6 +557,115 @@ class TestPrestige(unittest.TestCase):
             FROM UserPrestige 
             WHERE PrestigeLevel >= 3
         """)
+
+
+class TestBankInvestments(unittest.TestCase):
+    
+    @patch('src.db.db_cursor')
+    def test_start_investment_success(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        mock_cursor = MagicMock()
+        # mock returns:
+        # 1. SELECT active investment -> None (not active)
+        # 2. SELECT UserLoans EnMora -> None (no mora)
+        # 3. SELECT Balance -> (5000,)
+        # 4. UPDATE Balance -> (4000,)
+        mock_cursor.fetchone.side_effect = [
+            None,
+            None,
+            (5000,),
+            (4000,)
+        ]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertTrue(success)
+        self.assertIn("iniciada", msg)
+        
+        # Verify the insert was called
+        mock_cursor.execute.assert_any_call("""
+            INSERT INTO UserInvestments (UserID, Monto, FechaInicio, FechaVencimiento, Resuelto)
+            VALUES (%s, %s, %s, %s, FALSE)
+            ON CONFLICT (UserID) DO UPDATE
+            SET Monto = EXCLUDED.Monto,
+                FechaInicio = EXCLUDED.FechaInicio,
+                FechaVencimiento = EXCLUDED.FechaVencimiento,
+                Resuelto = FALSE
+        """, (12345, 1000, unittest.mock.ANY, unittest.mock.ANY))
+
+    @patch('src.db.db_cursor')
+    def test_start_investment_already_active(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        mock_cursor = MagicMock()
+        # mock returns:
+        # 1. SELECT active investment -> (1000, date, date, False)
+        mock_cursor.fetchone.return_value = (1000, None, None, False)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(success)
+        self.assertIn("Ya tienes una inversión activa", msg)
+
+    @patch('src.db.db_cursor')
+    def test_start_investment_in_mora(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        mock_cursor = MagicMock()
+        # mock returns:
+        # 1. SELECT active investment -> None
+        # 2. SELECT UserLoans EnMora -> (1,) (mora exists)
+        mock_cursor.fetchone.side_effect = [None, (1,)]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(success)
+        self.assertIn("mora", msg)
+
+    @patch('src.db.db_cursor')
+    def test_start_investment_insufficient_funds(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        mock_cursor = MagicMock()
+        # mock returns:
+        # 1. SELECT active investment -> None
+        # 2. SELECT UserLoans EnMora -> None
+        # 3. SELECT Balance -> (500,)
+        mock_cursor.fetchone.side_effect = [None, None, (500,)]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(success)
+        self.assertIn("No tienes suficiente saldo", msg)
+
+    @patch('src.db.db_cursor')
+    def test_get_active_investment_exists(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        import datetime
+        mock_cursor = MagicMock()
+        now = datetime.datetime.now()
+        mock_cursor.fetchone.return_value = (1000, now, now, False)
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        inv = asyncio.run(BankService.get_active_investment(12345))
+        self.assertIsNotNone(inv)
+        self.assertEqual(inv['Monto'], 1000)
+        self.assertEqual(inv['Resuelto'], False)
+
+    @patch('src.db.db_cursor')
+    def test_resolve_matured_investments(self, mock_db_cursor):
+        from src.services.bank_service import BankService
+        import datetime
+        mock_cursor = MagicMock()
+        # SELECT resolved=FALSE investments list: (user_id, monto, inicio, venc)
+        mock_cursor.fetchall.return_value = [
+            (111, 1000, datetime.datetime.now(), datetime.datetime.now()),
+            (222, 2000, datetime.datetime.now(), datetime.datetime.now())
+        ]
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        res = asyncio.run(BankService.resolve_matured_investments())
+        self.assertEqual(res['count'], 2)
+        # Verify that it updated the balance for both users
+        mock_cursor.execute.assert_any_call("UPDATE UserInvestments SET Resuelto = TRUE WHERE UserID = %s", (111,))
+        mock_cursor.execute.assert_any_call("UPDATE UserInvestments SET Resuelto = TRUE WHERE UserID = %s", (222,))
 
 if __name__ == '__main__':
     unittest.main()

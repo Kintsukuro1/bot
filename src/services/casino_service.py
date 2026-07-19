@@ -12,16 +12,19 @@ class CasinoService:
         return success, new_balance
 
     @staticmethod
-    async def settle_win(user_id: int, bet_amount: int, winnings: int, game_type: str, difficulty_modifier: float, current_balance: int) -> int:
+    async def settle_win(user_id: int, bet_amount: int, winnings: int, game_type: str, difficulty_modifier: float, current_balance: int) -> Tuple[int, int]:
         """Procesa una victoria en el casino: acredita el premio y registra estadísticas."""
-        profit = winnings - bet_amount
+        from src.utils.economy_config import TRANSACTION_TAX
+        impuesto = int(winnings * TRANSACTION_TAX["casino"])
+        winnings_netos = winnings - impuesto
+        profit = winnings_netos - bet_amount
         # Winnings es el dinero retornado total (incluye apuesta). Si el juego es 1:1, winnings = bet * 2, profit = bet.
-        await asyncio.to_thread(add_balance, user_id, winnings)
-        nuevo_saldo = current_balance + winnings
+        await asyncio.to_thread(add_balance, user_id, winnings_netos)
+        nuevo_saldo = current_balance + winnings_netos
         
         await asyncio.to_thread(registrar_transaccion, user_id, profit, f"{game_type.capitalize()}: Ganó partida")
         await asyncio.to_thread(record_game_result, user_id, game_type, bet_amount, 'win', profit, difficulty_modifier, nuevo_saldo)
-        return nuevo_saldo
+        return nuevo_saldo, impuesto
 
     @staticmethod
     async def settle_loss(user_id: int, bet_amount: int, game_type: str, difficulty_modifier: float, current_balance: int) -> int:

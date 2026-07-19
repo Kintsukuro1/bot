@@ -227,6 +227,7 @@ def registrar_transaccion(user_id, amount, tipo, cursor=None):
 def transfer_balance(from_user_id, to_user_id, amount, reason):
     """Realiza una transferencia atómica de saldo entre dos usuarios."""
     from datetime import datetime
+    from src.utils.economy_config import TRANSACTION_TAX
     with db_cursor() as cursor:
         # Verificar saldo del emisor
         cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (from_user_id,))
@@ -238,12 +239,16 @@ def transfer_balance(from_user_id, to_user_id, amount, reason):
         cursor.execute("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (amount, from_user_id))
         from_new_balance = cursor.fetchone()[0]
         
-        # Sumar al receptor
+        # Calcular impuesto por transacción y monto neto
+        impuesto = int(amount * TRANSACTION_TAX["transferencia"])
+        monto_neto = amount - impuesto
+        
+        # Sumar al receptor (solo recibe monto neto)
         cursor.execute("""
             INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
             ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
             RETURNING Balance
-        """, (to_user_id, amount))
+        """, (to_user_id, monto_neto))
         to_new_balance = cursor.fetchone()[0]
         
         # Registrar transacciones
@@ -254,7 +259,7 @@ def transfer_balance(from_user_id, to_user_id, amount, reason):
         cursor.execute("""
             INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
             VALUES (%s, %s, %s, %s)
-        """, (to_user_id, amount, f"Transferencia: {reason} (de {from_user_id})", datetime.now()))
+        """, (to_user_id, monto_neto, f"Transferencia: {reason} (de {from_user_id})", datetime.now()))
         
         return True, from_new_balance, to_new_balance
 
@@ -2571,6 +2576,16 @@ def init_db():
             """)
 
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserInvestments (
+                    UserID BIGINT PRIMARY KEY,
+                    Monto BIGINT NOT NULL,
+                    FechaInicio TIMESTAMP NOT NULL,
+                    FechaVencimiento TIMESTAMP NOT NULL,
+                    Resuelto BOOLEAN NOT NULL DEFAULT FALSE
+                )
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS UserPrestige (
                     UserID BIGINT PRIMARY KEY,
                     PrestigeLevel INT NOT NULL DEFAULT 0,
@@ -2604,6 +2619,56 @@ def init_db():
                         f'ALTER TABLE "{_table}" ALTER COLUMN "{_col}" TYPE BIGINT'
                     )
             # ─── FIN MIGRACIÓN BIGINT ─────────────────────────────────────────────────
+
+            # ─── INICIO MIGRACIÓN BOLSA ────────────────────────────────────────────────
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS MarketAssets (
+                    AssetKey VARCHAR(20) PRIMARY KEY,
+                    PrecioActual NUMERIC NOT NULL,
+                    UltimaActualizacion TIMESTAMP NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS MarketPriceHistory (
+                    ID SERIAL PRIMARY KEY,
+                    AssetKey VARCHAR(20) NOT NULL,
+                    Precio NUMERIC NOT NULL,
+                    Timestamp TIMESTAMP NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPortfolio (
+                    UserID BIGINT NOT NULL,
+                    AssetKey VARCHAR(20) NOT NULL,
+                    Cantidad NUMERIC NOT NULL DEFAULT 0,
+                    CostoPromedio NUMERIC NOT NULL DEFAULT 0,
+                    PRIMARY KEY (UserID, AssetKey)
+                )
+            """)
+
+            # Poblar MarketAssets con los 6 activos y sus precio_inicial
+            market_assets_init = [
+                ("agrounion", 100.0),
+                ("banconova", 150.0),
+                ("tecnocorp", 80.0),
+                ("obsidianchain", 50.0),
+                ("bytecoin", 200.0),
+                ("moontoken", 10.0),
+            ]
+            for asset_key, precio_inicial in market_assets_init:
+                cursor.execute("""
+                    INSERT INTO MarketAssets (AssetKey, PrecioActual, UltimaActualizacion)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (AssetKey) DO NOTHING
+                """, (asset_key, precio_inicial))
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_marketpricehistory_key_timestamp
+                ON MarketPriceHistory (AssetKey, Timestamp DESC)
+            """)
+            # ─── FIN MIGRACIÓN BOLSA ──────────────────────────────────────────────────
 
             # ─── FIN BANCO CENTRAL ───
 
@@ -3650,6 +3715,139 @@ def pagar_bonos_prestigio_mensuales_db() -> list:
                 })
                 
     return resultados
+
+
+def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
+    """Operación de DB para iniciar una inversión. Bloqueante."""
+    from datetime import datetime, timedelta
+    from typing import Tuple
+    
+    with db_cursor() as cursor:
+        # 1. Verificar si tiene inversión activa (Resuelto = False)
+        cursor.execute("""
+            SELECT Monto, FechaInicio, FechaVencimiento, Resuelto 
+            FROM UserInvestments 
+            WHERE UserID = %s AND Resuelto = FALSE
+        """, (user_id,))
+        active_inv = cursor.fetchone()
+        if active_inv:
+            return False, "❌ Ya tienes una inversión activa en curso. Debes esperar a que venza."
+            
+        # 2. Verificar si está en mora en algún préstamo
+        cursor.execute("SELECT 1 FROM UserLoans WHERE UserID = %s AND EnMora = TRUE", (user_id,))
+        if cursor.fetchone():
+            return False, "❌ Estás en **mora** en uno de tus préstamos. No puedes realizar inversiones con el Banco Central."
+            
+        # 3. Verificar saldo suficiente
+        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
+        bal_row = cursor.fetchone()
+        balance = bal_row[0] if bal_row else 0
+        if balance < amount:
+            return False, f"❌ No tienes suficiente saldo para invertir {amount:,} monedas. Saldo actual: {balance:,} monedas."
+            
+        # 4. Descontar saldo
+        cursor.execute("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (amount, user_id))
+        if not cursor.fetchone():
+            return False, "❌ Error al descontar saldo. Inténtalo de nuevo."
+            
+        # 5. Insertar / Upsert inversión
+        ahora = datetime.now()
+        vencimiento = ahora + timedelta(days=7)
+        cursor.execute("""
+            INSERT INTO UserInvestments (UserID, Monto, FechaInicio, FechaVencimiento, Resuelto)
+            VALUES (%s, %s, %s, %s, FALSE)
+            ON CONFLICT (UserID) DO UPDATE
+            SET Monto = EXCLUDED.Monto,
+                FechaInicio = EXCLUDED.FechaInicio,
+                FechaVencimiento = EXCLUDED.FechaVencimiento,
+                Resuelto = FALSE
+        """, (user_id, amount, ahora, vencimiento))
+        
+        # Registrar transacción
+        registrar_transaccion(user_id, -amount, "Banco Central: Inversión", cursor=cursor)
+        
+        return True, f"✅ ¡Inversión de **{amount:,}** monedas iniciada! Vencerá el {vencimiento.strftime('%d/%m/%Y a las %H:%M')}."
+
+
+def resolve_matured_investments_db() -> dict:
+    """Operación de DB para resolver inversiones vencidas. Bloqueante."""
+    from datetime import datetime
+    import random
+    
+    ahora = datetime.now()
+    resolved_list = []
+    total_payout = 0
+    
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT UserID, Monto, FechaInicio, FechaVencimiento
+            FROM UserInvestments
+            WHERE Resuelto = FALSE AND FechaVencimiento <= %s
+        """, (ahora,))
+        matured = cursor.fetchall()
+        
+        outcomes = [
+            (0.85, "Pérdida grande"),
+            (0.95, "Pérdida pequeña"),
+            (1.00, "Neutro"),
+            (1.08, "Ganancia pequeña"),
+            (1.20, "Ganancia grande"),
+        ]
+        weights = [15, 25, 20, 25, 15]
+        
+        for user_id, monto, inicio, venc in matured:
+            outcome = random.choices(outcomes, weights=weights, k=1)[0]
+            mult, label = outcome
+            
+            payout = int(monto * mult)
+            diff = payout - monto
+            total_payout += payout
+            
+            # Acreditar al balance
+            cursor.execute("""
+                INSERT INTO Users (UserID, Balance) VALUES (%s, %s)
+                ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
+            """, (user_id, payout))
+            
+            # Registrar transacción
+            registrar_transaccion(user_id, payout, f"Inversión vencida: {label} (x{mult})", cursor=cursor)
+            
+            # Marcar como resuelto
+            cursor.execute("UPDATE UserInvestments SET Resuelto = TRUE WHERE UserID = %s", (user_id,))
+            
+            resolved_list.append({
+                'user_id': user_id,
+                'monto_inicial': monto,
+                'payout': payout,
+                'diff': diff,
+                'mult': mult,
+                'label': label
+            })
+            
+    return {
+        'count': len(matured),
+        'total_payout': total_payout,
+        'results': resolved_list
+    }
+
+
+def get_active_investment_db(user_id: int) -> dict | None:
+    """Operación de DB para obtener la inversión activa de un usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT Monto, FechaInicio, FechaVencimiento, Resuelto
+            FROM UserInvestments
+            WHERE UserID = %s AND Resuelto = FALSE
+        """, (user_id,))
+        row = cursor.fetchone()
+        if row:
+            return {
+                'Monto': row[0],
+                'FechaInicio': row[1],
+                'FechaVencimiento': row[2],
+                'Resuelto': row[3]
+            }
+        return None
 
 
 
