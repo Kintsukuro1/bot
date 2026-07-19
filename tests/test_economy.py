@@ -682,6 +682,178 @@ class TestBankInvestments(unittest.TestCase):
         mock_cursor.execute.assert_any_call("UPDATE UserInvestments SET Resuelto = TRUE WHERE UserID = %s", (111,))
         mock_cursor.execute.assert_any_call("UPDATE UserInvestments SET Resuelto = TRUE WHERE UserID = %s", (222,))
 
+
+class TestRoboBandaAndBanco(unittest.TestCase):
+    @patch('src.commands.actions.robar.get_protection_minutes', return_value=3)
+    @patch('src.commands.actions.robar.DynamicDifficulty.calculate_dynamic_difficulty', return_value=(0.0, 0))
+    @patch('src.commands.actions.robar._get_thief_stats')
+    @patch('src.commands.actions.robar.ensure_user')
+    @patch('src.commands.actions.robar.db_cursor')
+    def test_robo_banda_success(self, mock_db_cursor, mock_ensure_user, mock_get_thief_stats, mock_calc_diff, mock_prot):
+        from src.commands.actions.robar import _ejecutar_robo_banda_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mocking NOW() query response
+        now = datetime.datetime.now()
+        mock_cursor.fetchone.side_effect = [
+            (now,), # SELECT NOW()
+            (None,), # ShieldExpiry for victim
+            (None,), # LastRobadoTime for victim (fallback inside _ejecutar_robo_banda_db)
+            (100000,), # Balance victima after deduct
+            (50000,), # Balance iniciador after add
+            (30000,) # Balance complice after add
+        ]
+
+        # Stats mock: (level, xp, last_robo, success_count, consecutive_fails)
+        mock_get_thief_stats.side_effect = [
+            (5, 100, None, 0, 0), # Initiator stats
+            (3, 50, None, 0, 0),  # Accomplice stats
+        ]
+
+        # Users balance mock: (UserID, Balance) for FOR UPDATE query
+        mock_cursor.fetchall.return_value = [
+            (111, 10000), # Iniciador
+            (222, 5000),  # Complice
+            (333, 100000) # Victima
+        ]
+
+        # Force random success (random.randint <= prob)
+        with patch('random.randint', return_value=1):
+            status, data = _ejecutar_robo_banda_db(111, 222, 333, "Ini", "Comp", "Vic")
+
+        self.assertEqual(status, 'success')
+        # Total base stolen: balance of Vic is 100,000.
+        # Percentage of theft at level 5: 5.0 + 4 * 0.625 = 7.5% -> 7,500
+        # split_base = 7500 // 2 = 3750
+        # Check success split_base
+        self.assertEqual(data['split_base'], 3750)
+        # Initiator balance update, victim balance update, accomplice balance update queries should be called
+        mock_cursor.execute.assert_any_call("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (7500, 333))
+
+    @patch('src.commands.actions.robar.get_protection_minutes', return_value=3)
+    @patch('src.commands.actions.robar.DynamicDifficulty.calculate_dynamic_difficulty', return_value=(0.0, 0))
+    @patch('src.commands.actions.robar._get_thief_stats')
+    @patch('src.commands.actions.robar.ensure_user')
+    @patch('src.commands.actions.robar.db_cursor')
+    def test_robo_banda_fail_fines(self, mock_db_cursor, mock_ensure_user, mock_get_thief_stats, mock_calc_diff, mock_prot):
+        from src.commands.actions.robar import _ejecutar_robo_banda_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        now = datetime.datetime.now()
+        mock_cursor.fetchone.side_effect = [
+            (now,), # SELECT NOW()
+            (None,), # ShieldExpiry
+            (None,)  # LastRobadoTime
+        ]
+
+        mock_get_thief_stats.side_effect = [
+            (5, 100, None, 0, 0),
+            (3, 50, None, 0, 0),
+        ]
+
+        mock_cursor.fetchall.return_value = [
+            (111, 10000), # Iniciador
+            (222, 5000),  # Complice
+            (333, 100000) # Victima
+        ]
+
+        # Force failure
+        with patch('random.randint', return_value=100):
+            status, data = _ejecutar_robo_banda_db(111, 222, 333, "Ini", "Comp", "Vic")
+
+        self.assertEqual(status, 'fail')
+        # Each thief pays their own fine based on their own balance.
+        # Check that fine is calculated individually and balance is updated.
+        self.assertIn('iniciador', data)
+        self.assertIn('complice', data)
+        self.assertGreater(data['iniciador']['penalizacion'], 0)
+        self.assertGreater(data['complice']['penalizacion'], 0)
+
+    @patch('src.commands.actions.robar._get_thief_stats')
+    @patch('src.commands.actions.robar.ensure_user')
+    @patch('src.commands.actions.robar.db_cursor')
+    def test_robo_banco_level_restriction(self, mock_db_cursor, mock_ensure_user, mock_get_thief_stats):
+        from src.commands.actions.robar import _ejecutar_robo_banco_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mocking NOW()
+        now = datetime.datetime.now()
+        mock_cursor.fetchone.return_value = (now,)
+
+        # Stats level is 5 (low)
+        mock_get_thief_stats.return_value = (5, 100, None, 0, 0)
+
+        status, data = _ejecutar_robo_banco_db(111, None, "Ini", "")
+        self.assertEqual(status, 'level_low')
+
+    @patch('src.commands.actions.robar._get_thief_stats')
+    @patch('src.commands.actions.robar.ensure_user')
+    @patch('src.commands.actions.robar.db_cursor')
+    def test_robo_banco_success(self, mock_db_cursor, mock_ensure_user, mock_get_thief_stats):
+        from src.commands.actions.robar import _ejecutar_robo_banco_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        now = datetime.datetime.now()
+        # Fetchone side effects:
+        mock_cursor.fetchone.side_effect = [
+            (now,), # SELECT NOW()
+            (None,), # LastBancoRoboTime
+            (5000000,), # BancoCentral Reservas
+        ]
+        mock_cursor.fetchall.return_value = [
+            (111, 10000) # User balance
+        ]
+
+        # Stats level 12 (meets requirement >= 10)
+        mock_get_thief_stats.return_value = (12, 100, None, 0, 0)
+
+        # Force success: 1 for success roll, 500000 for botin roll
+        with patch('random.randint', side_effect=[1, 500000]):
+            status, data = _ejecutar_robo_banco_db(111, None, "Ini", "")
+
+        self.assertEqual(status, 'success')
+        self.assertEqual(data['botin_robado'], 500000)
+        mock_cursor.execute.assert_any_call("UPDATE BancoCentral SET Reservas = Reservas - %s WHERE ID = 1 AND Reservas >= %s", (500000, 500000))
+
+    @patch('src.commands.actions.robar._get_thief_stats')
+    @patch('src.commands.actions.robar.ensure_user')
+    @patch('src.commands.actions.robar.db_cursor')
+    def test_robo_banco_fail_fine_returned_to_bank(self, mock_db_cursor, mock_ensure_user, mock_get_thief_stats):
+        from src.commands.actions.robar import _ejecutar_robo_banco_db
+        import datetime
+        mock_cursor = MagicMock()
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        now = datetime.datetime.now()
+        mock_cursor.fetchone.side_effect = [
+            (now,), # SELECT NOW()
+            (None,), # LastBancoRoboTime
+            (1000000,), # BancoCentral Reservas
+        ]
+        mock_cursor.fetchall.return_value = [
+            (111, 200000) # User balance
+        ]
+
+        mock_get_thief_stats.return_value = (15, 100, None, 0, 0)
+
+        # Force failure
+        with patch('random.randint', return_value=100):
+            status, data = _ejecutar_robo_banco_db(111, None, "Ini", "")
+
+        self.assertEqual(status, 'fail')
+        self.assertEqual(data['iniciador']['penalizacion'], 50000)
+        # The fine is 50,000, and it is added back to reserves
+        mock_cursor.execute.assert_any_call("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (50000,))
+
+
 if __name__ == '__main__':
     unittest.main()
 

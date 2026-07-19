@@ -1842,6 +1842,7 @@ def init_db():
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ThiefXP BIGINT DEFAULT 0")
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS RobosFallidosConsecutivos INT DEFAULT 0")
             cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS ShieldExpiry TIMESTAMP")
+            cursor.execute("ALTER TABLE RoboStats ADD COLUMN IF NOT EXISTS LastBancoRoboTime TIMESTAMP")
             
             # Tabla: RoboLog
             cursor.execute("""
