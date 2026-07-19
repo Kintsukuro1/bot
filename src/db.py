@@ -6,6 +6,7 @@ import psycopg2
 import os
 import threading
 import logging
+import hashlib
 from contextlib import contextmanager
 from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
@@ -3929,7 +3930,6 @@ def resolve_matured_investments_db() -> dict:
         weights = [15, 25, 20, 25, 15]
         
         for user_id, monto, inicio, venc in matured:
-            import hashlib
             seed_str = f"{user_id}:{monto}:{inicio.isoformat()}"
             seed_hash = hashlib.sha256(seed_str.encode('utf-8')).hexdigest()
             seed_int = int(seed_hash, 16) % (2**32)
