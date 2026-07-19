@@ -115,14 +115,14 @@ async def verify_bolsa():
     # Buy AgroUnion for 5000 coins
     monto_gasto = 5000
     tax_pct = TRANSACTION_TAX.get("bolsa", 0.015)
-    monto_neto = monto_gasto * (1 - tax_pct)
-    impuesto = monto_gasto - monto_neto
+    impuesto_int = int(monto_gasto * tax_pct)
+    monto_neto_int = monto_gasto - impuesto_int
     
     price_before = MarketService.get_price("agrounion")
-    qty_purchased = monto_neto / price_before
+    qty_purchased = monto_neto_int / price_before
     
     print(f"\nBuying 'agrounion' for {monto_gasto:,} coins...")
-    print(f"Tax: {impuesto:,} coins (1.5%) | Net investment: {monto_neto:,} coins")
+    print(f"Tax: {impuesto_int:,} coins (1.5%) | Net investment: {monto_neto_int:,} coins")
     print(f"Price before: {price_before:.4f} | Units to acquire: {qty_purchased:.6f}")
     
     success, bal_after = deduct_balance(test_user_id, monto_gasto)
@@ -154,12 +154,12 @@ async def verify_bolsa():
     sell_qty = qty_purchased / 2.0
     price_sell = MarketService.get_price("agrounion")
     gross_proceeds = sell_qty * price_sell
-    tax_sell = gross_proceeds * tax_pct
-    net_proceeds = gross_proceeds - tax_sell
-    net_proceeds_int = int(net_proceeds)
+    gross_proceeds_int = int(gross_proceeds)
+    tax_sell_int = int(gross_proceeds * tax_pct)
+    net_proceeds_int = gross_proceeds_int - tax_sell_int
     
     print(f"\nSelling {sell_qty:.6f} units of 'agrounion' at current price {price_sell:.4f}...")
-    print(f"Gross: {gross_proceeds:.2f} | Tax: {tax_sell:.2f} | Net Proceeds: {net_proceeds_int:,}")
+    print(f"Gross: {gross_proceeds_int:,} | Tax: {tax_sell_int:,} | Net Proceeds: {net_proceeds_int:,}")
     
     with db_cursor() as cursor:
         cursor.execute("SELECT Cantidad, CostoPromedio FROM UserPortfolio WHERE UserID = %s AND AssetKey = 'agrounion' FOR UPDATE", (test_user_id,))
@@ -188,8 +188,8 @@ async def verify_bolsa():
         cursor.execute("""
             SELECT UserID, AssetKey, Cantidad 
             FROM UserPortfolio 
-            WHERE Cantidad > 0 AND UserID = %s AND AssetKey IN %s
-        """, (test_user_id, tuple(dividend_assets.keys())))
+            WHERE Cantidad > 0 AND UserID = %s AND AssetKey = ANY(%s)
+        """, (test_user_id, list(dividend_assets.keys())))
         div_rows = cursor.fetchall()
         
         print("Portfolio entries matching dividend payers:")

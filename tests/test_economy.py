@@ -69,22 +69,28 @@ class TestEconomyService(unittest.TestCase):
 
     @patch('src.db.db_cursor')
     def test_transfer_balance_success(self, mock_db_cursor):
+        from src.utils.economy_config import TRANSACTION_TAX
+        amount = 1000
+        tax = TRANSACTION_TAX["transferencia"]
+        impuesto = int(amount * tax)
+        net_amount = amount - impuesto
+
         mock_cursor = MagicMock()
         # Mocking selects & updates responses
         mock_cursor.fetchone.side_effect = [
             (5000,), # Balance remitente
             (4000,), # Nuevo balance remitente después de restar
-            (980,)   # Nuevo balance destinatario después de sumar el monto neto (1000 - 2% = 980)
+            (net_amount,)   # Nuevo balance destinatario después de sumar el monto neto
         ]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
         success, from_bal, to_bal = asyncio.run(
-            EconomyService.transfer_balance(111, 222, 1000, "Regalo de test")
+            EconomyService.transfer_balance(111, 222, amount, "Regalo de test")
         )
         
         self.assertTrue(success)
         self.assertEqual(from_bal, 4000)
-        self.assertEqual(to_bal, 980)
+        self.assertEqual(to_bal, net_amount)
 
     @patch('src.db.db_cursor')
     def test_transfer_balance_fail_no_money(self, mock_db_cursor):

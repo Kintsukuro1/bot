@@ -108,8 +108,8 @@ class BolsaCog(commands.Cog):
                 cursor.execute("""
                     SELECT UserID, AssetKey, Cantidad 
                     FROM UserPortfolio 
-                    WHERE Cantidad > 0 AND AssetKey IN %s
-                """, (tuple(dividend_assets.keys()),))
+                    WHERE Cantidad > 0 AND AssetKey = ANY(%s)
+                """, (list(dividend_assets.keys()),))
                 rows = cursor.fetchall()
 
             if not rows:
@@ -292,11 +292,11 @@ class BolsaCog(commands.Cog):
         # 3. Calcular cantidad e impuestos
         from src.utils.economy_config import TRANSACTION_TAX
         tax_pct = TRANSACTION_TAX.get("bolsa", 0.015)
-        monto_neto = monto * (1.0 - tax_pct)
-        impuesto = monto - monto_neto
+        impuesto_int = int(monto * tax_pct)
+        monto_neto_int = monto - impuesto_int
         
         precio_actual = MarketService.get_price(activo)
-        cantidad_comprada = monto_neto / precio_actual
+        cantidad_comprada = monto_neto_int / precio_actual
 
         # 4. Actualizar portafolio del jugador de forma atómica
         try:
@@ -357,8 +357,8 @@ class BolsaCog(commands.Cog):
             timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
         )
         embed.add_field(name="💰 Monto Gastado", value=f"`{monto:,}` monedas", inline=True)
-        embed.add_field(name="🛡️ Impuesto (1.5%)", value=f"`{int(impuesto):,}` monedas (destruido)", inline=True)
-        embed.add_field(name="📉 Valor Efectivo", value=f"`{int(monto_neto):,}` monedas", inline=True)
+        embed.add_field(name="🛡️ Impuesto (1.5%)", value=f"`{impuesto_int:,}` monedas (destruido)", inline=True)
+        embed.add_field(name="📉 Valor Efectivo", value=f"`{monto_neto_int:,}` monedas", inline=True)
         embed.add_field(name="🏷️ Precio Unitario", value=f"`{precio_actual:,.2f}` monedas", inline=True)
         embed.add_field(name="📦 Unidades Adquiridas", value=f"`{cantidad_comprada:.6f}`", inline=True)
         embed.add_field(name="💼 Tu Portafolio", value=f"Total actual: `{new_qty:.6f}` unidades\nCosto Promedio: `{new_cost:,.2f}` monedas", inline=False)
@@ -403,9 +403,9 @@ class BolsaCog(commands.Cog):
         # Calcular impuestos
         from src.utils.economy_config import TRANSACTION_TAX
         tax_pct = TRANSACTION_TAX.get("bolsa", 0.015)
-        impuesto = monto_bruto * tax_pct
-        monto_neto = monto_bruto - impuesto
-        monto_neto_int = int(monto_neto)
+        monto_bruto_int = int(monto_bruto)
+        impuesto_int = int(monto_bruto * tax_pct)
+        monto_neto_int = monto_bruto_int - impuesto_int
 
         if monto_neto_int <= 0:
             await interaction.followup.send("❌ La cantidad especificada a vender es demasiado pequeña y no genera saldo neto.", ephemeral=True)
@@ -488,8 +488,8 @@ class BolsaCog(commands.Cog):
         )
         embed.add_field(name="📦 Cantidad Vendida", value=f"`{cantidad:.6f}` unidades", inline=True)
         embed.add_field(name="🏷️ Precio Unitario", value=f"`{precio_actual:,.2f}` monedas", inline=True)
-        embed.add_field(name="📉 Valor Bruto", value=f"`{int(monto_bruto):,}` monedas", inline=True)
-        embed.add_field(name="🛡️ Impuesto (1.5%)", value=f"`{int(impuesto):,}` monedas (destruido)", inline=True)
+        embed.add_field(name="📉 Valor Bruto", value=f"`{monto_bruto_int:,}` monedas", inline=True)
+        embed.add_field(name="🛡️ Impuesto (1.5%)", value=f"`{impuesto_int:,}` monedas (destruido)", inline=True)
         embed.add_field(name="💰 Acreditado Neto", value=f"**{monto_neto_int:,}** monedas", inline=True)
         embed.add_field(name="💼 Portafolio Restante", value=f"`{new_qty:.6f}` unidades de {asset_data['nombre']}", inline=False)
         
