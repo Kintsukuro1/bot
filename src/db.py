@@ -1409,34 +1409,42 @@ def registrar_mina_pisada(user_id):
 
 def get_top_minas(limit=10, member_ids=None):
     """Obtiene el top de usuarios que más minas han pisado."""
+    if member_ids is not None and len(member_ids) == 0:
+        return []
+
     with db_cursor() as cursor:
+        base_query = """
+            SELECT m.UserID, m.MinasPisadas, u.UserName
+            FROM MinaStats m
+            LEFT JOIN Users u ON m.UserID = u.UserID
+        """
+
+        params = []
+
         if member_ids:
             if len(member_ids) == 1:
-                cursor.execute("""
-                    SELECT m.UserID, m.MinasPisadas, u.UserName 
-                    FROM MinaStats m
-                    LEFT JOIN Users u ON m.UserID = u.UserID
-                    WHERE m.UserID = %s
-                    ORDER BY m.MinasPisadas DESC
-                    LIMIT %s
-                """, (member_ids[0], limit))
+                query = base_query + """
+            WHERE m.UserID = %s
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+                """
+                params = [member_ids[0], limit]
             else:
-                cursor.execute("""
-                    SELECT m.UserID, m.MinasPisadas, u.UserName 
-                    FROM MinaStats m
-                    LEFT JOIN Users u ON m.UserID = u.UserID
-                    WHERE m.UserID IN %s
-                    ORDER BY m.MinasPisadas DESC
-                    LIMIT %s
-                """, (tuple(member_ids), limit))
+                placeholders = ", ".join(["%s"] * len(member_ids))
+                query = base_query + f"""
+            WHERE m.UserID IN ({placeholders})
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+                """
+                params = list(member_ids) + [limit]
         else:
-            cursor.execute("""
-                SELECT m.UserID, m.MinasPisadas, u.UserName 
-                FROM MinaStats m
-                LEFT JOIN Users u ON m.UserID = u.UserID
-                ORDER BY m.MinasPisadas DESC
-                LIMIT %s
-            """, (limit,))
+            query = base_query + """
+            ORDER BY m.MinasPisadas DESC
+            LIMIT %s
+            """
+            params = [limit]
+
+        cursor.execute(query, params)
         return cursor.fetchall()
 
 def get_user_ticket_count(user_id):
