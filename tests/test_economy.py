@@ -303,9 +303,11 @@ class TestBancoCentral(unittest.TestCase):
         self.assertEqual(loan['LimitePrestamo'], 200000)
         self.assertEqual(loan['EnMora'], True)
 
+    @patch('src.db.usuario_tiene_mejora')
     @patch('src.db.db_cursor')
-    def test_pagar_recompensa_trabajo_no_mora(self, mock_db_cursor):
+    def test_pagar_recompensa_trabajo_no_mora(self, mock_db_cursor, mock_tiene_mejora):
         from src.db import pagar_recompensa_trabajo
+        mock_tiene_mejora.return_value = False
         mock_cursor = MagicMock()
         # EnMora query fetchone -> (False,)
         mock_cursor.fetchone.return_value = (False,)
@@ -321,9 +323,11 @@ class TestBancoCentral(unittest.TestCase):
             (12345, 1000)
         )
 
+    @patch('src.db.usuario_tiene_mejora')
     @patch('src.db.db_cursor')
-    def test_pagar_recompensa_trabajo_with_mora(self, mock_db_cursor):
+    def test_pagar_recompensa_trabajo_with_mora(self, mock_db_cursor, mock_tiene_mejora):
         from src.db import pagar_recompensa_trabajo
+        mock_tiene_mejora.return_value = False
         mock_cursor = MagicMock()
         # EnMora query fetchone -> (True,)
         mock_cursor.fetchone.return_value = (True,)
@@ -351,9 +355,11 @@ class TestBancoCentral(unittest.TestCase):
             (100,)
         )
 
+    @patch('src.db.usuario_tiene_mejora')
     @patch('src.db.db_cursor')
-    def test_pagar_recompensa_trabajo_clears_mora(self, mock_db_cursor):
+    def test_pagar_recompensa_trabajo_clears_mora(self, mock_db_cursor, mock_tiene_mejora):
         from src.db import pagar_recompensa_trabajo
+        mock_tiene_mejora.return_value = False
         mock_cursor = MagicMock()
         # side_effect returns (True,) (EnMora) first, and (0,) (MontoAdeudado after retencion) second
         mock_cursor.fetchone.side_effect = [(True,), (0,)]

@@ -310,21 +310,16 @@ def usuario_tiene_item(user_id, item_id):
     """Verifica si un usuario tiene un ítem específico en su inventario."""
     try:
         with db_cursor() as cursor:
-            # Check if it's a MagicMock to avoid unit test false positives
-            is_mock = hasattr(cursor, '__class__') and cursor.__class__.__name__ == 'MagicMock'
-            if is_mock:
-                return False
-
             cursor.execute("""
-                SELECT COUNT(*) FROM UserItems 
+                SELECT 1 FROM UserItems 
                 WHERE UserID = %s AND ItemID = %s AND Quantity > 0 AND Used = 0
                 AND Expiry > NOW()
+                LIMIT 1
             """, (user_id, item_id))
             row = cursor.fetchone()
-            count = row[0] if row else 0
-            return count > 0
+            return row is not None
     except Exception as e:
-        print(f"Error de base de datos al verificar ítem de usuario: {e}")
+        logger.error(f"Error de base de datos al verificar ítem de usuario: {e}")
         return False
 
 def usuario_tiene_mejora(user_id, item_id):
@@ -810,8 +805,14 @@ def claim_daily(user_id):
             elif last_login:
                 try:
                     last_login = datetime.strptime(str(last_login).split(' ')[0], '%Y-%m-%d').date()
-                except Exception:
-                    last_login = today - timedelta(days=2)
+                except Exception as exc:
+                    logger.warning(
+                        "No se pudo parsear LastLogin para user_id=%s (valor=%r): %s",
+                        user_id,
+                        last_login,
+                        exc
+                    )
+                    last_login = None
         else:
             last_login, streak, balance = None, 0, 500
             
@@ -1056,8 +1057,31 @@ def get_multiplayer_game(game_id: str):
     with db_cursor() as cursor:
         cursor.execute("SELECT GameState FROM ActiveMultiplayerGames WHERE GameID = %s", (game_id,))
         row = cursor.fetchone()
-        if row:
-            return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        if not row:
+            return None
+
+        game_state = row[0]
+        if isinstance(game_state, dict):
+            return game_state
+
+        if isinstance(game_state, (str, bytes)):
+            try:
+                return json.loads(game_state)
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "Error al parsear GameState para GameID %s: %s (valor=%r)",
+                    game_id,
+                    exc,
+                    game_state,
+                )
+                return None
+
+        logger.warning(
+            "Tipo inesperado en GameState para GameID %s: %s (valor=%r)",
+            game_id,
+            type(game_state).__name__,
+            game_state,
+        )
         return None
 
 def delete_multiplayer_game(game_id: str):
