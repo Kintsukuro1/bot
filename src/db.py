@@ -9,6 +9,7 @@ import logging
 from contextlib import contextmanager
 from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
+from typing import Tuple
 
 # Cargar variables de entorno del archivo .env ubicado en la raíz del proyecto
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
@@ -3720,7 +3721,6 @@ def pagar_bonos_prestigio_mensuales_db() -> list:
 def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
     """Operación de DB para iniciar una inversión. Bloqueante."""
     from datetime import datetime, timedelta
-    from typing import Tuple
     
     with db_cursor() as cursor:
         # 1. Verificar si tiene inversión activa (Resuelto = False)
