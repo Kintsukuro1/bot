@@ -887,6 +887,35 @@ def init_energia_db():
             WHERE Energia IS NULL OR UltimaRecarga IS NULL
         """, (tiempo_actual,))
 
+def _recalculate_energia(cursor, user_id: int, energia_actual: Optional[int], ultima_recarga: Optional[int]) -> int:
+    """
+    Recalcula la energía del usuario en base al tiempo transcurrido desde la última recarga.
+    Esta función encapsula la lógica de recarga automática para evitar duplicaciones y
+    divergencias de estado entre get_energia y consumir_energia.
+    """
+    import time
+    tiempo_actual = int(time.time())
+
+    if energia_actual is None or ultima_recarga is None:
+        energia_actual = 100
+        ultima_recarga = tiempo_actual
+        cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
+        return energia_actual
+
+    if energia_actual >= 100:
+        return energia_actual
+
+    tiempo_transcurrido = tiempo_actual - ultima_recarga
+    puntos_recarga = tiempo_transcurrido // 180
+    
+    if puntos_recarga > 0:
+        energia_actual = min(100, energia_actual + puntos_recarga)
+        ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+        cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
+
+    return energia_actual
+
+
 def get_energia(user_id: int) -> int:
     """Obtener la energía actual del usuario, aplicando recarga automática."""
     import time
@@ -901,29 +930,8 @@ def get_energia(user_id: int) -> int:
             return 100
         
         energia_actual, ultima_recarga = result[0], result[1]
-        
-        if energia_actual is None:
-            energia_actual = 100
-            ultima_recarga = int(time.time())
-            cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
-            return energia_actual
-        
-        if ultima_recarga is None:
-            ultima_recarga = int(time.time())
-            cursor.execute("UPDATE Users SET UltimaRecarga = %s WHERE UserID = %s", (ultima_recarga, user_id))
-            return energia_actual
-        
-        if energia_actual < 100:
-            tiempo_actual = int(time.time())
-            tiempo_transcurrido = tiempo_actual - ultima_recarga
-            puntos_recarga = tiempo_transcurrido // 180
-            
-            if puntos_recarga > 0:
-                energia_actual = min(100, energia_actual + puntos_recarga)
-                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
-                cursor.execute("UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s", (energia_actual, ultima_recarga, user_id))
-        
-        return energia_actual
+        return _recalculate_energia(cursor, user_id, energia_actual, ultima_recarga)
+
 
 def consumir_energia(user_id: int, cantidad: int) -> bool:
     """Consume energía de forma atómica. Retorna True si se descontó correctamente."""
@@ -938,21 +946,10 @@ def consumir_energia(user_id: int, cantidad: int) -> bool:
         if not row:
             return False
 
-        energia_actual = row[0] if row[0] is not None else 100
-        ultima_recarga = row[1] if row[1] is not None else int(time.time())
-
-        if energia_actual < 100:
-            tiempo_actual = int(time.time())
-            puntos_recarga = (tiempo_actual - ultima_recarga) // 180
-            if puntos_recarga > 0:
-                energia_actual = min(100, energia_actual + puntos_recarga)
-                ultima_recarga = ultima_recarga + (puntos_recarga * 180)
+        energia_actual, ultima_recarga = row[0], row[1]
+        energia_actual = _recalculate_energia(cursor, user_id, energia_actual, ultima_recarga)
 
         if energia_actual < cantidad:
-            cursor.execute(
-                "UPDATE Users SET Energia = %s, UltimaRecarga = %s WHERE UserID = %s",
-                (energia_actual, ultima_recarga, user_id),
-            )
             return False
 
         tiempo_actual = int(time.time())
@@ -2960,12 +2957,11 @@ def remove_gem(user_id, slot):
         gem_key, price, gem_name = row[0], row[1], row[2]
         cost = price // 2
 
-    # Cobrar la mitad del precio
-    success, current_balance = spend_combat_currency(user_id, cost)
-    if not success:
-        return False, f"No tienes suficiente Bronce para remover la gema. Requiere {format_currency(cost)} (tienes {format_currency(current_balance)})."
+        # Cobrar la mitad del precio
+        success, current_balance = spend_combat_currency(user_id, cost, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce para remover la gema. Requiere {format_currency(cost)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("UPDATE UserEquipment SET GemKey = NULL WHERE UserID = %s AND Slot = %s", (user_id, slot))
         return True, f"Removiste **{gem_name}** de tu pieza de **{slot}** por un costo de {format_currency(cost)}."
 
