@@ -2620,6 +2620,56 @@ def init_db():
                     )
             # ─── FIN MIGRACIÓN BIGINT ─────────────────────────────────────────────────
 
+            # ─── INICIO MIGRACIÓN BOLSA ────────────────────────────────────────────────
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS MarketAssets (
+                    AssetKey VARCHAR(20) PRIMARY KEY,
+                    PrecioActual NUMERIC NOT NULL,
+                    UltimaActualizacion TIMESTAMP NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS MarketPriceHistory (
+                    ID SERIAL PRIMARY KEY,
+                    AssetKey VARCHAR(20) NOT NULL,
+                    Precio NUMERIC NOT NULL,
+                    Timestamp TIMESTAMP NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPortfolio (
+                    UserID BIGINT NOT NULL,
+                    AssetKey VARCHAR(20) NOT NULL,
+                    Cantidad NUMERIC NOT NULL DEFAULT 0,
+                    CostoPromedio NUMERIC NOT NULL DEFAULT 0,
+                    PRIMARY KEY (UserID, AssetKey)
+                )
+            """)
+
+            # Poblar MarketAssets con los 6 activos y sus precio_inicial
+            market_assets_init = [
+                ("agrounion", 100.0),
+                ("banconova", 150.0),
+                ("tecnocorp", 80.0),
+                ("obsidianchain", 50.0),
+                ("bytecoin", 200.0),
+                ("moontoken", 10.0),
+            ]
+            for asset_key, precio_inicial in market_assets_init:
+                cursor.execute("""
+                    INSERT INTO MarketAssets (AssetKey, PrecioActual, UltimaActualizacion)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (AssetKey) DO NOTHING
+                """, (asset_key, precio_inicial))
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_marketpricehistory_key_timestamp
+                ON MarketPriceHistory (AssetKey, Timestamp DESC)
+            """)
+            # ─── FIN MIGRACIÓN BOLSA ──────────────────────────────────────────────────
+
             # ─── FIN BANCO CENTRAL ───
 
 
