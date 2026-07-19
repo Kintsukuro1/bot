@@ -359,33 +359,33 @@ class BancoCog(commands.Cog):
         proyeccion = 0
         if balance > 500000:
             excedente = balance - 500000
-            cuota = 0.0
+            cuota = 0
             
-            # Tramo 1: hasta 10M
+            # Tramo 1: hasta 10M (1% = 100 bps)
             t1 = min(excedente, 10000000)
-            cuota += t1 * 0.01
+            cuota += (t1 * 100) // 10000
             excedente -= t1
             
             if excedente > 0:
-                # Tramo 2: de 10M a 100M
+                # Tramo 2: de 10M a 100M (2% = 200 bps)
                 t2 = min(excedente, 90000000)
-                cuota += t2 * 0.02
+                cuota += (t2 * 200) // 10000
                 excedente -= t2
                 
             if excedente > 0:
-                # Tramo 3: de 100M a 1000M
+                # Tramo 3: de 100M a 1000M (3% = 300 bps)
                 t3 = min(excedente, 900000000)
-                cuota += t3 * 0.03
+                cuota += (t3 * 300) // 10000
                 excedente -= t3
                 
             if excedente > 0:
-                # Tramo 4: más de 1000M
-                cuota += excedente * 0.05
+                # Tramo 4: más de 1000M (5% = 500 bps)
+                cuota += (excedente * 500) // 10000
                 
-            proyeccion = int(cuota)
+            proyeccion = cuota
             prestige_lvl = await asyncio.to_thread(get_user_prestige_level, user_id)
             if prestige_lvl >= 2:
-                proyeccion = int(proyeccion * 0.80)
+                proyeccion = (proyeccion * 8000) // 10000
 
         # Calcular estado del escudo extendido
         activo = False

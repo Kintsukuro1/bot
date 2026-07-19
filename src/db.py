@@ -185,8 +185,8 @@ def spend_combat_currency(user_id, bronze_amount, cursor=None):
     if cursor is not None:
         return _execute_spend(cursor)
     else:
-        with db_cursor() as cursor:
-            return _execute_spend(cursor)
+        with db_cursor() as db_cur:
+            return _execute_spend(db_cur)
 
 def ensure_user(user_id, user_name=None):
     """Verifica si el usuario existe en la base de datos y lo crea si no."""
@@ -586,6 +586,9 @@ def _record_game_result_inner(cursor, user_id, game_type, bet_amount, result, wi
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (user_id, game_type, bet_amount, result_str.upper(), win_amount, datetime.now(), difficulty_applied, user_balance))
         
+        # Initialize default risk profile once for consistency
+        risk_profile = 'BALANCED'
+
         # Obtener estadísticas de UserGameStats
         cursor.execute("""
             SELECT TotalGamesPlayed, TotalWins, TotalLosses, TotalAmountBet, TotalAmountWon, WinRate, AvgBetSize, HotStreak, ColdStreak, RiskProfile, DifficultyLevel 
@@ -1218,7 +1221,7 @@ RARITY_UPGRADE = {
 
 def get_fusionable_pets(user_id: int):
     """
-    Busca mascotas que el usuario tiene 5+ duplicados (mismo PetID).
+    Busca mascotas que el usuario tiene 5+ duplicados (mismo PetID), excluyendo la mascota activa.
     Retorna lista de dicts: [{pet_id, name, emoji, rarity, count}, ...]
     """
     with db_cursor() as cursor:
@@ -1226,7 +1229,7 @@ def get_fusionable_pets(user_id: int):
             SELECT up.PetID, pc.Name, pc.Emoji, pc.Rarity, COUNT(*) as cnt
             FROM UserPets up
             JOIN PetsCatalog pc ON up.PetID = pc.PetID
-            WHERE up.UserID = %s AND up.Status != 'Escapó'
+            WHERE up.UserID = %s AND up.Status != 'Escapó' AND COALESCE(up.IsActive, 0) = 0
             GROUP BY up.PetID, pc.Name, pc.Emoji, pc.Rarity
             HAVING COUNT(*) >= 5
             ORDER BY pc.Rarity DESC, cnt DESC
@@ -1240,17 +1243,17 @@ def get_fusionable_pets(user_id: int):
 
 def fuse_pets(user_id: int, pet_id: int):
     """
-    Fusiona 5 mascotas del mismo PetID en 1 mascota aleatoria de rareza superior.
+    Fusiona 5 mascotas inactivas del mismo PetID en 1 mascota aleatoria de rareza superior.
     Retorna (success: bool, result: dict o str).
     result dict: {new_pet_name, new_pet_emoji, new_rarity, new_user_pet_id, flavor_text, is_mythic_boost}
     """
     with db_cursor() as cursor:
-        # 1. Verificar que tiene al menos 5 del mismo PetID
+        # 1. Verificar que tiene al menos 5 del mismo PetID (excluyendo activa)
         cursor.execute("""
             SELECT up.UserPetID
             FROM UserPets up
-            WHERE up.UserID = %s AND up.PetID = %s AND up.Status != 'Escapó'
-            ORDER BY up.IsActive ASC, up.Loyalty ASC
+            WHERE up.UserID = %s AND up.PetID = %s AND up.Status != 'Escapó' AND COALESCE(up.IsActive, 0) = 0
+            ORDER BY up.Loyalty ASC
             LIMIT 5
         """, (user_id, pet_id))
         victims = cursor.fetchall()
@@ -3558,37 +3561,38 @@ def cobrar_cuotas_proteccion_db() -> list:
         
         for user_id, balance, prestige_level in usuarios:
             excedente = balance - 500000
-            cuota = 0.0
+            cuota = 0
             
-            # Tramo 1: hasta 10M (1%)
+            # Tramo 1: hasta 10M (1% = 100 bps)
             t1 = min(excedente, 10000000)
-            cuota += t1 * 0.01
+            cuota += (t1 * 100) // 10000
             excedente -= t1
             
             if excedente > 0:
-                # Tramo 2: de 10M a 100M (2%)
+                # Tramo 2: de 10M a 100M (2% = 200 bps)
                 t2 = min(excedente, 90000000)
-                cuota += t2 * 0.02
+                cuota += (t2 * 200) // 10000
                 excedente -= t2
                 
             if excedente > 0:
-                # Tramo 3: de 100M a 1000M (3%)
+                # Tramo 3: de 100M a 1000M (3% = 300 bps)
                 t3 = min(excedente, 900000000)
-                cuota += t3 * 0.03
+                cuota += (t3 * 300) // 10000
                 excedente -= t3
                 
             if excedente > 0:
-                # Tramo 4: más de 1000M (5%)
-                cuota += excedente * 0.05
+                # Tramo 4: más de 1000M (5% = 500 bps)
+                cuota += (excedente * 500) // 10000
                 
-            cuota_entera = int(cuota)
             if prestige_level >= 2:
-                cuota_entera = int(cuota_entera * 0.80)
-            if cuota_entera <= 0:
+                # Aplicar 20% descuento -> multiplicar por 8000 bps (80%)
+                cuota = (cuota * 8000) // 10000
+                
+            if cuota <= 0:
                 continue
                 
-            cobrado = min(cuota_entera, balance)
-            exito = (cobrado == cuota_entera)
+            cobrado = min(cuota, balance)
+            exito = (cobrado == cuota)
             nuevo_balance = balance - cobrado
             
             # Descontar saldo
@@ -3861,7 +3865,13 @@ def resolve_matured_investments_db() -> dict:
         weights = [15, 25, 20, 25, 15]
         
         for user_id, monto, inicio, venc in matured:
-            outcome = random.choices(outcomes, weights=weights, k=1)[0]
+            import hashlib
+            seed_str = f"{user_id}:{monto}:{inicio.isoformat()}"
+            seed_hash = hashlib.sha256(seed_str.encode('utf-8')).hexdigest()
+            seed_int = int(seed_hash, 16) % (2**32)
+            
+            local_rng = random.Random(seed_int)
+            outcome = local_rng.choices(outcomes, weights=weights, k=1)[0]
             mult, label = outcome
             
             payout = int(monto * mult)
