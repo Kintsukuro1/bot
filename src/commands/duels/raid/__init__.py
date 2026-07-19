@@ -33,6 +33,8 @@ trigger_fury_phase = getattr(raid_module, "trigger_fury_phase", None)
 db_cursor = getattr(raid_module, "db_cursor")
 get_user_equipment = getattr(raid_module, "get_user_equipment")
 generate_raid_loot = getattr(raid_module, "generate_raid_loot")
+ensure_user = getattr(raid_module, "ensure_user")
+get_combat_stats = getattr(raid_module, "get_combat_stats")
 
 __all__ = [
     'RaidBoss',
@@ -58,5 +60,7 @@ __all__ = [
     'LOOT_ROLL_TIMEOUT',
     'db_cursor',
     'get_user_equipment',
-    'generate_raid_loot'
+    'generate_raid_loot',
+    'ensure_user',
+    'get_combat_stats'
 ]
