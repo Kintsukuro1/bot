@@ -9,7 +9,19 @@ import logging
 from contextlib import contextmanager
 from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
-from typing import Tuple
+from typing import Tuple, Optional
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass
+class InvestmentStartResult:
+    success: bool
+    user_id: int
+    amount: int
+    new_balance: Optional[int] = None
+    started_at: Optional[datetime] = None
+    vencimiento: Optional[datetime] = None
+    reason: Optional[str] = None
 
 # Cargar variables de entorno del archivo .env ubicado en la raíz del proyecto
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
@@ -149,26 +161,32 @@ def add_combat_currency(user_id, bronze_amount, cursor=None):
         with db_cursor() as cursor:
             cursor.execute(query, (user_id, bronze_amount))
 
-def spend_combat_currency(user_id, bronze_amount):
+def spend_combat_currency(user_id, bronze_amount, cursor=None):
     """Intenta gastar Bronce. Retorna (True, nuevo_saldo) si alcanzaba, (False, saldo_actual) si no.
     Debe ser atómico (verificar saldo y descontar en la misma transacción, evitar condiciones de
     carrera si dos compras ocurren casi al mismo tiempo) — seguir el mismo patrón de `deduct_balance`
     adaptado a esta tabla."""
-    with db_cursor() as cursor:
-        cursor.execute("""
+    def _execute_spend(cur):
+        cur.execute("""
             UPDATE CombatWallet 
             SET Bronze = Bronze - %s 
             WHERE UserID = %s AND Bronze >= %s
             RETURNING Bronze
         """, (bronze_amount, user_id, bronze_amount))
-        row = cursor.fetchone()
+        row = cur.fetchone()
         if row:
             return True, row[0]
         
         # Si no alcanzó, obtenemos el saldo actual para retornarlo
-        cursor.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
-        row = cursor.fetchone()
+        cur.execute("SELECT Bronze FROM CombatWallet WHERE UserID = %s", (user_id,))
+        row = cur.fetchone()
         return False, row[0] if row else 0
+
+    if cursor is not None:
+        return _execute_spend(cursor)
+    else:
+        with db_cursor() as cursor:
+            return _execute_spend(cursor)
 
 def ensure_user(user_id, user_name=None):
     """Verifica si el usuario existe en la base de datos y lo crea si no."""
@@ -303,7 +321,7 @@ def agregar_item_usuario(user_id, item_id, quantity=1, expiry=None):
                 """, (user_id, item_id, quantity, expiry))
             return True
     except Exception as e:
-        print(f"Error agregando ítem al usuario: {e}")
+        logger.error(f"Error agregando ítem al usuario: {e}", exc_info=e)
         return False
 
 def usuario_tiene_item(user_id, item_id):
@@ -351,7 +369,7 @@ def get_user_items(user_id):
                 })
             return items
     except Exception as e:
-        print(f"Error obteniendo ítems de usuario: {e}")
+        logger.error(f"Error obteniendo ítems de usuario: {e}", exc_info=e)
         return []
 
 def usar_item_usuario(user_id, item_id):
@@ -384,7 +402,7 @@ def usar_item_usuario(user_id, item_id):
             """, (row_id,))
             return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error usando ítem: {e}")
+        logger.error(f"Error usando ítem: {e}", exc_info=e)
         return False
 
 def check_and_register_energy_use(user_id, item_id):
@@ -443,9 +461,8 @@ def check_and_register_energy_use(user_id, item_id):
                 """, (user_id, item_id))
                 return 'ok', None
     except Exception as e:
-        print(f"Error en check_and_register_energy_use: {e}")
-        # En caso de error de BD, por seguridad permitimos el uso
-        return 'ok', None
+        logger.error(f"Error en check_and_register_energy_use: {e}", exc_info=e)
+        return 'error', None
 
 def check_and_register_shield_use(user_id, shield_item_group_id=999):
     """
@@ -510,8 +527,8 @@ def check_and_register_shield_use(user_id, shield_item_group_id=999):
                 """, (user_id, shield_item_group_id))
                 return 'ok', None
     except Exception as e:
-        print(f"Error comprobando cooldown de escudos: {e}")
-        return 'ok', None
+        logger.error(f"Error comprobando cooldown de escudos: {e}", exc_info=e)
+        return 'error', None
 
 
 # Funciones para el sistema de dificultad dinámica
@@ -1062,11 +1079,18 @@ def get_multiplayer_game(game_id: str):
 
         game_state = row[0]
         if isinstance(game_state, dict):
-            return game_state
+            return {
+                "status": "ok",
+                "state": game_state,
+            }
 
         if isinstance(game_state, (str, bytes)):
             try:
-                return json.loads(game_state)
+                parsed_state = json.loads(game_state)
+                return {
+                    "status": "ok",
+                    "state": parsed_state,
+                }
             except (TypeError, ValueError) as exc:
                 logger.warning(
                     "Error al parsear GameState para GameID %s: %s (valor=%r)",
@@ -1074,7 +1098,11 @@ def get_multiplayer_game(game_id: str):
                     exc,
                     game_state,
                 )
-                return None
+                return {
+                    "status": "invalid_state",
+                    "raw": game_state,
+                    "error": str(exc),
+                }
 
         logger.warning(
             "Tipo inesperado en GameState para GameID %s: %s (valor=%r)",
@@ -1082,7 +1110,11 @@ def get_multiplayer_game(game_id: str):
             type(game_state).__name__,
             game_state,
         )
-        return None
+        return {
+            "status": "invalid_state",
+            "raw": game_state,
+            "error": "Unexpected data type",
+        }
 
 def delete_multiplayer_game(game_id: str):
     """Elimina un juego multijugador activo."""
@@ -2900,13 +2932,12 @@ def insert_gem(user_id, slot, gem_key):
         if eq_row[0] is not None:
             return False, "Este slot ya tiene una gema equipada. Remuévela primero."
 
-    # Cobrar el precio de la gema
-    success, current_balance = spend_combat_currency(user_id, gem_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(gem_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar el precio de la gema
+        success, current_balance = spend_combat_currency(user_id, gem_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(gem_price)} (tienes {format_currency(current_balance)})."
 
-    # Realizar UPDATE
-    with db_cursor() as cursor:
+        # Realizar UPDATE
         cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
         return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}**."
 
@@ -3251,12 +3282,11 @@ def buy_consumable(user_id, consumable_key, quantity=1):
         price, name = row[0], row[1]
         total_cost = price * quantity
 
-    # Cobrar total
-    success, current_balance = spend_combat_currency(user_id, total_cost)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(total_cost)} (tienes {format_currency(current_balance)})."
+        # Cobrar total
+        success, current_balance = spend_combat_currency(user_id, total_cost, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(total_cost)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("""
             INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
             VALUES (%s, %s, %s)
@@ -3301,12 +3331,11 @@ def buy_consumable_discounted(user_id, consumable_key, discounted_price):
             return False, "El consumible especificado no existe."
         name = row[0]
 
-    # Cobrar
-    success, current_balance = spend_combat_currency(user_id, discounted_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar
+        success, current_balance = spend_combat_currency(user_id, discounted_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("""
             INSERT INTO UserConsumables (UserID, ConsumableKey, Quantity)
             VALUES (%s, %s, 1)
@@ -3334,12 +3363,11 @@ def insert_gem_discounted(user_id, slot, gem_key, discounted_price):
         if eq_row[0] is not None:
             return False, "Este slot ya tiene una gema equipada. Remuévela primero."
 
-    # Cobrar
-    success, current_balance = spend_combat_currency(user_id, discounted_price)
-    if not success:
-        return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
+        # Cobrar
+        success, current_balance = spend_combat_currency(user_id, discounted_price, cursor=cursor)
+        if not success:
+            return False, f"No tienes suficiente Bronce. Requieres {format_currency(discounted_price)} (tienes {format_currency(current_balance)})."
 
-    with db_cursor() as cursor:
         cursor.execute("UPDATE UserEquipment SET GemKey = %s WHERE UserID = %s AND Slot = %s", (gem_key, user_id, slot))
         return True, f"Compraste e insertaste **{gem_name}** en tu pieza de **{slot}** por {format_currency(discounted_price)}."
 
@@ -3464,41 +3492,23 @@ def pagar_recompensa_trabajo(user_id, recompensa_bruta: int, tipo_trabajo: str) 
             if mora_loans:
                 target_slot = mora_loans[0][0]
                 # Aplicar retención al préstamo seleccionado
-                is_mock = hasattr(cursor, '__class__') and cursor.__class__.__name__ == 'MagicMock'
-                if is_mock:
-                    cursor.execute("""
-                UPDATE UserLoans
-                SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
-                WHERE UserID = %s
-                RETURNING MontoAdeudado
-            """, (retencion, user_id))
-                else:
-                    cursor.execute("""
-                        UPDATE UserLoans
-                        SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
-                        WHERE UserID = %s AND LoanSlot = %s
-                        RETURNING MontoAdeudado
-                    """, (retencion, user_id, target_slot))
+                cursor.execute("""
+                    UPDATE UserLoans
+                    SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)
+                    WHERE UserID = %s AND LoanSlot = %s
+                    RETURNING MontoAdeudado
+                """, (retencion, user_id, target_slot))
                 row_loan = cursor.fetchone()
                 nuevo_monto = row_loan[0] if row_loan else 0
 
                 if nuevo_monto <= 0:
-                    if is_mock:
-                        cursor.execute("""
-                    UPDATE UserLoans
-                    SET FechaPrestamo = NULL,
-                        FechaVencimiento = NULL,
-                        EnMora = FALSE
-                    WHERE UserID = %s
-                """, (user_id,))
-                    else:
-                        cursor.execute("""
-                            UPDATE UserLoans
-                            SET FechaPrestamo = NULL,
-                                FechaVencimiento = NULL,
-                                EnMora = FALSE
-                            WHERE UserID = %s AND LoanSlot = %s
-                        """, (user_id, target_slot))
+                    cursor.execute("""
+                        UPDATE UserLoans
+                        SET FechaPrestamo = NULL,
+                            FechaVencimiento = NULL,
+                            EnMora = FALSE
+                        WHERE UserID = %s AND LoanSlot = %s
+                    """, (user_id, target_slot))
 
             cursor.execute(
                 "UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1",
@@ -3542,10 +3552,15 @@ def cobrar_cuotas_proteccion_db() -> list:
     resultados = []
     
     with db_cursor() as cursor:
-        cursor.execute("SELECT UserID, Balance FROM Users WHERE Balance > 500000 FOR UPDATE")
+        cursor.execute("""
+            SELECT u.UserID, u.Balance, COALESCE(up.PrestigeLevel, 0)
+            FROM Users u
+            LEFT JOIN UserPrestige up ON u.UserID = up.UserID
+            WHERE u.Balance > 500000 FOR UPDATE OF u
+        """)
         usuarios = cursor.fetchall()
         
-        for user_id, balance in usuarios:
+        for user_id, balance, prestige_level in usuarios:
             excedente = balance - 500000
             cuota = 0.0
             
@@ -3571,7 +3586,7 @@ def cobrar_cuotas_proteccion_db() -> list:
                 cuota += excedente * 0.05
                 
             cuota_entera = int(cuota)
-            if get_user_prestige_level(user_id) >= 2:
+            if prestige_level >= 2:
                 cuota_entera = int(cuota_entera * 0.80)
             if cuota_entera <= 0:
                 continue
@@ -3742,7 +3757,7 @@ def pagar_bonos_prestigio_mensuales_db() -> list:
     return resultados
 
 
-def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
+def start_investment_db(user_id: int, amount: int) -> InvestmentStartResult:
     """Operación de DB para iniciar una inversión. Bloqueante."""
     from datetime import datetime, timedelta
     
@@ -3755,24 +3770,47 @@ def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
         """, (user_id,))
         active_inv = cursor.fetchone()
         if active_inv:
-            return False, "❌ Ya tienes una inversión activa en curso. Debes esperar a que venza."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="ACTIVE_INVESTMENT_EXISTS"
+            )
             
         # 2. Verificar si está en mora en algún préstamo
         cursor.execute("SELECT 1 FROM UserLoans WHERE UserID = %s AND EnMora = TRUE", (user_id,))
         if cursor.fetchone():
-            return False, "❌ Estás en **mora** en uno de tus préstamos. No puedes realizar inversiones con el Banco Central."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="IN_MORA"
+            )
             
         # 3. Verificar saldo suficiente
         cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
         bal_row = cursor.fetchone()
         balance = bal_row[0] if bal_row else 0
         if balance < amount:
-            return False, f"❌ No tienes suficiente saldo para invertir {amount:,} monedas. Saldo actual: {balance:,} monedas."
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                new_balance=balance,
+                reason="INSUFFICIENT_FUNDS"
+            )
             
         # 4. Descontar saldo
         cursor.execute("UPDATE Users SET Balance = Balance - %s WHERE UserID = %s RETURNING Balance", (amount, user_id))
-        if not cursor.fetchone():
-            return False, "❌ Error al descontar saldo. Inténtalo de nuevo."
+        row = cursor.fetchone()
+        if not row:
+            return InvestmentStartResult(
+                success=False,
+                user_id=user_id,
+                amount=amount,
+                reason="DB_ERROR"
+            )
+        new_balance = row[0]
             
         # 5. Insertar / Upsert inversión
         ahora = datetime.now()
@@ -3790,7 +3828,14 @@ def start_investment_db(user_id: int, amount: int) -> Tuple[bool, str]:
         # Registrar transacción
         registrar_transaccion(user_id, -amount, "Banco Central: Inversión", cursor=cursor)
         
-        return True, f"✅ ¡Inversión de **{amount:,}** monedas iniciada! Vencerá el {vencimiento.strftime('%d/%m/%Y a las %H:%M')}."
+        return InvestmentStartResult(
+            success=True,
+            user_id=user_id,
+            amount=amount,
+            new_balance=new_balance,
+            started_at=ahora,
+            vencimiento=vencimiento
+        )
 
 
 def resolve_matured_investments_db() -> dict:

@@ -329,8 +329,10 @@ class TestBancoCentral(unittest.TestCase):
         from src.db import pagar_recompensa_trabajo
         mock_tiene_mejora.return_value = False
         mock_cursor = MagicMock()
-        # EnMora query fetchone -> (True,)
-        mock_cursor.fetchone.return_value = (True,)
+        # EnMora query fetchone -> (True,), update returning -> (4000,)
+        mock_cursor.fetchone.side_effect = [(True,), (4000,)]
+        # Select LoanSlot query fetchall -> [(1,)]
+        mock_cursor.fetchall.return_value = [(1,)]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
         neto, retencion = pagar_recompensa_trabajo(12345, 1000, "minero")
@@ -345,8 +347,8 @@ class TestBancoCentral(unittest.TestCase):
         
         # Verify loan amount is reduced by 100
         mock_cursor.execute.assert_any_call(
-            "\n                UPDATE UserLoans\n                SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)\n                WHERE UserID = %s\n                RETURNING MontoAdeudado\n            ",
-            (100, 12345)
+            "\n                    UPDATE UserLoans\n                    SET MontoAdeudado = GREATEST(0, MontoAdeudado - %s)\n                    WHERE UserID = %s AND LoanSlot = %s\n                    RETURNING MontoAdeudado\n                ",
+            (100, 12345, 1)
         )
         
         # Verify bank reserves receive the retencion (100)
@@ -363,6 +365,7 @@ class TestBancoCentral(unittest.TestCase):
         mock_cursor = MagicMock()
         # side_effect returns (True,) (EnMora) first, and (0,) (MontoAdeudado after retencion) second
         mock_cursor.fetchone.side_effect = [(True,), (0,)]
+        mock_cursor.fetchall.return_value = [(1,)]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
 
         neto, retencion = pagar_recompensa_trabajo(12345, 1000, "minero")
@@ -371,8 +374,8 @@ class TestBancoCentral(unittest.TestCase):
 
         # Verify UserLoans EnMora set to FALSE update was executed
         mock_cursor.execute.assert_any_call(
-            "\n                    UPDATE UserLoans\n                    SET FechaPrestamo = NULL,\n                        FechaVencimiento = NULL,\n                        EnMora = FALSE\n                    WHERE UserID = %s\n                ",
-            (12345,)
+            "\n                        UPDATE UserLoans\n                        SET FechaPrestamo = NULL,\n                            FechaVencimiento = NULL,\n                            EnMora = FALSE\n                        WHERE UserID = %s AND LoanSlot = %s\n                    ",
+            (12345, 1)
         )
 
     @patch('src.db.db_cursor')
@@ -413,10 +416,10 @@ class TestBancoCentral(unittest.TestCase):
     def test_cobrar_cuotas_proteccion_db_sufficient_balance(self, mock_db_cursor):
         from src.db import cobrar_cuotas_proteccion_db
         mock_cursor = MagicMock()
-        # Mocking users with balance > 500k: (user_id, balance)
+        # Mocking users with balance > 500k: (user_id, balance, prestige_level)
         mock_cursor.fetchall.return_value = [
-            (111, 15500000),  # excedente: 15M -> cuota: 10M*0.01 + 5M*0.02 = 200,000
-            (222, 600000),    # excedente: 100k -> cuota: 1,000
+            (111, 15500000, 0),  # excedente: 15M -> cuota: 10M*0.01 + 5M*0.02 = 200,000
+            (222, 600000, 0),    # excedente: 100k -> cuota: 1,000
         ]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
 
@@ -590,9 +593,9 @@ class TestBankInvestments(unittest.TestCase):
         ]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
-        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
-        self.assertTrue(success)
-        self.assertIn("iniciada", msg)
+        result = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertTrue(result.success)
+        self.assertEqual(result.new_balance, 4000)
         
         # Verify the insert was called
         mock_cursor.execute.assert_any_call("""
@@ -614,9 +617,9 @@ class TestBankInvestments(unittest.TestCase):
         mock_cursor.fetchone.return_value = (1000, None, None, False)
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
-        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
-        self.assertFalse(success)
-        self.assertIn("Ya tienes una inversión activa", msg)
+        result = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(result.success)
+        self.assertEqual(result.reason, "ACTIVE_INVESTMENT_EXISTS")
 
     @patch('src.db.db_cursor')
     def test_start_investment_in_mora(self, mock_db_cursor):
@@ -628,9 +631,9 @@ class TestBankInvestments(unittest.TestCase):
         mock_cursor.fetchone.side_effect = [None, (1,)]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
-        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
-        self.assertFalse(success)
-        self.assertIn("mora", msg)
+        result = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(result.success)
+        self.assertEqual(result.reason, "IN_MORA")
 
     @patch('src.db.db_cursor')
     def test_start_investment_insufficient_funds(self, mock_db_cursor):
@@ -643,9 +646,9 @@ class TestBankInvestments(unittest.TestCase):
         mock_cursor.fetchone.side_effect = [None, None, (500,)]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
-        success, msg = asyncio.run(BankService.start_investment(12345, 1000))
-        self.assertFalse(success)
-        self.assertIn("No tienes suficiente saldo", msg)
+        result = asyncio.run(BankService.start_investment(12345, 1000))
+        self.assertFalse(result.success)
+        self.assertEqual(result.reason, "INSUFFICIENT_FUNDS")
 
     @patch('src.db.db_cursor')
     def test_get_active_investment_exists(self, mock_db_cursor):

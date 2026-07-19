@@ -289,9 +289,9 @@ class BankService:
         return await asyncio.to_thread(get_all_user_loans, user_id)
 
     @staticmethod
-    async def start_investment(user_id: int, amount: int) -> Tuple[bool, str]:
-        """Inicia una inversión. Retorna (éxito, mensaje)."""
-        from src.db import start_investment_db
+    async def start_investment(user_id: int, amount: int):
+        """Inicia una inversión. Retorna un objeto InvestmentStartResult."""
+        from src.db import start_investment_db, InvestmentStartResult
         return await asyncio.to_thread(start_investment_db, user_id, amount)
 
     @staticmethod

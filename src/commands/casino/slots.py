@@ -121,6 +121,8 @@ class Slots(commands.Cog):
                         hours = time_remaining // 3600
                         minutes = (time_remaining % 3600) // 60
                         ticket_desc = f"\n⚠️ **No se pudo usar tu Ticket de Slots.** Bloqueado por cooldown de escudos ({hours}h {minutes:02d}m restantes)."
+                    elif status == 'error':
+                        ticket_desc = "\n⚠️ **No se pudo usar tu Ticket de Slots debido a un error de base de datos.**"
                         
                 # Ajuste de dificultad a los multiplicadores
                 mult_adjustment = 1.0 - (difficulty_modifier * 0.20)
