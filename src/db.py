@@ -40,9 +40,10 @@ if not password:
 
 pool_min = int(os.getenv('DB_POOL_MIN', '1'))
 pool_max = int(os.getenv('DB_POOL_MAX', '10'))
-
 _pool = None
 _pool_lock = threading.Lock()
+_pool_init_failed = False
+_pool_init_error = None
 
 def _connect_direct(database_name=None):
     return psycopg2.connect(
@@ -54,20 +55,83 @@ def _connect_direct(database_name=None):
     )
 
 def _get_pool():
-    global _pool
-    if _pool is None:
-        with _pool_lock:
-            if _pool is None:
-                _pool = ThreadedConnectionPool(
-                    minconn=pool_min,
-                    maxconn=pool_max,
-                    host=host,
-                    port=port,
-                    database=database,
-                    user=username,
-                    password=password
-                )
-    return _pool
+    """
+    Inicializa el ThreadedConnectionPool de forma lazy con manejo explícito de errores
+    de conexión. Si la creación falla, se marca el estado de fallo para evitar
+    bucles de reintentos y se devuelve una excepción consistente a las capas superiores.
+    """
+    global _pool, _pool_init_failed, _pool_init_error
+
+    # Si ya se marcó que la inicialización falló anteriormente, no volver a intentar
+    if _pool_init_failed:
+        # Re-lanzamos la última excepción registrada para mantener trazabilidad
+        raise RuntimeError(
+            "Error inicializando el pool de conexiones a la base de datos."
+        ) from _pool_init_error
+
+    # Si ya existe un pool inicializado correctamente, lo reutilizamos
+    if _pool is not None:
+        return _pool
+
+    # Inicialización lazy con doble chequeo bajo lock para seguridad en concurrencia
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+
+        try:
+            logger.info(
+                "Inicializando ThreadedConnectionPool (minconn=%s, maxconn=%s, host=%s, db=%s, user=%s)",
+                pool_min,
+                pool_max,
+                host,
+                database,
+                username,
+            )
+            _pool = ThreadedConnectionPool(
+                minconn=pool_min,
+                maxconn=pool_max,
+                host=host,
+                port=port,
+                database=database,
+                user=username,
+                password=password,
+            )
+            logger.info("ThreadedConnectionPool inicializado correctamente.")
+            return _pool
+        except psycopg2.OperationalError as e:
+            # Errores típicos de conexión: credenciales inválidas, DB caída, etc.
+            _pool_init_failed = True
+            _pool_init_error = e
+            logger.error(
+                "Fallo al inicializar el ThreadedConnectionPool (error de conexión): %s",
+                str(e),
+                exc_info=True,
+            )
+            raise RuntimeError(
+                "No se pudo establecer el pool de conexiones a la base de datos "
+                "(error de conexión)."
+            ) from e
+        except Exception as e:
+            # Cualquier otro tipo de error inesperado también marca fallo
+            _pool_init_failed = True
+            _pool_init_error = e
+            logger.error(
+                "Fallo inesperado al inicializar el ThreadedConnectionPool: %s",
+                str(e),
+                exc_info=True,
+            )
+            raise RuntimeError(
+                "Error inesperado al inicializar el pool de conexiones a la base de datos."
+            ) from e
+
+def close_connection_pool():
+    """Cierra todas las conexiones del pool si fue inicializado."""
+    global _pool, _pool_init_failed, _pool_init_error
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+    _pool_init_failed = False
+    _pool_init_error = None
 
 def get_connection():
     """Retorna una conexión directa a PostgreSQL.
