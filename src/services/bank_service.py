@@ -288,5 +288,23 @@ class BankService:
         from src.db import get_all_user_loans
         return await asyncio.to_thread(get_all_user_loans, user_id)
 
+    @staticmethod
+    async def start_investment(user_id: int, amount: int) -> Tuple[bool, str]:
+        """Inicia una inversión. Retorna (éxito, mensaje)."""
+        from src.db import start_investment_db
+        return await asyncio.to_thread(start_investment_db, user_id, amount)
+
+    @staticmethod
+    async def resolve_matured_investments() -> dict:
+        """Resuelve inversiones vencidas. Retorna resumen."""
+        from src.db import resolve_matured_investments_db
+        return await asyncio.to_thread(resolve_matured_investments_db)
+
+    @staticmethod
+    async def get_active_investment(user_id: int) -> dict | None:
+        """Obtiene la inversión activa del usuario, o None si no tiene."""
+        from src.db import get_active_investment_db
+        return await asyncio.to_thread(get_active_investment_db, user_id)
+
 
 

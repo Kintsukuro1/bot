@@ -288,7 +288,7 @@ class MinesView(discord.ui.View):
         winnings = int(self.bet * multiplier)
         profit = winnings - self.bet
 
-        nuevo_saldo = await CasinoService.settle_win(self.user_id, self.bet, winnings, 'mines', self.difficulty_modifier, self.balance)
+        nuevo_saldo, impuesto = await CasinoService.settle_win(self.user_id, self.bet, winnings, 'mines', self.difficulty_modifier, self.balance)
         self.balance = nuevo_saldo
         try:
             await process_post_game_events(interaction, self.user_id, 'mines', self.bet, profit)
@@ -305,8 +305,10 @@ class MinesView(discord.ui.View):
             f"💣 Bombas: **{self.bombs}**\n"
             f"💎 Gemas encontradas: **{self.diamonds_found}**\n\n"
             f"Multiplicador final: **x{multiplier:.2f}**\n"
-            f"Ganaste **{winnings}** monedas (Beneficio: **+{profit}**).\n"
-            f"Nuevo saldo: **{nuevo_saldo}**"
+            f"Premio Bruto: **{winnings}** monedas\n"
+            f"💸 Impuesto Casino (3%): **{impuesto}** monedas (destruido)\n"
+            f"✨ Premio Neto: **{winnings - impuesto}** monedas\n"
+            f"🪙 Nuevo saldo: **{nuevo_saldo}**"
         )
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=self)

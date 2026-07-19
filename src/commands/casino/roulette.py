@@ -129,7 +129,7 @@ class RouletteView(discord.ui.View):
             profit = winnings - self.bet_amount
 
             if multiplier > 0:
-                nuevo_saldo = await CasinoService.settle_win(
+                nuevo_saldo, impuesto = await CasinoService.settle_win(
                     self.user_id,
                     self.bet_amount,
                     winnings,
@@ -146,8 +146,11 @@ class RouletteView(discord.ui.View):
                 embed.description = (
                     f"La bola cayó en: **{win_color} {winning_number}**\n\n"
                     f"Multiplicador: **x{multiplier}**\n"
-                    f"Premio: **{winnings}** monedas (Beneficio: **+{profit}**)")
-                embed.description += f"\nNuevo saldo: **{nuevo_saldo}**"
+                    f"Premio Bruto: **{winnings}** monedas\n"
+                    f"💸 Impuesto Casino (3%): **{impuesto}** monedas (destruido)\n"
+                    f"✨ Premio Neto: **{winnings - impuesto}** monedas\n"
+                    f"🪙 Nuevo saldo: **{nuevo_saldo}**"
+                )
             else:
                 nuevo_saldo = await CasinoService.settle_loss(
                     self.user_id,

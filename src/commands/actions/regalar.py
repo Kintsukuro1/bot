@@ -54,13 +54,19 @@ class Regalar(commands.Cog):
             await interaction.followup.send(f"❌ No tienes suficiente saldo. Tu saldo actual: {saldo_remitente:,} monedas.", ephemeral=True)
             return
         
+        from src.utils.economy_config import TRANSACTION_TAX
+        impuesto = int(cantidad * TRANSACTION_TAX["transferencia"])
+        monto_neto = cantidad - impuesto
+
         # Crear embed de confirmación
         embed = discord.Embed(
             title="💝 Confirmar Regalo",
             description=(
                 f"**De:** {interaction.user.display_name}\n"
                 f"**Para:** {usuario.display_name}\n"
-                f"**Cantidad:** {cantidad:,} monedas\n\n"
+                f"**Monto Enviado (Bruto):** {cantidad:,} monedas\n"
+                f"**Impuesto por Transacción (2%):** {impuesto:,} monedas (se destruye)\n"
+                f"**Monto que Recibe (Neto):** {monto_neto:,} monedas\n\n"
                 f"¿Estás seguro de que quieres regalar {cantidad:,} monedas a {usuario.display_name}?"
             ),
             color=discord.Color.gold()
@@ -124,12 +130,18 @@ class ConfirmGiftView(discord.ui.View):
                 await interaction.edit_original_response(embed=embed, view=None)
                 return
             
+            from src.utils.economy_config import TRANSACTION_TAX
+            impuesto = int(self.cantidad * TRANSACTION_TAX["transferencia"])
+            monto_neto = self.cantidad - impuesto
+
             # Embed de éxito
             embed = discord.Embed(
                 title="🎉 ¡Regalo Enviado!",
                 description=(
-                    f"**{self.remitente.display_name}** ha regalado **{self.cantidad:,} monedas** "
-                    f"a **{self.destinatario.display_name}**"
+                    f"**{self.remitente.display_name}** ha enviado dinero a **{self.destinatario.display_name}**\n\n"
+                    f"💰 **Monto Enviado:** {self.cantidad:,} monedas\n"
+                    f"💸 **Impuesto Retenido (2%):** {impuesto:,} monedas (destruido)\n"
+                    f"✨ **Monto Recibido:** {monto_neto:,} monedas"
                 ),
                 color=discord.Color.green()
             )
@@ -154,10 +166,17 @@ class ConfirmGiftView(discord.ui.View):
             
             # Intentar notificar al destinatario de forma pública
             try:
+                from src.utils.economy_config import TRANSACTION_TAX
+                impuesto = int(self.cantidad * TRANSACTION_TAX["transferencia"])
+                monto_neto = self.cantidad - impuesto
+
                 mention_embed = discord.Embed(
                     title="🎁 ¡Has recibido un regalo!",
                     description=(
-                        f"**{self.remitente.display_name}** te ha regalado **{self.cantidad:,} monedas**\n\n"
+                        f"**{self.remitente.display_name}** te ha enviado un regalo.\n\n"
+                        f"💰 **Monto Enviado:** {self.cantidad:,} monedas\n"
+                        f"💸 **Impuesto Retenido (2%):** {impuesto:,} monedas (destruido)\n"
+                        f"✨ **Monto Recibido:** {monto_neto:,} monedas\n\n"
                         f"💰 **Tu nuevo saldo:** {saldo_destinatario_final:,} monedas"
                     ),
                     color=discord.Color.green()
