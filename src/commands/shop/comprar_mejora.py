@@ -5,7 +5,7 @@ import asyncio
 from src.commands.shop.black_market_items import BLACK_MARKET  # Importamos directamente la lista de mejoras
 from src.db import (
     get_balance, set_balance, ensure_user, registrar_transaccion, 
-    agregar_item_usuario, usuario_tiene_item
+    agregar_item_usuario, usuario_tiene_item, deduct_balance, add_balance
 )
 
 def _procesar_compra_mejora(user_id, user_name, item):
