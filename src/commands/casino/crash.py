@@ -81,12 +81,20 @@ class Crash(commands.Cog):
             DynamicDifficulty.calculate_dynamic_difficulty, user_id, apuesta, 'crash'
         )
         
+        # Obtener estadísticas secretas de ganancias y rachas para balanceo anti-abuso
+        stats_secreto = await CasinoService.get_user_streak_and_profit(user_id)
+        
         # Determinar la base del crash point usando una distribución de probabilidad realista
         # House edge base del 8% (ventaja de la casa) - Nerf aplicado
         base_edge = 0.08
         # Ajustar la ventaja de la casa según la dificultad del jugador (-0.5 a 0.5)
         edge = base_edge + (difficulty_modifier * 0.02)
-        edge = max(0.02, min(0.20, edge))
+        
+        # Ajustar edge secreto: si tiene racha o ganancias acumuladas altas, aumentamos el edge de la casa
+        if stats_secreto["net_profit"] > 15000 or stats_secreto["hot_streak"] >= 3:
+            edge += min(0.15, (stats_secreto["net_profit"] / 100000.0) + (stats_secreto["hot_streak"] * 0.02))
+            
+        edge = max(0.02, min(0.35, edge))
         
         # Migración a Provably Fair
         seeds = await asyncio.to_thread(get_provably_fair_seeds, user_id)
@@ -105,9 +113,21 @@ class Crash(commands.Cog):
             U_norm = (U_adj - edge) / (1.0 - edge)
             V = max(1e-6, 1.0 - U_norm)
             
-            # Parámetros: shape (k) = 1.12, scale (lambda) = 0.65
-            k = 1.12
-            lam = 0.65
+            # Penalizadores de números secretos si tiene racha ganadora o ganancias acumuladas altas
+            secreto_k_modifier = 1.0
+            secreto_lam_modifier = 1.0
+            
+            if stats_secreto["net_profit"] > 15000:
+                secreto_k_modifier += min(0.5, stats_secreto["net_profit"] / 100000.0)
+                secreto_lam_modifier += min(1.0, stats_secreto["net_profit"] / 50000.0)
+                
+            if stats_secreto["hot_streak"] >= 3:
+                secreto_k_modifier += 0.1 * stats_secreto["hot_streak"]
+                secreto_lam_modifier += 0.2 * stats_secreto["hot_streak"]
+            
+            # Parámetros base: shape (k) = 1.12, scale (lambda) = 0.65
+            k = 1.12 * secreto_k_modifier
+            lam = 0.65 * secreto_lam_modifier
             val = 1.0 + (-math.log(V) / lam) ** (1.0 / k)
         
         # Piso absoluto de 1.00 si el cálculo da menos (no convertir en ganancia)

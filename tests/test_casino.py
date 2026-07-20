@@ -311,9 +311,10 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
     @patch('src.commands.casino.crash.CasinoService.place_bet')
     @patch('src.commands.casino.crash.DynamicDifficulty.calculate_dynamic_difficulty')
     @patch('src.commands.casino.crash.usuario_tiene_item')
+    @patch('src.commands.casino.crash.CasinoService.get_user_streak_and_profit')
     @patch('src.commands.casino.crash.CrashView')
     async def test_crash_game_generation_math(
-        self, mock_crash_view, mock_tiene_item, mock_calc_diff, 
+        self, mock_crash_view, mock_get_stats, mock_tiene_item, mock_calc_diff, 
         mock_place_bet, mock_lockout, mock_ensure, mock_get_uniform, mock_advance_nonce, mock_get_seeds
     ):
         from src.commands.casino.crash import Crash
@@ -327,6 +328,7 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
         mock_place_bet.return_value = (True, 9000)
         mock_calc_diff.return_value = (0.0, "normal") # difficulty modifier = 0.0 => edge = 0.04
         mock_tiene_item.return_value = False
+        mock_get_stats.return_value = {"hot_streak": 0, "net_profit": 0}
         
         # We will mock the Cog and interaction
         bot = MagicMock()
