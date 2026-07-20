@@ -169,3 +169,28 @@ class CasinoService:
         from src.db import get_balance
         nuevo_saldo = await asyncio.to_thread(get_balance, user_id)
         return nuevo_saldo
+
+    @staticmethod
+    async def get_user_streak_and_profit(user_id: int) -> dict:
+        """Obtiene las estadísticas secretas de ganancias y rachas para balanceo en crash."""
+        from src.db import db_cursor
+        
+        def _get_stats():
+            stats = {"hot_streak": 0, "net_profit": 0}
+            try:
+                with db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT HotStreak, (TotalAmountWon - TotalAmountBet) 
+                        FROM UserGameStats 
+                        WHERE UserID = %s
+                    """, (user_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        stats["hot_streak"] = max(0, row[0] if row[0] is not None else 0)
+                        stats["net_profit"] = max(0, row[1] if row[1] is not None else 0)
+            except Exception as e:
+                import logging
+                logging.getLogger("discord_bot").warning(f"Error al obtener estadísticas secretas en casino_service: {e}")
+            return stats
+            
+        return await asyncio.to_thread(_get_stats)
