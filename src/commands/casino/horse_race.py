@@ -6,6 +6,7 @@ import asyncio
 from typing import Dict, List, Tuple
 
 from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -100,6 +101,11 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
             return
 
         user_id = interaction.user.id
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
 
         async with self.race_view.lock:
@@ -116,14 +122,12 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
                 return
 
             if old_bet > 0:
-                await asyncio.to_thread(add_balance, user_id, old_bet)
-                await asyncio.to_thread(registrar_transaccion, user_id, old_bet, "Devolución Apuesta Anterior Caballos")
+                await CasinoService.refund_bet(user_id, old_bet, 'horse_race', 'Devolución Apuesta Anterior Caballos')
             
-            success, _ = await asyncio.to_thread(deduct_balance, user_id, bet_amount)
+            success, _ = await CasinoService.place_bet(user_id, bet_amount, 'horse_race')
             if not success:
                 await interaction.response.send_message("❌ No tienes suficiente saldo.", ephemeral=True)
                 return
-            await asyncio.to_thread(registrar_transaccion, user_id, -bet_amount, f"Apuesta Caballos: {self.horse_name}")
             
             self.race_view.bets[user_id] = {
                 'horse_idx': self.horse_idx,
@@ -298,19 +302,30 @@ class HorseRaceView(discord.ui.View):
                 pool_share = total_losing_bets * (bet_amt / total_winning_bets) if total_winning_bets > 0 else 0
                 
                 winnings = int(base_winnings + pool_share)
-                profit = winnings - bet_amt
                 
-                # Usar add_balance para evitar race conditions
-                await asyncio.to_thread(add_balance, user_id, winnings)
-                nuevo_saldo = await asyncio.to_thread(get_balance, user_id)
+                current_bal = await asyncio.to_thread(get_balance, user_id)
+                nuevo_saldo, impuesto = await CasinoService.settle_win(
+                    user_id,
+                    bet_amt,
+                    winnings,
+                    'horse_race',
+                    diff_mod,
+                    current_bal
+                )
+                lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(user_id, nuevo_saldo)
                 
-                await asyncio.to_thread(registrar_transaccion, user_id, winnings, f"Caballos: Ganador x{winner_mult} + Pozo")
-                await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'win', profit, diff_mod, nuevo_saldo)
-                
-                winners_text += f"✅ {user.mention} ganó **{winnings}** monedas.\n"
+                winners_text += f"✅ {user.mention} ganó **{winnings - impuesto}** monedas netas.\n"
+                if lockout_activated:
+                    winners_text += f"⚠️ {user.mention} **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**\n"
             else:
-                balance = await asyncio.to_thread(get_balance, user_id)
-                await asyncio.to_thread(record_game_result, user_id, 'horse_race', bet_amt, 'loss', 0, diff_mod, balance)
+                current_bal = await asyncio.to_thread(get_balance, user_id)
+                await CasinoService.settle_loss(
+                    user_id,
+                    bet_amt,
+                    'horse_race',
+                    diff_mod,
+                    current_bal
+                )
                 winners_text += f"❌ {user.display_name} perdió **{bet_amt}** monedas.\n"
                 
         if not winners_text:

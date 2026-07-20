@@ -21,6 +21,12 @@ class Slots(commands.Cog):
             await interaction.response.defer()
             user_id = interaction.user.id
             user_name = interaction.user.name
+
+            can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+            if not can_play:
+                await interaction.followup.send(lockout_msg, ephemeral=True)
+                return
+
             await asyncio.to_thread(ensure_user, user_id, user_name)
             if apuesta <= 0:
                 await interaction.followup.send("La apuesta debe ser mayor a 0.", ephemeral=True)
@@ -142,6 +148,7 @@ class Slots(commands.Cog):
                     difficulty_modifier,
                     saldo_usuario
                 )
+                lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(user_id, nuevo_saldo)
                 try:
                     await process_post_game_events(interaction, user_id, 'slots', apuesta, profit)
                 except Exception:
@@ -158,6 +165,8 @@ class Slots(commands.Cog):
                     f'✨ Premio Neto: **{winnings - impuesto:,}** monedas\n'
                     f'🪙 Nuevo saldo: **{nuevo_saldo:,}** monedas'
                 )
+                if lockout_activated:
+                    desc += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
             else:
                 nuevo_saldo = await CasinoService.settle_loss(
                     user_id,

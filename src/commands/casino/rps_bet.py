@@ -4,6 +4,7 @@ from discord import app_commands
 import asyncio
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -57,19 +58,21 @@ class RPSMainView(discord.ui.View):
         if interaction.user.id != self.challenged.id:
             await interaction.response.send_message("¡Este reto no es para ti!", ephemeral=True)
             return
-            
+
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(self.challenged.id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         # Verificar saldo del retado
         await asyncio.to_thread(ensure_user, self.challenged.id, self.challenged.name)
-        success, balance_challenged = await asyncio.to_thread(deduct_balance, self.challenged.id, self.bet)
+        success, balance_challenged = await CasinoService.place_bet(self.challenged.id, self.bet, 'rps')
         
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para aceptar esta apuesta.", ephemeral=True)
             return
 
         self.accepted = True
-        
-        await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.bet, f"Apuesta PPT vs {self.challenged.display_name}")
-        await asyncio.to_thread(registrar_transaccion, self.challenged.id, -self.bet, f"Apuesta PPT vs {self.challenger.display_name}")
 
         # Cambiar botones
         self.clear_items()
@@ -131,66 +134,62 @@ class RPSMainView(discord.ui.View):
 
         if ch_c == cd_c:
             # Empate, devolver dinero
-            await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
-            await asyncio.to_thread(add_balance, self.challenged.id, self.bet)
+            await CasinoService.refund_bet(self.challenger.id, self.bet, 'rps', "Empate PPT (Devolución)")
+            await CasinoService.refund_bet(self.challenged.id, self.bet, 'rps', "Empate PPT (Devolución)")
             
-            await asyncio.to_thread(registrar_transaccion, self.challenger.id, self.bet, "Empate PPT (Devolución)")
-            await asyncio.to_thread(registrar_transaccion, self.challenged.id, self.bet, "Empate PPT (Devolución)")
-            
-            await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'tie', 0, diff_1, bal_1 + self.bet)
-            try:
-                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
-            except Exception:
-                pass
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'tie', 0, diff_2, bal_2 + self.bet)
-            try:
-                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
-            except Exception:
-                pass
-
             embed.title = "🤝 ¡Empate!"
             embed.color = discord.Color.light_grey()
             embed.description += "Ambos reciben su apuesta de vuelta."
             
         elif CHOICES[ch_c]['beats'] == cd_c:
             # Gana retador
-            await asyncio.to_thread(add_balance, self.challenger.id, pozo)
-            await asyncio.to_thread(registrar_transaccion, self.challenger.id, pozo, f"Ganó PPT vs {self.challenged.display_name}")
-            
-            await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'win', self.bet, diff_1, bal_1 + pozo)
-            try:
-                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, self.bet)
-            except Exception:
-                pass
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'loss', 0, diff_2, bal_2)
-            try:
-                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, 0)
-            except Exception:
-                pass
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                self.challenger.id,
+                self.bet,
+                pozo,
+                'rps',
+                diff_1,
+                bal_1
+            )
+            await CasinoService.settle_loss(
+                self.challenged.id,
+                self.bet,
+                'rps',
+                diff_2,
+                CD_bal=bal_2
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenger.id, nuevo_saldo)
 
             embed.title = f"👑 ¡{self.challenger.display_name} gana!"
             embed.color = discord.Color.green()
-            embed.description += f"**{self.challenger.display_name}** se lleva el pozo de **{pozo}** monedas."
+            embed.description += f"**{self.challenger.display_name}** se lleva el pozo de **{pozo - impuesto}** monedas netas."
+            if lockout_activated:
+                embed.description += f"\n\n⚠️ **🎰 {self.challenger.mention} has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
             
         else:
             # Gana retado
-            await asyncio.to_thread(add_balance, self.challenged.id, pozo)
-            await asyncio.to_thread(registrar_transaccion, self.challenged.id, pozo, f"Ganó PPT vs {self.challenger.display_name}")
-            
-            await asyncio.to_thread(record_game_result, self.challenger.id, 'rps', self.bet, 'loss', 0, diff_1, bal_1)
-            try:
-                await process_post_game_events(interaction, self.challenger.id, 'rps', self.bet, 0)
-            except Exception:
-                pass
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'rps', self.bet, 'win', self.bet, diff_2, bal_2 + pozo)
-            try:
-                await process_post_game_events(interaction, self.challenged.id, 'rps', self.bet, self.bet)
-            except Exception:
-                pass
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                self.challenged.id,
+                self.bet,
+                pozo,
+                'rps',
+                diff_2,
+                CD_bal=bal_2
+            )
+            await CasinoService.settle_loss(
+                self.challenger.id,
+                self.bet,
+                'rps',
+                diff_1,
+                CD_bal=bal_1
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenged.id, nuevo_saldo)
 
             embed.title = f"👑 ¡{self.challenged.display_name} gana!"
             embed.color = discord.Color.green()
-            embed.description += f"**{self.challenged.display_name}** se lleva el pozo de **{pozo}** monedas."
+            embed.description += f"**{self.challenged.display_name}** se lleva el pozo de **{pozo - impuesto}** monedas netas."
+            if lockout_activated:
+                embed.description += f"\n\n⚠️ **🎰 {self.challenged.mention} has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
 
         try:
             await self.message.edit(embed=embed, view=None)
@@ -204,14 +203,14 @@ class RPSMainView(discord.ui.View):
                 embed = self.message.embeds[0]
                 embed.color = discord.Color.dark_grey()
                 if not self.accepted:
-                    await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
+                    await CasinoService.refund_bet(self.challenger.id, self.bet, 'rps', "Reto no aceptado a tiempo")
                     embed.description = "El reto expiró porque no fue aceptado a tiempo."
                 else:
                     embed.description = "El reto fue cancelado porque alguien no eligió su jugada a tiempo.\nSe ha devuelto el dinero a ambos."
                     
                     # Devolver dinero a ambos
-                    await asyncio.to_thread(add_balance, self.challenger.id, self.bet)
-                    await asyncio.to_thread(add_balance, self.challenged.id, self.bet)
+                    await CasinoService.refund_bet(self.challenger.id, self.bet, 'rps', "PPT Cancelado por inactividad")
+                    await CasinoService.refund_bet(self.challenged.id, self.bet, 'rps', "PPT Cancelado por inactividad")
                     
                 await self.message.edit(embed=embed, view=None)
         except:
@@ -241,9 +240,19 @@ class RPSBet(commands.Cog):
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
 
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(retador.id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
+        can_play_opp, lockout_msg_opp = await CasinoService.check_casino_lockout(oponente.id)
+        if not can_play_opp:
+            await interaction.response.send_message(f"❌ El oponente {oponente.display_name} está bloqueado del casino.", ephemeral=True)
+            return
+
         await asyncio.to_thread(ensure_user, retador.id, retador.name)
         
-        success, saldo_retador = await asyncio.to_thread(deduct_balance, retador.id, apuesta)
+        success, saldo_retador = await CasinoService.place_bet(retador.id, apuesta, 'rps')
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para esta apuesta.", ephemeral=True)
             return

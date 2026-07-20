@@ -5,9 +5,10 @@ import asyncio
 from src.db import get_balance, ensure_user, add_balance, registrar_transaccion
 from src.utils.prestige_config import format_username_with_prestige
 
-def _get_user_balance(user_id, user_name):
+def _get_user_balance_info(user_id, user_name):
     ensure_user(user_id, user_name)
-    return get_balance(user_id)
+    from src.db import get_bank_balance
+    return get_balance(user_id), get_bank_balance(user_id)
 
 def _crear_plata_db(user_id, user_name, cantidad):
     ensure_user(user_id, user_name)
@@ -23,23 +24,22 @@ class Plata(commands.Cog):
     @app_commands.describe(usuario="Usuario a consultar (opcional)")
     async def plata(self, interaction: discord.Interaction, usuario: discord.Member = None):
         await interaction.response.defer()
-        if usuario:
-            balance = await asyncio.to_thread(_get_user_balance, usuario.id, usuario.name)
-            nombre = await asyncio.to_thread(format_username_with_prestige, usuario.id, usuario.display_name)
-        else:
-            balance = await asyncio.to_thread(
-                _get_user_balance, interaction.user.id, interaction.user.name
-            )
-            nombre = await asyncio.to_thread(format_username_with_prestige, interaction.user.id, interaction.user.display_name)
+        target_user = usuario or interaction.user
+        
+        cash, bank = await asyncio.to_thread(
+            _get_user_balance_info, target_user.id, target_user.name
+        )
+        nombre = await asyncio.to_thread(format_username_with_prestige, target_user.id, target_user.display_name)
+        
         embed = discord.Embed(
-            title=f"💰 Balance de {nombre}",
-            description=f"Saldo actual: **{balance}** monedas",
+            title=f"💰 Dinero de {nombre}",
             color=discord.Color.gold()
         )
-        if usuario:
-            embed.set_thumbnail(url=usuario.display_avatar.url)
-        else:
-            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.add_field(name="💵 En Mano", value=f"**{cash:,}** monedas", inline=True)
+        embed.add_field(name="🏦 En Banco", value=f"**{bank:,}** monedas", inline=True)
+        embed.add_field(name="📊 Total", value=f"**{cash + bank:,}** monedas", inline=False)
+        
+        embed.set_thumbnail(url=target_user.display_avatar.url)
         embed.set_footer(text=f"Solicitado por {interaction.user.display_name}")
         await interaction.followup.send(embed=embed)
 

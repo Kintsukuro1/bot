@@ -31,12 +31,14 @@ class BancoCog(commands.Cog):
         self.daily_protection_fee_task.start()
         self.monthly_prestige_bonus_task.start()
         self.daily_investment_resolution_task.start()
+        self.daily_bank_fee_task.start()
 
     def cog_unload(self):
         self.daily_interest_task.cancel()
         self.daily_protection_fee_task.cancel()
         self.monthly_prestige_bonus_task.cancel()
         self.daily_investment_resolution_task.cancel()
+        self.daily_bank_fee_task.cancel()
 
     # ──────────────────────────────────────────────
     # TAREAS DIARIAS (INTERÉS Y CUOTA DE PROTECCIÓN)
@@ -189,6 +191,47 @@ class BancoCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ──────────────────────────────────────────────
+    # TAREA DIARIA DE COMISION DE BANCO (CUSTODIA)
+    # ──────────────────────────────────────────────
+
+    @tasks.loop(time=time(hour=5, minute=0, second=0))
+    async def daily_bank_fee_task(self):
+        """Cobra la comisión diaria del 1% por custodia de banco a todos los usuarios con dinero depositado."""
+        logger.info("[BancoCentral] Iniciando cobro de comisión diaria de banco...")
+        try:
+            resultados = await BankService.apply_daily_bank_fee()
+            logger.info(f"[BancoCentral] Cobro de comisiones completado para {len(resultados)} usuarios.")
+            
+            for res in resultados:
+                user_id = res['user_id']
+                cobrado = res['cobrado']
+                nuevo_saldo_banco = res['nuevo_saldo_banco']
+                
+                user = self.bot.get_user(user_id)
+                if not user:
+                    try:
+                        user = await self.bot.fetch_user(user_id)
+                    except Exception:
+                        pass
+                
+                if user:
+                    try:
+                        await user.send(
+                            f"🏦 **Comisión de Custodia Bancaria**\n"
+                            f"Se ha cobrado la comisión diaria del 1% por mantener tu dinero seguro en el banco:\n"
+                            f"💸 **Comisión:** `{cobrado:,}` monedas\n"
+                            f"🔒 **Saldo bancario restante:** `{nuevo_saldo_banco:,}` monedas"
+                        )
+                    except Exception as dm_err:
+                        logger.warning(f"[BancoCentral] No se pudo enviar DM al usuario {user_id}: {dm_err}")
+        except Exception as e:
+            logger.error(f"[BancoCentral] Error en tarea de comisión diaria de banco: {e}")
+
+    @daily_bank_fee_task.before_loop
+    async def before_daily_bank_fee(self):
+        await self.bot.wait_until_ready()
+
+    # ──────────────────────────────────────────────
     # COMANDO /banco
     # ──────────────────────────────────────────────
 
@@ -201,9 +244,10 @@ class BancoCog(commands.Cog):
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
 
-        reservas, prestamos = await asyncio.gather(
+        reservas, prestamos, bank_balance = await asyncio.gather(
             BankService.get_reserves(),
             BankService.get_all_loans(user_id),
+            BankService.get_bank_balance(user_id),
         )
 
         embed = discord.Embed(
@@ -214,7 +258,12 @@ class BancoCog(commands.Cog):
         embed.add_field(
             name="💰 Reservas Totales",
             value=f"`{reservas:,}` monedas",
-            inline=False
+            inline=True
+        )
+        embed.add_field(
+            name="🔒 Tu Saldo Bancario",
+            value=f"`{bank_balance:,}` monedas\n*(Protegido contra robos)*",
+            inline=True
         )
 
         prestamos_activos = [p for p in prestamos if p['MontoAdeudado'] > 0]
@@ -337,6 +386,74 @@ class BancoCog(commands.Cog):
                     inline=False
                 )
 
+        await interaction.followup.send(embed=embed)
+
+    # ──────────────────────────────────────────────
+    # COMANDO /banco_depositar
+    # ──────────────────────────────────────────────
+
+    @app_commands.command(
+        name="banco_depositar",
+        description="Deposita monedas de tu cartera en tu cuenta bancaria protegida contra robos."
+    )
+    @app_commands.describe(monto="Cantidad de monedas a depositar")
+    @ECONOMY_COOLDOWN
+    async def banco_depositar(self, interaction: discord.Interaction, monto: int):
+        if monto <= 0:
+            await interaction.response.send_message("❌ El monto a depositar debe ser mayor a 0.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
+
+        success, mensaje, new_cash, new_bank = await BankService.deposit_to_bank(user_id, monto)
+
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="🏦 Depósito Bancario",
+            description=mensaje,
+            color=color,
+            timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
+        )
+        if success:
+            embed.add_field(name="💰 Saldo en Cartera", value=f"`{new_cash:,}` monedas", inline=True)
+            embed.add_field(name="🔒 Saldo en Banco", value=f"`{new_bank:,}` monedas", inline=True)
+            
+        await interaction.followup.send(embed=embed)
+
+    # ──────────────────────────────────────────────
+    # COMANDO /banco_retirar
+    # ──────────────────────────────────────────────
+
+    @app_commands.command(
+        name="banco_retirar",
+        description="Retira monedas de tu cuenta bancaria hacia tu cartera."
+    )
+    @app_commands.describe(monto="Cantidad de monedas a retirar")
+    @ECONOMY_COOLDOWN
+    async def banco_retirar(self, interaction: discord.Interaction, monto: int):
+        if monto <= 0:
+            await interaction.response.send_message("❌ El monto a retirar debe ser mayor a 0.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
+
+        success, mensaje, new_cash, new_bank = await BankService.withdraw_from_bank(user_id, monto)
+
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="🏦 Retiro Bancario",
+            description=mensaje,
+            color=color,
+            timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
+        )
+        if success:
+            embed.add_field(name="💰 Saldo en Cartera", value=f"`{new_cash:,}` monedas", inline=True)
+            embed.add_field(name="🔒 Saldo en Banco", value=f"`{new_bank:,}` monedas", inline=True)
+            
         await interaction.followup.send(embed=embed)
 
     # ──────────────────────────────────────────────
@@ -467,6 +584,10 @@ class BancoCog(commands.Cog):
             # 4. Resolver inversiones vencidas
             resultado_inversiones = await BankService.resolve_matured_investments()
 
+            # 5. Cobrar comisiones diarias del banco
+            resultado_comisiones = await BankService.apply_daily_bank_fee()
+            total_cobrado_comisiones = sum(r['cobrado'] for r in resultado_comisiones)
+
             embed = discord.Embed(
                 title="🏦 Ciclo Bancario Diario Aplicado (Manual)",
                 color=discord.Color.blue(),
@@ -475,7 +596,7 @@ class BancoCog(commands.Cog):
             embed.add_field(name="Interés generado", value=f"{resultado_interes['total_interes']:,} monedas", inline=True)
             embed.add_field(name="Usuarios en mora", value=str(len(resultado_interes['en_mora'])), inline=True)
             
-            embed.add_field(name="Cuotas: Usuarios evaluados", value=str(len(resultado_cuotas)), inline=True)
+            embed.add_field(name="Cuotas: Cuotas de protección", value=str(len(resultado_cuotas)), inline=True)
             embed.add_field(name="Cuotas: Cobros completos", value=str(exitosos_cuotas), inline=True)
             embed.add_field(name="Total recaudado por protección", value=f"{total_cobrado_cuotas:,} monedas", inline=True)
             
@@ -483,6 +604,32 @@ class BancoCog(commands.Cog):
             embed.add_field(name="Inversiones: Resueltas", value=str(resultado_inversiones['count']), inline=True)
             embed.add_field(name="Inversiones: Total pagado", value=f"{resultado_inversiones['total_payout']:,} monedas", inline=True)
             
+            embed.add_field(name="Custodia: Usuarios cobrados", value=str(len(resultado_comisiones)), inline=True)
+            embed.add_field(name="Custodia: Total recaudado", value=f"{total_cobrado_comisiones:,} monedas", inline=True)
+
+            # Notificar comisiones cobradas manualmente por DM
+            if len(resultado_comisiones) > 0:
+                for res in resultado_comisiones:
+                    user_id = res['user_id']
+                    cobrado = res['cobrado']
+                    nuevo_saldo_banco = res['nuevo_saldo_banco']
+                    user = self.bot.get_user(user_id)
+                    if not user:
+                        try:
+                            user = await self.bot.fetch_user(user_id)
+                        except Exception:
+                            pass
+                    if user:
+                        try:
+                            await user.send(
+                                f"🏦 **Comisión de Custodia Bancaria (Manual Tick)**\n"
+                                f"Se ha cobrado la comisión diaria del 1% por mantener tu dinero seguro en el banco:\n"
+                                f"💸 **Comisión:** `{cobrado:,}` monedas\n"
+                                f"🔒 **Saldo bancario restante:** `{nuevo_saldo_banco:,}` monedas"
+                            )
+                        except Exception as dm_err:
+                            logger.warning(f"[BancoCentral] No se pudo enviar DM de comisión manual al usuario {user_id}: {dm_err}")
+
             # Notificar a los usuarios de las inversiones resueltas manualmente
             if resultado_inversiones['count'] > 0:
                 for res in resultado_inversiones['results']:

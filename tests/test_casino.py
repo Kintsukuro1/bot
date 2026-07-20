@@ -11,8 +11,9 @@ from src.services import CasinoService
 
 class TestCasinoService(unittest.TestCase):
     
+    @patch('src.services.casino_service.CasinoService.check_game_circuit_breaker', return_value=(True, ""))
     @patch('src.db.db_cursor')
-    def test_place_bet_success(self, mock_db_cursor):
+    def test_place_bet_success(self, mock_db_cursor, mock_check_cb):
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = (4000,) # Saldo restante tras restar
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
@@ -29,8 +30,9 @@ class TestCasinoService(unittest.TestCase):
             RETURNING Balance
         """, (1000, 12345, 1000))
 
+    @patch('src.services.casino_service.CasinoService.check_game_circuit_breaker', return_value=(True, ""))
     @patch('src.db.db_cursor')
-    def test_place_bet_insufficient_funds(self, mock_db_cursor):
+    def test_place_bet_insufficient_funds(self, mock_db_cursor, mock_check_cb):
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
@@ -94,17 +96,63 @@ class TestCasinoService(unittest.TestCase):
             ON CONFLICT (UserID) DO UPDATE SET Balance = Users.Balance + EXCLUDED.Balance
             """, (12345, 1000))
 
+    @patch('src.db.get_casino_lockout_data')
+    @patch('src.db.apply_casino_lockout')
+    @patch('src.db.update_casino_reference_balance')
+    @patch('src.db.get_balance')
+    def test_check_casino_lockout_active(self, mock_get_balance, mock_update, mock_apply, mock_get_lockout):
+        from datetime import datetime, timedelta
+        bloqueado_hasta = datetime.now() + timedelta(minutes=15)
+        mock_get_lockout.return_value = (5000, 10000, datetime.now(), bloqueado_hasta)
+        
+        can_play, msg = asyncio.run(CasinoService.check_casino_lockout(12345))
+        self.assertFalse(can_play)
+        self.assertIn("tómate un descanso", msg)
+
+    @patch('src.db.get_casino_lockout_data')
+    @patch('src.db.apply_casino_lockout')
+    @patch('src.db.update_casino_reference_balance')
+    @patch('src.db.get_balance')
+    def test_check_casino_lockout_not_active(self, mock_get_balance, mock_update, mock_apply, mock_get_lockout):
+        mock_get_lockout.return_value = (5000, None, None, None)
+        mock_get_balance.return_value = 5000
+        
+        can_play, msg = asyncio.run(CasinoService.check_casino_lockout(12345))
+        self.assertTrue(can_play)
+        mock_update.assert_called_once()
+
+    @patch('src.db.get_casino_lockout_data')
+    @patch('src.db.apply_casino_lockout')
+    def test_check_and_apply_winstreak_lockout_trigger(self, mock_apply, mock_get_lockout):
+        from datetime import datetime
+        mock_get_lockout.return_value = (5000, 10000, datetime.now(), None)
+        
+        locked = asyncio.run(CasinoService.check_and_apply_winstreak_lockout(12345, 12500))
+        self.assertTrue(locked)
+        mock_apply.assert_called_once()
+
+    @patch('src.db.get_casino_lockout_data')
+    @patch('src.db.apply_casino_lockout')
+    def test_check_and_apply_winstreak_lockout_no_trigger(self, mock_apply, mock_get_lockout):
+        from datetime import datetime
+        mock_get_lockout.return_value = (5000, 10000, datetime.now(), None)
+        
+        locked = asyncio.run(CasinoService.check_and_apply_winstreak_lockout(12345, 12400))
+        self.assertFalse(locked)
+        mock_apply.assert_not_called()
+
 class TestCrashTicket(unittest.IsolatedAsyncioTestCase):
     
     @patch('src.commands.casino.crash.usuario_tiene_mejora')
-    @patch('src.commands.casino.crash.process_crash_payout_atomic')
+    @patch('src.commands.casino.crash.CasinoService.settle_win')
     @patch('src.commands.casino.crash.process_post_game_events')
     @patch('src.commands.casino.crash.CrashView._safe_edit_or_followup')
-    async def test_finalizar_juego_retiro_no_debuff(self, mock_safe_edit, mock_post_events, mock_payout_atomic, mock_tiene_mejora):
+    async def test_finalizar_juego_retiro_no_debuff(self, mock_safe_edit, mock_post_events, mock_settle_win, mock_tiene_mejora):
         from src.commands.casino.crash import CrashView
         
         # Mocks
         mock_tiene_mejora.return_value = False
+        mock_settle_win.return_value = (6940, 60)
         
         mock_ctx = MagicMock()
         mock_user = MagicMock()
@@ -128,28 +176,27 @@ class TestCrashTicket(unittest.IsolatedAsyncioTestCase):
         # Call finalize
         await view._finalizar_juego(motivo="retiro")
         
-        # Check that process_crash_payout_atomic was called
+        # Check that CasinoService.settle_win was called
         # with full winnings (1000 * 2.0 = 2000), NOT debuffed (which would have been 1300)
-        mock_payout_atomic.assert_called_once_with(
+        mock_settle_win.assert_called_once_with(
             12345,      # user_id
             1000,       # apuesta
             2000,       # ganancia_total (no debuff!)
-            1000,       # ganancia_neta
-            'win',      # result_type
+            'crash',    # game_type
             0.0,        # difficulty_modifier
-            7000,       # nuevo_saldo
-            "Crash: retirado x2.00" # desc_transaccion
+            5000        # saldo_post_apuesta
         )
 
     @patch('src.commands.casino.crash.usuario_tiene_mejora')
-    @patch('src.commands.casino.crash.process_crash_payout_atomic')
+    @patch('src.commands.casino.crash.CasinoService.settle_win')
     @patch('src.commands.casino.crash.process_post_game_events')
     @patch('src.commands.casino.crash.CrashView._safe_edit_or_followup')
-    async def test_finalizar_juego_completado_no_debuff(self, mock_safe_edit, mock_post_events, mock_payout_atomic, mock_tiene_mejora):
+    async def test_finalizar_juego_completado_no_debuff(self, mock_safe_edit, mock_post_events, mock_settle_win, mock_tiene_mejora):
         from src.commands.casino.crash import CrashView
         
         # Mocks
         mock_tiene_mejora.return_value = False
+        mock_settle_win.return_value = (7425, 75)
         
         mock_ctx = MagicMock()
         mock_user = MagicMock()
@@ -173,18 +220,86 @@ class TestCrashTicket(unittest.IsolatedAsyncioTestCase):
         # Call finalize
         await view._finalizar_juego(motivo="completado")
         
-        # Check that process_crash_payout_atomic was called
+        # Check that CasinoService.settle_win was called
         # with full winnings (1000 * 2.5 = 2500), NOT debuffed (which would have been 1625)
-        mock_payout_atomic.assert_called_once_with(
+        mock_settle_win.assert_called_once_with(
             12345,      # user_id
             1000,       # apuesta
             2500,       # ganancia_total (no debuff!)
-            1500,       # ganancia_neta
-            'win',      # result_type
+            'crash',    # game_type
             0.0,        # difficulty_modifier
-            7500,       # nuevo_saldo
-            "Crash: completó sin explotar x2.50" # desc_transaccion
+            5000        # saldo_post_apuesta
         )
+
+    @patch('src.commands.casino.crash.usuario_tiene_mejora')
+    @patch('src.commands.casino.crash.CasinoService.settle_win')
+    @patch('src.commands.casino.crash.CasinoService.check_and_apply_winstreak_lockout')
+    @patch('src.commands.casino.crash.process_post_game_events')
+    @patch('src.commands.casino.crash.CrashView._safe_edit_or_followup')
+    async def test_finalizar_juego_retiro_triggers_lockout(self, mock_safe_edit, mock_post_events, mock_lockout, mock_settle_win, mock_tiene_mejora):
+        from src.commands.casino.crash import CrashView
+        
+        # Mocks
+        mock_tiene_mejora.return_value = False
+        mock_settle_win.return_value = (6940, 60)
+        mock_lockout.return_value = True
+        
+        mock_ctx = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = 12345
+        
+        view = CrashView(
+            ctx_or_interaction=mock_ctx,
+            user=mock_user,
+            apuesta=1000,
+            saldo_post_apuesta=5000,
+            crash_point=2.5,
+            difficulty_modifier=0.0,
+            ticket_activo=False
+        )
+        view.current_mult = 2.0
+        view.crash_mult = 2.0
+        
+        await view._finalizar_juego(motivo="retiro")
+        
+        mock_lockout.assert_called_once_with(12345, 6940)
+        called_embed = mock_safe_edit.call_args[0][1]
+        self.assertIn("tómate un descanso de 25 minutos", called_embed.description)
+
+    @patch('src.commands.casino.crash.usuario_tiene_mejora')
+    @patch('src.commands.casino.crash.CasinoService.settle_win')
+    @patch('src.commands.casino.crash.CasinoService.check_and_apply_winstreak_lockout')
+    @patch('src.commands.casino.crash.process_post_game_events')
+    @patch('src.commands.casino.crash.CrashView._safe_edit_or_followup')
+    async def test_finalizar_juego_completado_triggers_lockout(self, mock_safe_edit, mock_post_events, mock_lockout, mock_settle_win, mock_tiene_mejora):
+        from src.commands.casino.crash import CrashView
+        
+        # Mocks
+        mock_tiene_mejora.return_value = False
+        mock_settle_win.return_value = (7425, 75)
+        mock_lockout.return_value = True
+        
+        mock_ctx = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = 12345
+        
+        view = CrashView(
+            ctx_or_interaction=mock_ctx,
+            user=mock_user,
+            apuesta=1000,
+            saldo_post_apuesta=5000,
+            crash_point=2.5,
+            difficulty_modifier=0.0,
+            ticket_activo=False
+        )
+        view.current_mult = 2.5
+        view.crash_mult = 2.5
+        
+        await view._finalizar_juego(motivo="completado")
+        
+        mock_lockout.assert_called_once_with(12345, 7425)
+        called_embed = mock_safe_edit.call_args[0][1]
+        self.assertIn("tómate un descanso de 25 minutos", called_embed.description)
 
 class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
     
@@ -192,13 +307,14 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
     @patch('src.commands.casino.crash.advance_provably_fair_nonce')
     @patch('src.commands.casino.crash.get_uniform_float')
     @patch('src.commands.casino.crash.ensure_user')
-    @patch('src.commands.casino.crash.deduct_balance')
+    @patch('src.commands.casino.crash.CasinoService.check_casino_lockout')
+    @patch('src.commands.casino.crash.CasinoService.place_bet')
     @patch('src.commands.casino.crash.DynamicDifficulty.calculate_dynamic_difficulty')
     @patch('src.commands.casino.crash.usuario_tiene_item')
     @patch('src.commands.casino.crash.CrashView')
     async def test_crash_game_generation_math(
         self, mock_crash_view, mock_tiene_item, mock_calc_diff, 
-        mock_deduct, mock_ensure, mock_get_uniform, mock_advance_nonce, mock_get_seeds
+        mock_place_bet, mock_lockout, mock_ensure, mock_get_uniform, mock_advance_nonce, mock_get_seeds
     ):
         from src.commands.casino.crash import Crash
         from unittest.mock import AsyncMock
@@ -207,7 +323,8 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
         mock_get_seeds.return_value = {"server_seed": "server", "client_seed": "client", "nonce": 5}
         mock_advance_nonce.return_value = 6
         mock_ensure.return_value = None
-        mock_deduct.return_value = (True, 9000)
+        mock_lockout.return_value = (True, "")
+        mock_place_bet.return_value = (True, 9000)
         mock_calc_diff.return_value = (0.0, "normal") # difficulty modifier = 0.0 => edge = 0.04
         mock_tiene_item.return_value = False
         
@@ -246,6 +363,71 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
         mock_crash_view.assert_called_with(
             interaction, interaction.user, 1000, 9000, 1000.00, 0.0, "normal", False
         )
+
+
+class TestCasinoCircuitBreaker(unittest.TestCase):
+    @patch('src.db.check_game_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_place_bet_blocked_by_circuit_breaker(self, mock_db_cursor, mock_check_cb):
+        # Configurar el circuit breaker para reportar que el juego está bloqueado
+        mock_check_cb.return_value = (False, "Bloqueado por pruebas")
+        
+        # Intentar apostar debe lanzar la excepción CasinoCircuitBreakerError
+        from src.services.casino_service import CasinoCircuitBreakerError
+        with self.assertRaises(CasinoCircuitBreakerError) as context:
+            asyncio.run(CasinoService.place_bet(12345, 1000, "slots"))
+        
+        self.assertIn("Este juego está temporalmente deshabilitado", str(context.exception))
+
+    @patch('src.services.casino_service.CasinoService._notify_staff_circuit_breaker')
+    @patch('src.services.casino_service.CasinoService.get_total_server_balance')
+    @patch('src.db.track_game_payout_db')
+    @patch('src.db.activar_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_settle_win_triggers_circuit_breaker(self, mock_db_cursor, mock_activar, mock_track, mock_get_total_balance, mock_notify):
+        # 1. Configurar la economía total en 100,000 monedas
+        mock_get_total_balance.return_value = 100000
+        
+        # 2. Configurar que el juego ha pagado acumuladamente 30,000 monedas hoy (30% > 25%)
+        mock_track.return_value = 30000
+        
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 3. Procesar una victoria
+        asyncio.run(
+            CasinoService.settle_win(12345, 1000, 2000, "slots", 0.0, 5000)
+        )
+        
+        # Verificar que se activa el circuit breaker
+        mock_activar.assert_called_once_with("slots", 2, unittest.mock.ANY)
+        # Verificar que se notifica al staff
+        mock_notify.assert_called_once()
+
+    @patch('src.services.casino_service.CasinoService.get_total_server_balance')
+    @patch('src.db.track_game_payout_db')
+    @patch('src.db.activar_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_settle_win_does_not_trigger_circuit_breaker_below_threshold(self, mock_db_cursor, mock_activar, mock_track, mock_get_total_balance):
+        # 1. Configurar la economía total en 100,000 monedas
+        mock_get_total_balance.return_value = 100000
+        
+        # 2. Configurar que el juego ha pagado acumuladamente 20,000 monedas hoy (20% < 25%)
+        mock_track.return_value = 20000
+        
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 3. Procesar una victoria
+        asyncio.run(
+            CasinoService.settle_win(12345, 1000, 2000, "slots", 0.0, 5000)
+        )
+        
+        # Verificar que NO se activa el circuit breaker
+        mock_activar.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

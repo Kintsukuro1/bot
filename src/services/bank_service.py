@@ -29,9 +29,12 @@ def _request_loan_db(user_id: int, amount: int) -> Tuple[bool, str]:
     prestige_level = get_user_prestige_level(user_id)
     
     with db_cursor() as cursor:
+        # Bloquear fila de Users para evitar solicitudes concurrentes del mismo usuario
+        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s FOR UPDATE", (user_id,))
+        
         cursor.execute("""
             SELECT LoanSlot, MontoAdeudado, LimitePrestamo, EnMora
-            FROM UserLoans WHERE UserID = %s
+            FROM UserLoans WHERE UserID = %s FOR UPDATE
         """, (user_id,))
         rows = cursor.fetchall()
         
@@ -73,7 +76,7 @@ def _request_loan_db(user_id: int, amount: int) -> Tuple[bool, str]:
                 f"💡 Paga tus préstamos a tiempo para aumentar tu límite."
             )
 
-        cursor.execute("SELECT Reservas FROM BancoCentral WHERE ID = 1")
+        cursor.execute("SELECT Reservas FROM BancoCentral WHERE ID = 1 FOR UPDATE")
         banco_row = cursor.fetchone()
         reservas = banco_row[0] if banco_row else 0
 
@@ -125,7 +128,7 @@ def _repay_loan_db(user_id: int, amount: int, slot: int = 1) -> Tuple[bool, str]
         cursor.execute("""
             SELECT MontoAdeudado, FechaVencimiento, LimitePrestamo,
                    PrestamosPagadosATiempo, EnMora
-            FROM UserLoans WHERE UserID = %s AND LoanSlot = %s
+            FROM UserLoans WHERE UserID = %s AND LoanSlot = %s FOR UPDATE
         """, (user_id, slot))
         row = cursor.fetchone()
 
@@ -139,7 +142,7 @@ def _repay_loan_db(user_id: int, amount: int, slot: int = 1) -> Tuple[bool, str]
 
         pago_real = min(amount, monto_adeudado)
 
-        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
+        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s FOR UPDATE", (user_id,))
         balance_row = cursor.fetchone()
         balance = balance_row[0] if balance_row else 0
 
@@ -217,7 +220,7 @@ def _apply_daily_interest_db() -> dict:
     with db_cursor() as cursor:
         cursor.execute("""
             SELECT UserID, MontoAdeudado, FechaVencimiento, LoanSlot
-            FROM UserLoans WHERE MontoAdeudado > 0
+            FROM UserLoans WHERE MontoAdeudado > 0 FOR UPDATE
         """)
         prestamos = cursor.fetchall()
 
@@ -305,6 +308,31 @@ class BankService:
         """Obtiene la inversión activa del usuario, o None si no tiene."""
         from src.db import get_active_investment_db
         return await asyncio.to_thread(get_active_investment_db, user_id)
+
+    @staticmethod
+    async def get_bank_balance(user_id: int) -> int:
+        """Obtiene el saldo bancario actual de un usuario."""
+        from src.db import get_bank_balance
+        return await asyncio.to_thread(get_bank_balance, user_id)
+
+    @staticmethod
+    async def deposit_to_bank(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+        """Realiza el depósito de dinero al banco."""
+        from src.db import deposit_to_bank_db
+        return await asyncio.to_thread(deposit_to_bank_db, user_id, amount)
+
+    @staticmethod
+    async def withdraw_from_bank(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+        """Realiza el retiro de dinero del banco."""
+        from src.db import withdraw_from_bank_db
+        return await asyncio.to_thread(withdraw_from_bank_db, user_id, amount)
+
+    @staticmethod
+    async def apply_daily_bank_fee() -> list:
+        """Cobra la comisión diaria del 1% por custodia a todos los usuarios."""
+        from src.db import apply_daily_bank_fee_db
+        return await asyncio.to_thread(apply_daily_bank_fee_db)
+
 
 
 

@@ -584,6 +584,17 @@ async def on_slash_error(interaction: discord.Interaction, error):
     if type(error) is discord.app_commands.CheckFailure:
         return
         
+    original_error = getattr(error, 'original', error)
+    from src.services.casino_service import CasinoCircuitBreakerError
+    if isinstance(original_error, CasinoCircuitBreakerError):
+        msg = str(original_error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            pass
+        return
+
     # Enviar log de error al canal
     await send_command_log(interaction, success=False, error_msg=str(error))
     

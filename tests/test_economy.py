@@ -77,8 +77,8 @@ class TestEconomyService(unittest.TestCase):
 
         mock_cursor = MagicMock()
         # Mocking selects & updates responses
+        mock_cursor.fetchall.return_value = [(111, 5000), (222, 0)]
         mock_cursor.fetchone.side_effect = [
-            (5000,), # Balance remitente
             (4000,), # Nuevo balance remitente después de restar
             (net_amount,)   # Nuevo balance destinatario después de sumar el monto neto
         ]
@@ -95,7 +95,7 @@ class TestEconomyService(unittest.TestCase):
     @patch('src.db.db_cursor')
     def test_transfer_balance_fail_no_money(self, mock_db_cursor):
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = (500,) # Solo tiene 500 monedas
+        mock_cursor.fetchall.return_value = [(111, 500), (222, 0)]
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
         
         success, from_bal, to_bal = asyncio.run(

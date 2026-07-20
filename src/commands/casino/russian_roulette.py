@@ -6,6 +6,7 @@ import asyncio
 from typing import List
 
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
@@ -31,11 +32,16 @@ class RRLobbyView(discord.ui.View):
             return
 
         user_id = interaction.user.id
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         self.players.append(interaction.user)
 
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
-        success, balance = await asyncio.to_thread(deduct_balance, user_id, self.bet)
+        success, balance = await CasinoService.place_bet(user_id, self.bet, 'russian_roulette')
         if not success:
             self.players.remove(interaction.user)
             await interaction.response.send_message("No tienes suficiente saldo para entrar.", ephemeral=True)
@@ -82,7 +88,7 @@ class RRLobbyView(discord.ui.View):
 
         # Cobrar la diferencia a cada jugador
         for p in self.players:
-            await asyncio.to_thread(deduct_balance, p.id, diff)
+            await CasinoService.place_bet(p.id, diff, 'russian_roulette')
 
         self.bullets = new_bullets
         self.bet = new_bet
@@ -119,10 +125,6 @@ class RRLobbyView(discord.ui.View):
         embed.title = "🔫 Ruleta Rusa - ¡El juego ha comenzado!"
         embed.color = discord.Color.red()
         
-        # Registrar las entradas (ya cobradas)
-        for p in self.players:
-            await asyncio.to_thread(registrar_transaccion, p.id, -self.bet, "Entrada Ruleta Rusa")
-            
         await self.message.edit(embed=embed, view=None)
         
         # Pasar el control a la vista del juego con el número de balas
@@ -133,7 +135,7 @@ class RRLobbyView(discord.ui.View):
         if not self.started:
             if len(self.players) < 2:
                 for p in self.players:
-                    await asyncio.to_thread(add_balance, p.id, self.bet)
+                    await CasinoService.refund_bet(p.id, self.bet, 'russian_roulette', "Ruleta Rusa Cancelada")
                 self.clear_items()
                 try:
                     if self.message:
@@ -264,11 +266,7 @@ class RRGameView(discord.ui.View):
             # Registrar derrota para el jugador que murió
             diff, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, dead_player.id, self.bet, 'russian_roulette')
             bal = await asyncio.to_thread(get_balance, dead_player.id)
-            await asyncio.to_thread(record_game_result, dead_player.id, 'russian_roulette', self.bet, 'loss', 0, diff, bal)
-            try:
-                await process_post_game_events(interaction, dead_player.id, 'russian_roulette', self.bet, 0)
-            except Exception:
-                pass
+            await CasinoService.settle_loss(dead_player.id, self.bet, 'russian_roulette', diff, bal)
                 
             # Remover al jugador muerto
             dead_index = self.players.index(dead_player)
@@ -308,22 +306,32 @@ class RRGameView(discord.ui.View):
     async def end_game_winner(self):
         winner = self.players[0]
         pozo = self.initial_players_count * self.bet
-        profit = pozo - self.bet
         
         diff, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, winner.id, self.bet, 'russian_roulette')
-        await asyncio.to_thread(add_balance, winner.id, pozo)
-        nuevo_saldo = await asyncio.to_thread(get_balance, winner.id)
-        await asyncio.to_thread(registrar_transaccion, winner.id, pozo, f"Ganó Ruleta Rusa (Pozo de {self.initial_players_count} jugadores)")
-        await asyncio.to_thread(record_game_result, winner.id, 'russian_roulette', self.bet, 'win', profit, diff, nuevo_saldo)
+        current_bal = await asyncio.to_thread(get_balance, winner.id)
+        nuevo_saldo, impuesto = await CasinoService.settle_win(
+            winner.id,
+            self.bet,
+            pozo,
+            'russian_roulette',
+            diff,
+            current_bal
+        )
+        lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(winner.id, nuevo_saldo)
         
         embed = self.message.embeds[0]
         embed.color = discord.Color.gold()
         embed.title = "🏆 ¡Ruleta Rusa Terminada!"
-        embed.description = (
+        desc = (
             f"**¡El último sobreviviente es {winner.mention}!**\n\n"
-            f"Se lleva el pozo total de **{pozo}** monedas.\n"
-            f"Nuevo saldo: **{nuevo_saldo}**"
+            f"Premio Bruto: **{pozo}** monedas\n"
+            f"💸 Impuesto Casino (3%): **{impuesto}** monedas (destruido)\n"
+            f"✨ Premio Neto: **{pozo - impuesto}** monedas\n"
+            f"🪙 Nuevo saldo: **{nuevo_saldo}**"
         )
+        if lockout_activated:
+            desc += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+        embed.description = desc
         await self.message.edit(content=winner.mention, embed=embed, view=None)
 
 class RussianRoulette(commands.Cog):
@@ -344,9 +352,14 @@ class RussianRoulette(commands.Cog):
             return
             
         host = interaction.user
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(host.id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         await asyncio.to_thread(ensure_user, host.id, host.name)
         
-        success, balance = await asyncio.to_thread(deduct_balance, host.id, entrada)
+        success, balance = await CasinoService.place_bet(host.id, entrada, 'russian_roulette')
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para abrir este juego.", ephemeral=True)
             return

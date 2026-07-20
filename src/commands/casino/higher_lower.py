@@ -287,10 +287,15 @@ class HigherLowerView(discord.ui.View):
             self.difficulty_modifier,
             self.saldo
         )
+        lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user.id, new_balance)
         
+        desc_msg = f"{'🏆 ¡Completaste todas las rondas!' if auto_cash else '💎 Has decidido cobrar tus ganancias'}"
+        if lockout_activated:
+            desc_msg += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+
         embed = discord.Embed(
             title="💰 Higher or Lower - ¡Cobrado!",
-            description=f"{'🏆 ¡Completaste todas las rondas!' if auto_cash else '💎 Has decidido cobrar tus ganancias'}",
+            description=desc_msg,
             color=discord.Color.gold()
         )
         
@@ -415,6 +420,14 @@ class HigherLower(commands.Cog):
             user_name = user.name
 
         # Validaciones
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            if is_slash:
+                await ctx_or_interaction.response.send_message(lockout_msg, ephemeral=True)
+            else:
+                await ctx_or_interaction.send(lockout_msg)
+            return
+
         if apuesta <= 0:
             error_msg = "❌ La apuesta debe ser mayor a 0."
             if is_slash:

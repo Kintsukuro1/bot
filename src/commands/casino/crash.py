@@ -8,8 +8,9 @@ from src.db import (
     get_balance, set_balance, deduct_balance, add_balance, ensure_user,
     registrar_transaccion, record_game_result, usuario_tiene_item,
     usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora,
-    process_crash_payout_atomic, get_provably_fair_seeds, advance_provably_fair_nonce
+    get_provably_fair_seeds, advance_provably_fair_nonce
 )
+from src.services.casino_service import CasinoService
 from src.utils.provably_fair import get_uniform_float
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
@@ -61,11 +62,16 @@ class Crash(commands.Cog):
             user_name = user.name
             
         await asyncio.to_thread(ensure_user, user_id, user_name)
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await _send_crash_error(ctx_or_interaction, is_slash, lockout_msg)
+            return
+
         if apuesta <= 0:
             await _send_crash_error(ctx_or_interaction, is_slash, "❌ La apuesta debe ser mayor a 0.")
             return
 
-        success, saldo_post_apuesta = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        success, saldo_post_apuesta = await CasinoService.place_bet(user_id, apuesta, 'crash')
         if not success:
             await _send_crash_error(ctx_or_interaction, is_slash, "❌ No tienes suficiente saldo para esa apuesta.")
             return
@@ -251,29 +257,33 @@ class CrashView(discord.ui.View):
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
                 ganancia_neta = ganancia_total - self.apuesta
                 
-                # Actualizar balance y estadísticas atómicamente
-                nuevo_saldo = self.saldo_post_apuesta + ganancia_total
-                await asyncio.to_thread(
-                    process_crash_payout_atomic,
-                    self.user.id,
-                    self.apuesta,
-                    ganancia_total,
-                    ganancia_neta,
-                    'win' if ganancia_neta > 0 else 'loss',
-                    self.difficulty_modifier,
-                    nuevo_saldo,
-                    f"Crash: retirado x{mult_final:.2f}"
-                )
+                if ganancia_neta > 0:
+                    nuevo_saldo, impuesto = await CasinoService.settle_win(
+                        self.user.id, self.apuesta, ganancia_total, 'crash', self.difficulty_modifier, self.saldo_post_apuesta
+                    )
+                else:
+                    nuevo_saldo = await CasinoService.settle_loss(
+                        self.user.id, self.apuesta, 'crash', self.difficulty_modifier, self.saldo_post_apuesta
+                    )
+                    impuesto = 0
                 
                 try:
-                    await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, max(0, ganancia_neta))
+                    await process_post_game_events(
+                        self.ctx_or_interaction,
+                        self.user.id,
+                        'crash',
+                        self.apuesta,
+                        max(0, ganancia_total - impuesto - self.apuesta)
+                    )
                 except Exception:
                     pass
                 
                 # Determinar color y mensaje según si ganó o perdió
+                lockout_activated = False
                 if ganancia_neta > 0:
                     color = discord.Color.green()
-                    resultado = f"✅ **¡GANASTE!** +{ganancia_neta} monedas"
+                    resultado = f"✅ **¡GANASTE!** +{ganancia_total - impuesto - self.apuesta} monedas"
+                    lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user.id, nuevo_saldo)
                 elif ganancia_neta < 0:
                     color = discord.Color.red()
                     resultado = f"❌ **Perdiste** {abs(ganancia_neta)} monedas"
@@ -281,16 +291,32 @@ class CrashView(discord.ui.View):
                     color = discord.Color.yellow()
                     resultado = f"🟰 **Empate** (sin ganancias ni pérdidas)"
                 
-                resultado_embed = discord.Embed(
-                    title="💥 Crash Casino - Te retiraste",
-                    description=(
+                if ganancia_neta > 0:
+                    desc_embed = (
+                        f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"  # Usar multiplicador capturado
+                        f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
+                        f"💵 **Premio Bruto:** {ganancia_total} monedas\n"
+                        f"💸 **Impuesto Casino (3%):** {impuesto} monedas (destruido)\n"
+                        f"✨ **Premio Neto:** {ganancia_total - impuesto} monedas\n"
+                        f"{resultado}\n"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n"
+                        f"{self._progress_bar_blocks(min(15, self.progress_steps), 15, explosion=False)}"
+                    )
+                else:
+                    desc_embed = (
                         f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"  # Usar multiplicador capturado
                         f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
                         f"💵 **Total recibido:** {ganancia_total} monedas\n"
                         f"{resultado}\n"
                         f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n"
                         f"{self._progress_bar_blocks(min(15, self.progress_steps), 15, explosion=False)}"
-                    ),
+                    )
+                if ganancia_neta > 0 and lockout_activated:
+                    desc_embed += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+                
+                resultado_embed = discord.Embed(
+                    title="💥 Crash Casino - Te retiraste",
+                    description=desc_embed,
                     color=color
                 )
                 
@@ -308,17 +334,8 @@ class CrashView(discord.ui.View):
                     reembolsado = True
                             
                 if reembolsado:
-                    nuevo_saldo = self.saldo_post_apuesta + self.apuesta
-                    await asyncio.to_thread(
-                        process_crash_payout_atomic,
-                        self.user.id,
-                        self.apuesta,
-                        self.apuesta,
-                        0,
-                        'refund',
-                        self.difficulty_modifier,
-                        nuevo_saldo,
-                        f"Crash: Reembolso por Ticket (<=1.5x) en x{mult_final:.2f}"
+                    nuevo_saldo = await CasinoService.refund_bet(
+                        self.user.id, self.apuesta, 'crash', f"Ticket (<=1.5x) en x{mult_final:.2f}"
                     )
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
@@ -335,17 +352,8 @@ class CrashView(discord.ui.View):
                         color=discord.Color.blue()
                     )
                 else:
-                    nuevo_saldo = self.saldo_post_apuesta
-                    await asyncio.to_thread(
-                        process_crash_payout_atomic,
-                        self.user.id,
-                        self.apuesta,
-                        0,
-                        -self.apuesta,
-                        'loss',
-                        self.difficulty_modifier,
-                        nuevo_saldo,
-                        f"Crash: explotó x{mult_final:.2f}"
+                    nuevo_saldo = await CasinoService.settle_loss(
+                        self.user.id, self.apuesta, 'crash', self.difficulty_modifier, self.saldo_post_apuesta
                     )
                     try:
                         await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, 0)
@@ -369,48 +377,65 @@ class CrashView(discord.ui.View):
                 ganancia_total = int(self.apuesta * mult_final * ganancia_bonus)
                 ganancia_neta = ganancia_total - self.apuesta
                 
-                nuevo_saldo = self.saldo_post_apuesta + ganancia_total
-                await asyncio.to_thread(
-                    process_crash_payout_atomic,
-                    self.user.id,
-                    self.apuesta,
-                    ganancia_total,
-                    ganancia_neta,
-                    'win',
-                    self.difficulty_modifier,
-                    nuevo_saldo,
-                    f"Crash: completó sin explotar x{mult_final:.2f}"
-                )
+                if ganancia_neta > 0:
+                    nuevo_saldo, impuesto = await CasinoService.settle_win(
+                        self.user.id, self.apuesta, ganancia_total, 'crash', self.difficulty_modifier, self.saldo_post_apuesta
+                    )
+                else:
+                    nuevo_saldo = await CasinoService.settle_loss(
+                        self.user.id, self.apuesta, 'crash', self.difficulty_modifier, self.saldo_post_apuesta
+                    )
+                    impuesto = 0
+                
                 try:
-                    await process_post_game_events(self.ctx_or_interaction, self.user.id, 'crash', self.apuesta, ganancia_neta)
+                    await process_post_game_events(
+                        self.ctx_or_interaction,
+                        self.user.id,
+                        'crash',
+                        self.apuesta,
+                        max(0, ganancia_total - impuesto - self.apuesta)
+                    )
                 except Exception:
                     pass
                 
                 # Barra completa para victoria
+                lockout_activated = False
+                if ganancia_neta > 0:
+                    lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user.id, nuevo_saldo)
                 bar = self._progress_bar_blocks(15, 15, explosion=False)
-                resultado_embed = discord.Embed(
-                    title="🎉 Crash Casino - ¡Victoria!",
-                    description=(
+                
+                if ganancia_neta > 0:
+                    desc_embed = (
                         f"🎉 ¡Increíble! Llegaste al final sin que explotara\n"
                         f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"
-                        f"✅ **¡GANASTE!** +{ganancia_neta:,} monedas\n"
-                        f"💰 **Total recibido:** {ganancia_total:,} monedas\n"
+                        f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
+                        f"💵 **Premio Bruto:** {ganancia_total:,} monedas\n"
+                        f"💸 **Impuesto Casino (3%):** {impuesto:,} monedas (destruido)\n"
+                        f"✨ **Premio Neto:** {ganancia_total - impuesto:,} monedas\n"
+                        f"✅ **¡GANASTE!** +{ganancia_total - impuesto - self.apuesta:,} monedas\n"
                         f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
-                    ),
+                    )
+                else:
+                    desc_embed = (
+                        f"🎉 ¡Increíble! Llegaste al final sin que explotara\n"
+                        f"🎯 **Multiplicador final:** x{mult_final:.2f}\n"
+                        f"💰 **Apuesta inicial:** {self.apuesta} monedas\n"
+                        f"💵 **Total recibido:** {ganancia_total:,} monedas\n"
+                        f"🟰 **Empate** (sin ganancias ni pérdidas)\n"
+                        f"💰 **Nuevo saldo:** {nuevo_saldo:,} monedas\n\n{bar}"
+                    )
+                if lockout_activated:
+                    desc_embed += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+                
+                resultado_embed = discord.Embed(
+                    title="🎉 Crash Casino - ¡Victoria!",
+                    description=desc_embed,
                     color=discord.Color.gold()
                 )
             elif motivo == "error":
                 try:
-                    await asyncio.to_thread(
-                        process_crash_payout_atomic,
-                        self.user.id,
-                        self.apuesta,
-                        self.apuesta,
-                        0,
-                        'refund',
-                        0.0,
-                        self.saldo_post_apuesta + self.apuesta,
-                        "Crash: Reembolso por error de sistema"
+                    nuevo_saldo = await CasinoService.refund_bet(
+                        self.user.id, self.apuesta, 'crash', "Reembolso por error de sistema"
                     )
                 except Exception as db_err:
                     logger.exception(

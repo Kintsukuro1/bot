@@ -137,13 +137,14 @@ class RouletteView(discord.ui.View):
                     self.difficulty_modifier,
                     self.balance
                 )
+                lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user_id, nuevo_saldo)
                 try:
                     await process_post_game_events(interaction, self.user_id, 'roulette', self.bet_amount, profit)
                 except Exception:
                     pass
                 embed.color = discord.Color.green()
                 embed.title = "🎰 Ruleta - ¡Ganaste!"
-                embed.description = (
+                desc = (
                     f"La bola cayó en: **{win_color} {winning_number}**\n\n"
                     f"Multiplicador: **x{multiplier}**\n"
                     f"Premio Bruto: **{winnings}** monedas\n"
@@ -151,6 +152,9 @@ class RouletteView(discord.ui.View):
                     f"✨ Premio Neto: **{winnings - impuesto}** monedas\n"
                     f"🪙 Nuevo saldo: **{nuevo_saldo}**"
                 )
+                if lockout_activated:
+                    desc += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+                embed.description = desc
             else:
                 nuevo_saldo = await CasinoService.settle_loss(
                     self.user_id,
@@ -211,6 +215,11 @@ class Roulette(commands.Cog):
     async def roulette(self, interaction: discord.Interaction, apuesta: int):
         user_id = interaction.user.id
         user_name = interaction.user.name
+
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
 
         if apuesta <= 0:
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)

@@ -5,6 +5,7 @@ import random
 import asyncio
 from typing import Optional
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.utils.dynamic_difficulty import DynamicDifficulty
@@ -29,18 +30,21 @@ class CoinflipDuelView(discord.ui.View):
             await interaction.response.send_message("Este duelo ya fue resuelto.", ephemeral=True)
             return
 
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(self.challenged.id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         self.game_started = True
         self.game_over = True
         
-        success, challenged_balance = await asyncio.to_thread(deduct_balance, self.challenged.id, self.apuesta)
+        success, challenged_balance = await CasinoService.place_bet(self.challenged.id, self.apuesta, 'coinflip_duel')
         if not success:
             self.game_started = False
             self.game_over = False
             await interaction.response.send_message(f"❌ No tienes suficiente saldo para este duelo. Necesitas {self.apuesta} monedas.", ephemeral=True)
             return
 
-        challenger_balance = await asyncio.to_thread(get_balance, self.challenger.id)
-        
         # Desactivar botones
         for item in self.children:
             item.disabled = True
@@ -59,52 +63,82 @@ class CoinflipDuelView(discord.ui.View):
             challenger_win = False
             
         # Procesar transferencias
+        lockout_activated = False
+        impuesto = 0
         if challenger_win:
-            await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta * 2)
-            await asyncio.to_thread(registrar_transaccion, self.challenger.id, self.apuesta, f"Duelo coinflip: ganó vs {self.challenged.display_name}")
-            await asyncio.to_thread(registrar_transaccion, self.challenged.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenger.display_name}")
+            challenger_bal = await asyncio.to_thread(get_balance, self.challenger.id)
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                self.challenger.id,
+                self.apuesta,
+                self.apuesta * 2,
+                'coinflip_duel',
+                0.0,
+                challenger_bal
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenger.id, nuevo_saldo)
             
-            # Registrar historial con dificultad neutral 0.0 (duelo PVP justo)
-            await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenger_balance + self.apuesta)
+            await CasinoService.settle_loss(
+                self.challenged.id,
+                self.apuesta,
+                'coinflip_duel',
+                0.0,
+                challenged_balance
+            )
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, self.apuesta)
             except Exception:
                 pass
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenged_balance)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, 0)
             except Exception:
                 pass
         else:
-            await asyncio.to_thread(add_balance, self.challenged.id, self.apuesta * 2)
-            await asyncio.to_thread(registrar_transaccion, self.challenger.id, -self.apuesta, f"Duelo coinflip: perdió vs {self.challenged.display_name}")
-            await asyncio.to_thread(registrar_transaccion, self.challenged.id, self.apuesta, f"Duelo coinflip: ganó vs {self.challenger.display_name}")
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                self.challenged.id,
+                self.apuesta,
+                self.apuesta * 2,
+                'coinflip_duel',
+                0.0,
+                challenged_balance
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenged.id, nuevo_saldo)
             
-            # Registrar historial
-            await asyncio.to_thread(record_game_result, self.challenger.id, 'coinflip_duel', self.apuesta, 'loss', 0, 0.0, challenger_balance - self.apuesta)
+            challenger_bal = await asyncio.to_thread(get_balance, self.challenger.id)
+            await CasinoService.settle_loss(
+                self.challenger.id,
+                self.apuesta,
+                'coinflip_duel',
+                0.0,
+                challenger_bal
+            )
             try:
                 await process_post_game_events(interaction, self.challenger.id, 'coinflip_duel', self.apuesta, 0)
             except Exception:
                 pass
-            await asyncio.to_thread(record_game_result, self.challenged.id, 'coinflip_duel', self.apuesta, 'win', self.apuesta, 0.0, challenged_balance + self.apuesta * 2)
             try:
                 await process_post_game_events(interaction, self.challenged.id, 'coinflip_duel', self.apuesta, self.apuesta)
             except Exception:
                 pass
             
         # Embed de resultado final
+        desc = (
+            f"🪙 **Lanzamiento:** {resultado_moneda.upper()}\n\n"
+            f"👤 **{self.challenger.display_name}:** CARA 🪙\n"
+            f"👤 **{self.challenged.display_name}:** SELLO 🪙\n\n"
+            f"🏆 **GANADOR:** {winner.mention}\n"
+            f"💰 **Premio Bruto:** {self.apuesta * 2} monedas\n"
+            f"💸 **Impuesto Casino (3%):** {impuesto} monedas (destruido)\n"
+            f"✨ **Premio Neto:** {self.apuesta * 2 - impuesto} monedas\n\n"
+            f"💳 **Saldos actuales:**\n"
+            f"• {self.challenger.display_name}: {await asyncio.to_thread(get_balance, self.challenger.id):,} monedas\n"
+            f"• {self.challenged.display_name}: {await asyncio.to_thread(get_balance, self.challenged.id):,} monedas"
+        )
+        if lockout_activated:
+            desc += f"\n\n⚠️ <@{winner.id}> **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+
         embed = discord.Embed(
             title="⚔️ Resultado del Duelo de Coinflip",
-            description=(
-                f"🪙 **Lanzamiento:** {resultado_moneda.upper()}\n\n"
-                f"👤 **{self.challenger.display_name}:** CARA 🪙\n"
-                f"👤 **{self.challenged.display_name}:** SELLO 🪙\n\n"
-                f"🏆 **GANADOR:** {winner.mention}\n"
-                f"💰 **Premio:** {self.apuesta} monedas de su oponente\n\n"
-                f"💳 **Saldos actuales:**\n"
-                f"• {self.challenger.display_name}: {await asyncio.to_thread(get_balance, self.challenger.id):,} monedas\n"
-                f"• {self.challenged.display_name}: {await asyncio.to_thread(get_balance, self.challenged.id):,} monedas"
-            ),
+            description=desc,
             color=discord.Color.gold()
         )
         
@@ -128,7 +162,7 @@ class CoinflipDuelView(discord.ui.View):
         
         self.game_over = True
         self.game_started = True
-        await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
+        await CasinoService.refund_bet(self.challenger.id, self.apuesta, 'coinflip_duel', 'Duelo rechazado')
         
         embed = discord.Embed(
             title="⚔️ Duelo Rechazado",
@@ -146,7 +180,7 @@ class CoinflipDuelView(discord.ui.View):
         """Se ejecuta cuando se agota el tiempo."""
         if not self.game_over:
             self.game_over = True
-            await asyncio.to_thread(add_balance, self.challenger.id, self.apuesta)
+            await CasinoService.refund_bet(self.challenger.id, self.apuesta, 'coinflip_duel', 'Timeout sin aceptar')
             for item in self.children:
                 item.disabled = True
             try:
@@ -156,6 +190,8 @@ class CoinflipDuelView(discord.ui.View):
                     embed.title = "⚔️ Duelo Cancelado"
                     embed.description += "\n\n⌛ **El duelo ha expirado.** Las monedas del retador han sido devueltas."
                     await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
             except Exception:
                 pass
 
@@ -252,36 +288,49 @@ class CoinflipView(discord.ui.View):
         if gano_final:
             # Usuario ganó
             ganancia = int(self.apuesta * ganancia_bonus)
-            nuevo_saldo = self.saldo + self.apuesta + ganancia
-            await asyncio.to_thread(add_balance, user_id, self.apuesta + ganancia)
-            await asyncio.to_thread(registrar_transaccion, user_id, ganancia, f"Coinflip: ganó con {eleccion}")
+            winnings = self.apuesta + ganancia
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                user_id,
+                self.apuesta,
+                winnings,
+                'coinflip',
+                difficulty_modifier,
+                self.saldo
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(user_id, nuevo_saldo)
             
-            # Registrar resultado para el sistema de dificultad
-            await asyncio.to_thread(record_game_result, user_id, 'coinflip', self.apuesta, 'win', ganancia, difficulty_modifier, nuevo_saldo)
             try:
                 await process_post_game_events(interaction, user_id, 'coinflip', self.apuesta, ganancia)
             except Exception:
                 pass
             
+            desc_text = (
+                f"🪙 **Resultado:** {resultado_moneda.upper()}\n"
+                f"🎯 **Tu elección:** {eleccion.upper()}\n"
+                f"✅ **¡Acertaste!**\n\n"
+                f"💰 **Premio Bruto:** +{winnings} monedas\n"
+                f"💸 **Impuesto Casino (3%):** -{impuesto} monedas (destruido)\n"
+                f"✨ **Premio Neto:** +{winnings - impuesto} monedas\n"
+                f"💳 **Saldo actual:** {nuevo_saldo} monedas"
+            )
+            if lockout_activated:
+                desc_text += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+                
             embed = discord.Embed(
                 title="🎉 ¡GANASTE!",
-                description=(
-                    f"🪙 **Resultado:** {resultado_moneda.upper()}\n"
-                    f"🎯 **Tu elección:** {eleccion.upper()}\n"
-                    f"✅ **¡Acertaste!**\n\n"
-                    f"💰 **Ganancia:** +{ganancia} monedas\n"
-                    f"💳 **Saldo actual:** {nuevo_saldo} monedas"
-                ),
+                description=desc_text,
                 color=discord.Color.green()
             )
             embed.set_image(url=cara_gif if resultado_moneda == 'cara' else cruz_gif)
         else:
             # Usuario perdió
-            nuevo_saldo = self.saldo
-            await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, f"Coinflip: perdió con {eleccion}")
-            
-            # Registrar resultado para el sistema de dificultad
-            await asyncio.to_thread(record_game_result, user_id, 'coinflip', self.apuesta, 'loss', 0, difficulty_modifier, nuevo_saldo)
+            nuevo_saldo = await CasinoService.settle_loss(
+                user_id,
+                self.apuesta,
+                'coinflip',
+                difficulty_modifier,
+                self.saldo
+            )
             try:
                 await process_post_game_events(interaction, user_id, 'coinflip', self.apuesta, 0)
             except Exception:
@@ -310,7 +359,7 @@ class CoinflipView(discord.ui.View):
         """Se ejecuta cuando se agota el tiempo."""
         if not self.game_over:
             self.game_over = True
-            await asyncio.to_thread(add_balance, self.user.id, self.apuesta)
+            await CasinoService.refund_bet(self.user.id, self.apuesta, 'coinflip', 'Timeout sin jugar')
             for item in self.children:
                 item.disabled = True
 
@@ -329,6 +378,12 @@ class Coinflip(commands.Cog):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)  # Asegura registro y datos del usuario
+
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.followup.send(lockout_msg, ephemeral=True)
+            return
+
         if apuesta <= 0:
             await interaction.followup.send("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
@@ -343,6 +398,11 @@ class Coinflip(commands.Cog):
                 await interaction.followup.send("❌ No puedes retar a un bot.", ephemeral=True)
                 return
             
+            can_play_opponent, opponent_lockout_msg = await CasinoService.check_casino_lockout(retar.id)
+            if not can_play_opponent:
+                await interaction.followup.send(f"❌ {retar.display_name} está bloqueado del casino temporalmente.", ephemeral=True)
+                return
+
             # Asegurar que el retado esté registrado
             await asyncio.to_thread(ensure_user, retar.id, retar.name)
             challenged_balance = await asyncio.to_thread(get_balance, retar.id)
@@ -356,7 +416,7 @@ class Coinflip(commands.Cog):
                 return
 
         # Descontar el saldo del retador
-        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        success, saldo = await CasinoService.place_bet(user_id, apuesta, 'coinflip')
         if not success:
             await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
