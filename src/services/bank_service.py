@@ -306,5 +306,30 @@ class BankService:
         from src.db import get_active_investment_db
         return await asyncio.to_thread(get_active_investment_db, user_id)
 
+    @staticmethod
+    async def get_bank_balance(user_id: int) -> int:
+        """Obtiene el saldo bancario actual de un usuario."""
+        from src.db import get_bank_balance
+        return await asyncio.to_thread(get_bank_balance, user_id)
+
+    @staticmethod
+    async def deposit_to_bank(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+        """Realiza el depósito de dinero al banco."""
+        from src.db import deposit_to_bank_db
+        return await asyncio.to_thread(deposit_to_bank_db, user_id, amount)
+
+    @staticmethod
+    async def withdraw_from_bank(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+        """Realiza el retiro de dinero del banco."""
+        from src.db import withdraw_from_bank_db
+        return await asyncio.to_thread(withdraw_from_bank_db, user_id, amount)
+
+    @staticmethod
+    async def apply_daily_bank_fee() -> list:
+        """Cobra la comisión diaria del 1% por custodia a todos los usuarios."""
+        from src.db import apply_daily_bank_fee_db
+        return await asyncio.to_thread(apply_daily_bank_fee_db)
+
+
 
 

@@ -8,6 +8,7 @@ import os
 from datetime import datetime, time, timedelta
 from typing import Optional
 from src.services.lottery_service import LotteryService
+from src.services.casino_service import CasinoService
 from src.db import ensure_user, get_balance, get_active_tickets, get_user_prestige_level
 from src.utils.cooldowns import ECONOMY_COOLDOWN
 
@@ -135,6 +136,11 @@ class Loto(commands.Cog):
     ):
         await interaction.response.defer()
         user_id = interaction.user.id
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.followup.send(lockout_msg, ephemeral=True)
+            return
+
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
         # Límite dinámico: Prestigio I permite 6 boletos en vez de 5

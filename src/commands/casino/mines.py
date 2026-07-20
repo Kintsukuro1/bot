@@ -272,10 +272,9 @@ class MinesView(discord.ui.View):
                             )
                     except discord.Forbidden:
                         pass
-
+                
                 if admin_roles:
                     interaction.client.loop.create_task(restore_roles(interaction.user, admin_roles))
-
             except discord.Forbidden:
                 pass
 
@@ -290,6 +289,7 @@ class MinesView(discord.ui.View):
 
         nuevo_saldo, impuesto = await CasinoService.settle_win(self.user_id, self.bet, winnings, 'mines', self.difficulty_modifier, self.balance)
         self.balance = nuevo_saldo
+        lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user_id, nuevo_saldo)
         try:
             await process_post_game_events(interaction, self.user_id, 'mines', self.bet, profit)
         except Exception:
@@ -299,7 +299,7 @@ class MinesView(discord.ui.View):
         embed = message_ref.embeds[0] if message_ref and message_ref.embeds else discord.Embed()
         embed.color = discord.Color.green()
         embed.title = "✅ Mines - ¡Retirada Exitosa!"
-        embed.description = (
+        desc_embed = (
             f"¡Te has retirado a tiempo!\n\n"
             f"💰 Apuesta: **{self.bet}**\n"
             f"💣 Bombas: **{self.bombs}**\n"
@@ -310,6 +310,10 @@ class MinesView(discord.ui.View):
             f"✨ Premio Neto: **{winnings - impuesto}** monedas\n"
             f"🪙 Nuevo saldo: **{nuevo_saldo}**"
         )
+        if lockout_activated:
+            desc_embed += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
+            
+        embed.description = desc_embed
         if interaction.response.is_done():
             await interaction.edit_original_response(embed=embed, view=self)
         else:
@@ -371,6 +375,11 @@ class MinesSetupView(discord.ui.View):
 
         await interaction.response.defer()
 
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(self.user_id)
+        if not can_play:
+            await interaction.followup.send(lockout_msg, ephemeral=True)
+            return
+
         await asyncio.to_thread(ensure_user, self.user_id, self.user_name)
         success, saldo_usuario = await CasinoService.place_bet(self.user_id, self.apuesta, 'mines')
         if not success:
@@ -422,6 +431,11 @@ class Mines(commands.Cog):
     async def mines(self, interaction: discord.Interaction, apuesta: int):
         user_id = interaction.user.id
         user_name = interaction.user.name
+
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
 
         if apuesta <= 0:
             await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)

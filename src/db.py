@@ -1640,6 +1640,10 @@ def init_db():
                     UltimaRecarga BIGINT DEFAULT 0
                 )
             """)
+            cursor.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS BankBalance BIGINT DEFAULT 0")
+            cursor.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS SaldoReferenciaCasino BIGINT DEFAULT NULL")
+            cursor.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS SaldoReferenciaTimestamp TIMESTAMP DEFAULT NULL")
+            cursor.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS CasinoBloqueadoHasta TIMESTAMP DEFAULT NULL")
             
             # --- TABLAS DEL PLAN MAESTRO DE PETS ---
             cursor.execute("""
@@ -3996,6 +4000,169 @@ def get_active_investment_db(user_id: int) -> dict | None:
                 'Resuelto': row[3]
             }
         return None
+
+
+# =======================================================
+# SISTEMA DE BANCO: DEPOSITOS, RETIROS Y COMISION DIARIA
+# =======================================================
+
+def get_bank_balance(user_id: int) -> int:
+    """Obtiene el saldo bancario actual de un usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT BankBalance FROM Users WHERE UserID = %s", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row and row[0] is not None else 0
+
+
+def deposit_to_bank_db(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+    """Realiza el depósito de dinero al banco. Retorna (success, message, new_cash, new_bank)."""
+    if amount <= 0:
+        return False, "❌ El monto a depositar debe ser mayor a 0.", 0, 0
+    
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Balance, BankBalance FROM Users WHERE UserID = %s FOR UPDATE", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "❌ Usuario no encontrado.", 0, 0
+        
+        cash, bank = row[0], row[1] or 0
+        if cash < amount:
+            return False, f"❌ No tienes suficiente saldo en mano para depositar **{amount:,}** monedas. Saldo en mano: **{cash:,}**.", cash, bank
+        
+        new_cash = cash - amount
+        new_bank = bank + amount
+        
+        cursor.execute("UPDATE Users SET Balance = %s, BankBalance = %s WHERE UserID = %s", (new_cash, new_bank, user_id))
+        cursor.execute("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (amount,))
+        
+        from datetime import datetime
+        cursor.execute("""
+            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+            VALUES (%s, %s, 'Depósito Bancario', %s)
+        """, (user_id, -amount, datetime.now()))
+        
+        return True, f"✅ Has depositado **{amount:,}** monedas en tu cuenta bancaria.", new_cash, new_bank
+
+
+def withdraw_from_bank_db(user_id: int, amount: int) -> Tuple[bool, str, int, int]:
+    """Realiza el retiro de dinero del banco. Retorna (success, message, new_cash, new_bank)."""
+    if amount <= 0:
+        return False, "❌ El monto a retirar debe ser mayor a 0.", 0, 0
+    
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Balance, BankBalance FROM Users WHERE UserID = %s FOR UPDATE", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "❌ Usuario no encontrado.", 0, 0
+        
+        cash, bank = row[0], row[1] or 0
+        if bank < amount:
+            return False, f"❌ No tienes suficiente saldo en el banco para retirar **{amount:,}** monedas. Saldo en banco: **{bank:,}**.", cash, bank
+        
+        cursor.execute("SELECT Reservas FROM BancoCentral WHERE ID = 1 FOR UPDATE")
+        banco_row = cursor.fetchone()
+        reservas = banco_row[0] if banco_row else 0
+        
+        if reservas < amount:
+            return False, (
+                f"❌ El Banco Central no tiene suficientes reservas físicas en este momento para procesar tu retiro completo (crisis de liquidez).\n"
+                f"🏦 Reservas en bóveda: **{reservas:,}** monedas.\n"
+                f"💡 Puedes retirar hasta **{reservas:,}** monedas o esperar a que otros usuarios depositen o paguen sus préstamos."
+            ), cash, bank
+        
+        new_cash = cash + amount
+        new_bank = bank - amount
+        
+        cursor.execute("UPDATE Users SET Balance = %s, BankBalance = %s WHERE UserID = %s", (new_cash, new_bank, user_id))
+        cursor.execute("UPDATE BancoCentral SET Reservas = Reservas - %s WHERE ID = 1", (amount,))
+        
+        from datetime import datetime
+        cursor.execute("""
+            INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+            VALUES (%s, %s, 'Retiro Bancario', %s)
+        """, (user_id, amount, datetime.now()))
+        
+        return True, f"✅ Has retirado **{amount:,}** monedas de tu cuenta bancaria.", new_cash, new_bank
+
+
+def apply_daily_bank_fee_db() -> list:
+    """Cobra la comisión diaria del 1% por custodia bancaria a todos los usuarios con BankBalance > 0."""
+    resultados = []
+    
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT u.UserID, u.BankBalance, COALESCE(up.PrestigeLevel, 0)
+            FROM Users u
+            LEFT JOIN UserPrestige up ON u.UserID = up.UserID
+            WHERE u.BankBalance > 0 FOR UPDATE OF u
+        """)
+        usuarios = cursor.fetchall()
+        
+        for user_id, bank_balance, prestige_level in usuarios:
+            # 1% de comisión diaria
+            comision = max(1, int(bank_balance * 0.01))
+            
+            if prestige_level >= 2:
+                # 20% descuento -> multiplicar por 80% (8000 bps)
+                comision = (comision * 8000) // 10000
+                
+            if comision <= 0:
+                continue
+                
+            comision_cobrada = min(comision, bank_balance)
+            new_bank = bank_balance - comision_cobrada
+            
+            cursor.execute("UPDATE Users SET BankBalance = %s WHERE UserID = %s", (new_bank, user_id))
+            cursor.execute("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (comision_cobrada,))
+            
+            cursor.execute("""
+                INSERT INTO Transactions (UserID, Amount, TransactionType, Date)
+                VALUES (%s, %s, 'Comisión Diaria Custodia', CURRENT_TIMESTAMP)
+            """, (user_id, -comision_cobrada))
+            
+            resultados.append({
+                'user_id': user_id,
+                'cobrado': comision_cobrada,
+                'nuevo_saldo_banco': new_bank
+            })
+            
+    return resultados
+
+
+def get_casino_lockout_data(user_id: int):
+    """Retorna (balance, saldo_ref, ts_ref, bloqueado_hasta) para el usuario."""
+    ensure_user(user_id)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT Balance, SaldoReferenciaCasino, SaldoReferenciaTimestamp, CasinoBloqueadoHasta 
+            FROM Users 
+            WHERE UserID = %s
+        """, (user_id,))
+        row = cursor.fetchone()
+        if row:
+            return row[0], row[1], row[2], row[3]
+        return 500, None, None, None
+
+
+def update_casino_reference_balance(user_id: int, balance: int, timestamp):
+    """Actualiza el saldo de referencia del casino y la fecha/hora de referencia."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE Users 
+            SET SaldoReferenciaCasino = %s, SaldoReferenciaTimestamp = %s 
+            WHERE UserID = %s
+        """, (balance, timestamp, user_id))
+
+
+def apply_casino_lockout(user_id: int, bloqueado_hasta, nuevo_saldo_ref: int):
+    """Aplica el bloqueo del casino y actualiza el saldo de referencia."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE Users 
+            SET CasinoBloqueadoHasta = %s, SaldoReferenciaCasino = %s, SaldoReferenciaTimestamp = CURRENT_TIMESTAMP 
+            WHERE UserID = %s
+        """, (bloqueado_hasta, nuevo_saldo_ref, user_id))
+
 
 
 

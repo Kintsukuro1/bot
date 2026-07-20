@@ -4,6 +4,49 @@ from src.db import add_balance, deduct_balance, registrar_transaccion, record_ga
 
 class CasinoService:
     @staticmethod
+    async def check_casino_lockout(user_id: int) -> Tuple[bool, str]:
+        """Retorna (True, '') si puede jugar, (False, mensaje) si está bloqueado."""
+        from src.db import get_casino_lockout_data, update_casino_reference_balance
+        from datetime import datetime
+        
+        balance, saldo_ref, ts_ref, bloqueado_hasta = await asyncio.to_thread(get_casino_lockout_data, user_id)
+        
+        ahora = datetime.now()
+        if bloqueado_hasta and bloqueado_hasta > ahora:
+            restante = bloqueado_hasta - ahora
+            minutos = int(restante.total_seconds() // 60)
+            segundos = int(restante.total_seconds() % 60)
+            tiempo_str = f"{minutos}m {segundos}s" if minutos > 0 else f"{segundos}s"
+            return False, f"🎰 Estás bloqueado del casino temporalmente. Por favor, tómate un descanso. Tiempo restante: `{tiempo_str}`."
+            
+        if saldo_ref is None or ts_ref is None or (ahora - ts_ref).total_seconds() > 86400:
+            await asyncio.to_thread(update_casino_reference_balance, user_id, balance, ahora)
+            
+        return True, ""
+
+    @staticmethod
+    async def check_and_apply_winstreak_lockout(user_id: int, nuevo_balance: int) -> bool:
+        """Retorna True si se activó el bloqueo en este momento (para poder avisarle al jugador)."""
+        from src.db import get_casino_lockout_data, apply_casino_lockout
+        from datetime import datetime, timedelta
+        
+        _, saldo_ref, _, _ = await asyncio.to_thread(get_casino_lockout_data, user_id)
+        
+        if saldo_ref is None:
+            from src.db import update_casino_reference_balance
+            await asyncio.to_thread(update_casino_reference_balance, user_id, nuevo_balance, datetime.now())
+            return False
+            
+        ref_val = max(1, saldo_ref)
+        
+        if (nuevo_balance - saldo_ref) >= (ref_val * 0.25):
+            bloqueado_hasta = datetime.now() + timedelta(minutes=25)
+            await asyncio.to_thread(apply_casino_lockout, user_id, bloqueado_hasta, nuevo_balance)
+            return True
+            
+        return False
+
+    @staticmethod
     async def place_bet(user_id: int, amount: int, game_type: str) -> Tuple[bool, int]:
         """Realiza la deducción del saldo para una apuesta de casino."""
         success, new_balance = await asyncio.to_thread(deduct_balance, user_id, amount)

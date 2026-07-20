@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, get_provably_fair_seeds, advance_provably_fair_nonce
+from src.services.casino_service import CasinoService
 from src.utils.provably_fair import get_uniform_integer
 
 # Definición simple de baraja
@@ -126,8 +127,13 @@ class CasinoWarView(discord.ui.View):
             
         await asyncio.to_thread(ensure_user, self.user_id)
 
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(self.user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         # Descontar saldo
-        success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
+        success, nuevo_saldo = await CasinoService.place_bet(self.user_id, self.apuesta, 'casino_war')
         if not success:
             await interaction.response.send_message("❌ Saldo insuficiente.", ephemeral=True)
             return
@@ -142,19 +148,18 @@ class CasinoWarView(discord.ui.View):
         embed.add_field(name="Crupier", value=f"🃏 **{dealer_card}**", inline=True)
         
         if player_val > dealer_val:
-            profit = self.apuesta
-            await asyncio.to_thread(add_balance, self.user_id, self.apuesta * 2)
-            await asyncio.to_thread(registrar_transaccion, self.user_id, profit, "Ganancia Casino War")
-            saldo_final = nuevo_saldo + self.apuesta * 2
-            await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'win', profit, 0.0, saldo_final)
-            embed.description = f"**¡GANASTE!** Tu carta es mayor.\nGanancia: {self.apuesta * 2} monedas."
+            winnings = self.apuesta * 2
+            saldo_final, impuesto = await CasinoService.settle_win(self.user_id, self.apuesta, winnings, 'casino_war', 0.0, nuevo_saldo)
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user_id, saldo_final)
+            embed.description = f"**¡GANASTE!** Tu carta es mayor.\nGanancia: {winnings - impuesto} monedas (Impuesto: {impuesto}).\nNuevo saldo: {saldo_final} monedas."
+            if lockout_activated:
+                embed.description += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
             embed.color = discord.Color.green()
             await interaction.response.edit_message(embed=embed, view=None)
             
         elif player_val < dealer_val:
-            await asyncio.to_thread(registrar_transaccion, self.user_id, -self.apuesta, "Pérdida Casino War")
-            await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'loss', 0, 0.0, nuevo_saldo)
-            embed.description = "**¡PERDISTE!** La banca tiene una carta mayor."
+            saldo_final = await CasinoService.settle_loss(self.user_id, self.apuesta, 'casino_war', 0.0, nuevo_saldo)
+            embed.description = f"**¡PERDISTE!** La banca tiene una carta mayor.\nNuevo saldo: {saldo_final} monedas."
             embed.color = discord.Color.red()
             await interaction.response.edit_message(embed=embed, view=None)
             
@@ -171,20 +176,20 @@ class CasinoWarView(discord.ui.View):
             
             if tie_view.decision == "Surrender":
                 devolucion = int(self.apuesta * 0.5)
-                await asyncio.to_thread(add_balance, self.user_id, devolucion)
-                await asyncio.to_thread(registrar_transaccion, self.user_id, -(self.apuesta - devolucion), "Casino War: Rendición")
-                await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'loss', 0, 0.0, nuevo_saldo + devolucion)
-                embed.description = f"Te has rendido. Recuperas {devolucion} monedas."
+                saldo_final = await CasinoService.refund_bet(self.user_id, devolucion, 'casino_war', 'Rendición')
+                await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta, 'loss', 0, 0.0, saldo_final)
+                embed.description = f"Te has rendido. Recuperas {devolucion} monedas.\nNuevo saldo: {saldo_final} monedas."
                 embed.color = discord.Color.orange()
                 await interaction.edit_original_response(embed=embed, view=None)
                 
             elif tie_view.decision == "War":
                 # Cobrar la otra apuesta
-                success, _ = await asyncio.to_thread(deduct_balance, self.user_id, self.apuesta)
+                success, nuevo_saldo_war = await CasinoService.place_bet(self.user_id, self.apuesta, 'casino_war')
                 if not success:
                     embed.description = "❌ No tenías saldo para la Guerra. Cancelando y rindiendo la mano automáticamente."
                     devolucion = int(self.apuesta * 0.5)
-                    await asyncio.to_thread(add_balance, self.user_id, devolucion)
+                    saldo_final = await CasinoService.refund_bet(self.user_id, devolucion, 'casino_war', 'Falta de fondos para la Guerra')
+                    embed.description += f"\nNuevo saldo: {saldo_final} monedas."
                     await interaction.edit_original_response(embed=embed, view=None)
                     return
                 
@@ -200,18 +205,28 @@ class CasinoWarView(discord.ui.View):
                 
                 if war_player_val >= war_dealer_val:
                     pago = self.apuesta * 3
-                    profit = self.apuesta
-                    await asyncio.to_thread(add_balance, self.user_id, pago)
-                    await asyncio.to_thread(registrar_transaccion, self.user_id, profit, "Ganancia Casino War (Guerra)")
-                    saldo_final = await asyncio.to_thread(get_balance, self.user_id)
-                    await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta * 2, 'win', profit, 0.0, saldo_final)
-                    embed.description = f"**¡GANASTE LA GUERRA!**\nGanancia total: {pago} monedas."
+                    saldo_final, impuesto = await CasinoService.settle_win(
+                        self.user_id, 
+                        self.apuesta * 2, 
+                        pago, 
+                        'casino_war', 
+                        0.0, 
+                        nuevo_saldo_war
+                    )
+                    lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.user_id, saldo_final)
+                    embed.description = f"**¡GANASTE LA GUERRA!**\nGanancia total: {pago - impuesto} monedas (Impuesto: {impuesto}).\nNuevo saldo: {saldo_final} monedas."
+                    if lockout_activated:
+                        embed.description += "\n\n⚠️ **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**"
                     embed.color = discord.Color.green()
                 else:
-                    saldo_final = await asyncio.to_thread(get_balance, self.user_id)
-                    await asyncio.to_thread(registrar_transaccion, self.user_id, -(self.apuesta * 2), "Pérdida Casino War (Guerra)")
-                    await asyncio.to_thread(record_game_result, self.user_id, 'casino_war', self.apuesta * 2, 'loss', 0, 0.0, saldo_final)
-                    embed.description = "**¡PERDISTE LA GUERRA!**"
+                    saldo_final = await CasinoService.settle_loss(
+                        self.user_id, 
+                        self.apuesta * 2, 
+                        'casino_war', 
+                        0.0, 
+                        nuevo_saldo_war
+                    )
+                    embed.description = f"**¡PERDISTE LA GUERRA!**\nNuevo saldo: {saldo_final} monedas."
                     embed.color = discord.Color.red()
                     
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -239,7 +254,13 @@ class CasinoWarCog(commands.Cog):
 
     @app_commands.command(name="casino_war", description="Juega Casino War. Si hay empate, decide si rendirte o ir a la Guerra.")
     async def casino_war_cmd(self, interaction: discord.Interaction):
-        view = CasinoWarView(interaction.user.id)
+        user_id = interaction.user.id
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
+        view = CasinoWarView(user_id)
         embed = discord.Embed(
             title="⚔️ Casino War",
             description="Haz clic en Configurar Apuesta para empezar.",

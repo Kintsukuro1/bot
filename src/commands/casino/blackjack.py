@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
@@ -59,8 +60,7 @@ class BlackjackView(discord.ui.View):
             return
             
         await interaction.response.defer()
-        from src.db import deduct_balance
-        success, nuevo_saldo = await asyncio.to_thread(deduct_balance, self.user.id, self.apuesta)
+        success, nuevo_saldo = await CasinoService.place_bet(self.user.id, self.apuesta, 'blackjack')
         if not success:
             await interaction.followup.send("❌ No tienes suficiente saldo para dividir (requiere apostar de nuevo).", ephemeral=True)
             return
@@ -200,31 +200,44 @@ class BlackjackView(discord.ui.View):
                 total_ganancia += self.apuesta
                 embed.add_field(name=f"{name} (🤝 Empate)", value=f"{' '.join(hand)} \nValor: {player_value}\n**Empate**", inline=False)
                 
-        net_profit = total_ganancia - total_apostado
-        
+        current_bal = await asyncio.to_thread(get_balance, user_id)
+        lockout_activated = False
         if total_ganancia > 0:
-            await asyncio.to_thread(add_balance, user_id, total_ganancia)
+            nuevo_saldo, impuesto = await CasinoService.settle_win(
+                user_id,
+                total_apostado,
+                total_ganancia,
+                'blackjack',
+                self.difficulty_modifier,
+                current_bal
+            )
+            lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(user_id, nuevo_saldo)
             
-        saldo_actual = await asyncio.to_thread(get_balance, user_id)
-        
-        if net_profit > 0:
-            result_str = 'win'
-            await asyncio.to_thread(registrar_transaccion, user_id, net_profit, "Blackjack: ganancias")
-        elif net_profit < 0:
-            result_str = 'loss'
-            await asyncio.to_thread(registrar_transaccion, user_id, net_profit, "Blackjack: pérdidas")
+            embed.add_field(name="💸 Impuesto Casino (3%)", value=f"{impuesto:,} monedas (destruido)", inline=True)
+            embed.add_field(name="✨ Premio Neto Total", value=f"{total_ganancia - impuesto:,} monedas", inline=True)
         else:
-            result_str = 'draw'
+            nuevo_saldo = await CasinoService.settle_loss(
+                user_id,
+                total_apostado,
+                'blackjack',
+                self.difficulty_modifier,
+                current_bal
+            )
             
-        win_amount = net_profit if net_profit > 0 else 0
-        
-        await asyncio.to_thread(record_game_result, user_id, 'blackjack', total_apostado, result_str, win_amount, self.difficulty_modifier, saldo_actual)
+        net_profit = total_ganancia - total_apostado
         try:
-            await process_post_game_events(interaction, user_id, 'blackjack', total_apostado, win_amount)
+            await process_post_game_events(interaction, user_id, 'blackjack', total_apostado, net_profit if net_profit > 0 else 0)
         except Exception:
-            raise
+            pass
             
-        embed.add_field(name="💳 Saldo actual", value=f"{saldo_actual:,} monedas", inline=False)
+        embed.add_field(name="💳 Saldo actual", value=f"{nuevo_saldo:,} monedas", inline=False)
+        
+        if lockout_activated:
+            embed.add_field(
+                name="🔒 Aviso de Seguridad",
+                value="🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.",
+                inline=False
+            )
         
         for item in self.children:
             if hasattr(item, 'disabled'):
@@ -246,8 +259,13 @@ class BlackjackView(discord.ui.View):
             user_id = self.user.id
             try:
                 saldo_actual = await asyncio.to_thread(get_balance, user_id)
-                await asyncio.to_thread(registrar_transaccion, user_id, -self.apuesta, "Blackjack: timeout (pérdida)")
-                await asyncio.to_thread(record_game_result, user_id, 'blackjack', self.apuesta, 'loss', 0, self.difficulty_modifier, saldo_actual)
+                await CasinoService.settle_loss(
+                    user_id,
+                    self.apuesta,
+                    'blackjack',
+                    self.difficulty_modifier,
+                    saldo_actual
+                )
             except Exception:
                 pass
 
@@ -264,11 +282,16 @@ class Blackjack(commands.Cog):
         user_name = interaction.user.name
         await asyncio.to_thread(ensure_user, user_id, user_name)
         
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.followup.send(lockout_msg, ephemeral=True)
+            return
+            
         if apuesta <= 0:
             await interaction.followup.send("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
             return
             
-        success, saldo = await asyncio.to_thread(deduct_balance, user_id, apuesta)
+        success, saldo = await CasinoService.place_bet(user_id, apuesta, 'blackjack')
         if not success:
             await interaction.followup.send("❌ No tienes suficiente saldo para esa apuesta.", ephemeral=True)
             return
@@ -297,7 +320,8 @@ class Blackjack(commands.Cog):
             embed.add_field(name="🤖 Cartas del dealer", value=f"{' '.join(dealer_hand)} \n**Valor: {dealer_value}**", inline=False)
             
             if dealer_value == 21:
-                await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'draw', 0, difficulty_modifier, saldo)
+                nuevo_saldo = await CasinoService.refund_bet(user_id, apuesta, 'blackjack', 'Empate Blackjack Natural')
+                await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'draw', 0, difficulty_modifier, nuevo_saldo)
                 try:
                     await process_post_game_events(interaction, user_id, 'blackjack', apuesta, 0)
                 except Exception:
@@ -313,18 +337,26 @@ class Blackjack(commands.Cog):
                     ganancia_bonus += 0.05
                     
                 ganancia = int(apuesta * 1.5 * ganancia_bonus)
-                nuevo_saldo = saldo + apuesta + ganancia
-                await asyncio.to_thread(add_balance, user_id, apuesta + ganancia)
-                await asyncio.to_thread(registrar_transaccion, user_id, ganancia, "Blackjack: blackjack natural")
-                await asyncio.to_thread(record_game_result, user_id, 'blackjack', apuesta, 'win', ganancia, difficulty_modifier, nuevo_saldo)
+                winnings = apuesta + ganancia
+                nuevo_saldo, impuesto = await CasinoService.settle_win(
+                    user_id,
+                    apuesta,
+                    winnings,
+                    'blackjack',
+                    difficulty_modifier,
+                    saldo
+                )
+                lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(user_id, nuevo_saldo)
                 try:
                     await process_post_game_events(interaction, user_id, 'blackjack', apuesta, ganancia)
                 except Exception:
                     pass
                 
-                embed.add_field(name="🎉 ¡BLACKJACK!", value=f"✅ **+{ganancia}** monedas (1.5x)", inline=False)
+                embed.add_field(name="🎉 ¡BLACKJACK!", value=f"✅ **+{winnings - impuesto - apuesta}** monedas netas (1.5x)", inline=False)
                 embed.color = discord.Color.gold()
                 embed.set_field_at(3, name="💳 Saldo actual", value=f"{nuevo_saldo} monedas", inline=True)
+                if lockout_activated:
+                    embed.add_field(name="🔒 Aviso de Seguridad", value="🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.", inline=False)
             
             await interaction.followup.send(embed=embed)
             return

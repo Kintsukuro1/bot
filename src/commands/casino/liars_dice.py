@@ -6,6 +6,7 @@ import uuid
 import time
 import asyncio
 from src.db import get_balance, deduct_balance, add_balance, registrar_transaccion, save_multiplayer_game, get_multiplayer_game, delete_multiplayer_game
+from src.services.casino_service import CasinoService
 
 # Helpers para el motor
 def generate_dice(count):
@@ -176,16 +177,40 @@ class LiarsDiceView(discord.ui.View):
         # Repartir el pozo entre los ganadores (todos menos el perdedor)
         pago_por_ganador = self.game.pot // (len(self.game.players) - 1)
         
+        lockout_notices = []
         for pid in self.game.players:
             if pid != perdedor:
-                await asyncio.to_thread(add_balance, pid, pago_por_ganador)
-                await asyncio.to_thread(registrar_transaccion, pid, pago_por_ganador, "Ganancia Liar's Dice")
+                current_bal = await asyncio.to_thread(get_balance, pid)
+                nuevo_saldo, impuesto = await CasinoService.settle_win(
+                    pid,
+                    self.game.bet,
+                    pago_por_ganador,
+                    'liars_dice',
+                    0.0,
+                    current_bal
+                )
+                lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(pid, nuevo_saldo)
+                if lockout_activated:
+                    lockout_notices.append(f"⚠️ <@{pid}> **🎰 Has ganado mucho muy rápido — tómate un descanso de 25 minutos antes de seguir jugando.**")
+            else:
+                current_bal = await asyncio.to_thread(get_balance, perdedor)
+                await CasinoService.settle_loss(
+                    perdedor,
+                    self.game.bet,
+                    'liars_dice',
+                    0.0,
+                    current_bal
+                )
                 
         await asyncio.to_thread(delete_multiplayer_game, self.game.game_id)
         
+        desc = f"{resultado}\n\n**Mesa:**\n" + "\n".join(todos_los_dados)
+        if lockout_notices:
+            desc += "\n\n" + "\n".join(lockout_notices)
+
         embed = discord.Embed(
             title="🎲 Resolución: ¡Mentiroso!",
-            description=f"{resultado}\n\n**Mesa:**\n" + "\n".join(todos_los_dados),
+            description=desc,
             color=discord.Color.gold()
         )
         embed.set_footer(text=f"Los ganadores se reparten {self.game.pot} monedas.")
@@ -268,8 +293,14 @@ class LobbyView(discord.ui.View):
             await interaction.response.send_message("❌ La mesa está llena.", ephemeral=True)
             return
             
+        # Check lockout
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(interaction.user.id)
+        if not can_play:
+            await interaction.response.send_message(lockout_msg, ephemeral=True)
+            return
+
         # Cobrar apuesta
-        success, _ = await asyncio.to_thread(deduct_balance, interaction.user.id, self.game.bet)
+        success, _ = await CasinoService.place_bet(interaction.user.id, self.game.bet, 'liars_dice')
         if not success:
             await interaction.response.send_message("❌ No tienes suficiente saldo para pagar la entrada.", ephemeral=True)
             return
@@ -309,7 +340,7 @@ class LobbyView(discord.ui.View):
         if self.game.status == "Lobby":
             # Devolver apuestas a los que entraron
             for pid in self.game.players:
-                await asyncio.to_thread(add_balance, pid, self.game.bet)
+                await CasinoService.refund_bet(pid, self.game.bet, 'liars_dice', 'Lobby expirado')
             await asyncio.to_thread(delete_multiplayer_game, self.game.game_id)
             
             for item in self.children:
@@ -334,7 +365,13 @@ class LiarsDiceCog(commands.Cog):
             
         await interaction.response.defer()
         
-        success, _ = await asyncio.to_thread(deduct_balance, interaction.user.id, apuesta)
+        user_id = interaction.user.id
+        can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
+        if not can_play:
+            await interaction.followup.send(lockout_msg, ephemeral=True)
+            return
+
+        success, _ = await CasinoService.place_bet(user_id, apuesta, 'liars_dice')
         if not success:
             await interaction.followup.send("❌ No tienes suficiente saldo para crear la mesa.", ephemeral=True)
             return
