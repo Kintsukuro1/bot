@@ -59,7 +59,7 @@ RUTAS_VUELO = {
     "larga": {
         "nombre": "Ruta Larga (Rentable)",
         "num_eventos": 4,
-        "multiplicador": 1.35,
+        "multiplicador": 1.15,
         "descripcion": "Cruzas zonas de mayor tráfico y clima inestable, pero pagan mucho mejor."
     }
 }
@@ -89,7 +89,7 @@ class RutaVueloView(discord.ui.View):
                     label=RUTAS_VUELO["larga"]["nombre"],
                     value="larga",
                     emoji="🌍",
-                    description="4 emergencias en vuelo. Pago x1.35"
+                    description="4 emergencias en vuelo. Pago x1.15"
                 ),
             ]
         )

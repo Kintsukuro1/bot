@@ -350,18 +350,18 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
             interaction, interaction.user, 1000, 9000, 1.00, 0.0, "normal", False
         )
         
-        # Test Case 2: U = 0.5 (val = 0.96 / 0.5 = 1.92, crash_point should be 1.92)
+        # Test Case 2: U = 0.5 (val = 1.94, crash_point should be 1.94)
         mock_get_uniform.return_value = 0.5
         await cog._crash_game(interaction, 1000, is_slash=True)
         mock_crash_view.assert_called_with(
-            interaction, interaction.user, 1000, 9000, 1.92, 0.0, "normal", False
+            interaction, interaction.user, 1000, 9000, 1.94, 0.0, "normal", False
         )
 
-        # Test Case 3: U = 0.9999 (val = 0.96 / 0.0001 = 9600.0, crash_point should cap at 1000.00)
+        # Test Case 3: U = 0.9999 (val = 11.58, crash_point should be 11.58)
         mock_get_uniform.return_value = 0.9999
         await cog._crash_game(interaction, 1000, is_slash=True)
         mock_crash_view.assert_called_with(
-            interaction, interaction.user, 1000, 9000, 1000.00, 0.0, "normal", False
+            interaction, interaction.user, 1000, 9000, 11.58, 0.0, "normal", False
         )
 
 
