@@ -4,6 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 import logging
+import math
 from src.db import (
     get_balance, set_balance, deduct_balance, add_balance, ensure_user,
     registrar_transaccion, record_game_result, usuario_tiene_item,
@@ -81,12 +82,11 @@ class Crash(commands.Cog):
         )
         
         # Determinar la base del crash point usando una distribución de probabilidad realista
-        # House edge base del 4% (ventaja de la casa)
-        base_edge = 0.04
+        # House edge base del 8% (ventaja de la casa) - Nerf aplicado
+        base_edge = 0.08
         # Ajustar la ventaja de la casa según la dificultad del jugador (-0.5 a 0.5)
-        # Reducimos el rango de influencia de difficulty_modifier a 0.015 en vez de 0.06 (Opción A)
-        edge = base_edge + (difficulty_modifier * 0.015)
-        edge = max(0.01, min(0.15, edge))
+        edge = base_edge + (difficulty_modifier * 0.02)
+        edge = max(0.02, min(0.20, edge))
         
         # Migración a Provably Fair
         seeds = await asyncio.to_thread(get_provably_fair_seeds, user_id)
@@ -97,14 +97,24 @@ class Crash(commands.Cog):
         # pero sin comprimir en exceso la cola de multiplicadores altos.
         U_adj = min(max(U, 1e-6), 0.9999)
         
-        # Algoritmo clásico y justo de Crash: M = (1 - edge) / (1 - U)
-        val = (1.0 - edge) / (1.0 - U_adj)
+        if U_adj < edge:
+            val = 1.00
+        else:
+            # Distribución Weibull con riesgo acumulativo creciente (hazard rate creciente)
+            # para que la probabilidad de explosión aumente conforme sube el multiplicador.
+            U_norm = (U_adj - edge) / (1.0 - edge)
+            V = max(1e-6, 1.0 - U_norm)
+            
+            # Parámetros: shape (k) = 1.12, scale (lambda) = 0.65
+            k = 1.12
+            lam = 0.65
+            val = 1.0 + (-math.log(V) / lam) ** (1.0 / k)
         
         # Piso absoluto de 1.00 si el cálculo da menos (no convertir en ganancia)
         crash_point = max(1.00, round(val, 2))
             
-        # Asegurar límites razonables para el bot (mínimo 1.0, máximo 1000.0)
-        crash_point = min(1000.0, crash_point)
+        # Asegurar límites razonables para el bot (mínimo 1.0, máximo 300.0) - Nerf aplicado
+        crash_point = min(300.0, crash_point)
         current_mult = 1.00
 
         ticket_activo = False

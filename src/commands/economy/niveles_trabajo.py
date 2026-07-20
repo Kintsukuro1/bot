@@ -161,8 +161,8 @@ TIPOS_TRABAJO = {
         'color': discord.Color.light_grey(),
         'descripcion': 'Pilota vuelos comerciales y de contrabando',
         'energia_base': 40,
-        'recompensa_base': 500,
-        'tier_economico': '⭐⭐⭐⭐⭐ (Muy Alto)',
+        'recompensa_base': 400,
+        'tier_economico': '⭐⭐⭐⭐ (Alto)',
         'riesgo': '⭐⭐⭐ (Alto)',
         'xp_por_trabajo': 25,
         'bonificaciones': {
