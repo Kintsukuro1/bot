@@ -17,20 +17,20 @@ def _procesar_compra_mejora(user_id, user_name, item):
     if get_user_prestige_level(user_id) < prestige_required:
         return "prestige_required", 0
 
-    balance = get_balance(user_id)
-
-    if balance < item["precio"]:
-        return "no_balance", balance
-
     item_id_db = 1000 + item["id"]
     if usuario_tiene_item(user_id, item_id_db):
-        return "already_owned", balance
+        return "already_owned", get_balance(user_id)
+
+    # Restar saldo de forma atómica
+    success, nuevo_balance = deduct_balance(user_id, item["precio"])
+    if not success:
+        return "no_balance", get_balance(user_id)
 
     if not agregar_item_usuario(user_id, item_id_db, quantity=1):
-        return "item_error", balance
+        # Reintegrar saldo en caso de fallo
+        add_balance(user_id, item["precio"])
+        return "item_error", get_balance(user_id)
 
-    nuevo_balance = balance - item["precio"]
-    set_balance(user_id, nuevo_balance)
     registrar_transaccion(user_id, -item["precio"], f"Black Market: BM-{item['id']}")
     return "ok", nuevo_balance
 

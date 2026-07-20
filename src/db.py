@@ -313,10 +313,13 @@ def transfer_balance(from_user_id, to_user_id, amount, reason):
     from datetime import datetime
     from src.utils.economy_config import TRANSACTION_TAX
     with db_cursor() as cursor:
-        # Verificar saldo del emisor
-        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (from_user_id,))
-        row = cursor.fetchone()
-        if not row or row[0] < amount:
+        # Prevenir deadlocks ordenando los IDs y bloqueando ambas filas
+        ids = sorted([from_user_id, to_user_id])
+        cursor.execute("SELECT UserID, Balance FROM Users WHERE UserID IN (%s, %s) FOR UPDATE", (ids[0], ids[1]))
+        balances = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        from_balance = balances.get(from_user_id, 0)
+        if from_balance < amount:
             return False, 0, 0
         
         # Descontar del emisor
@@ -3866,7 +3869,7 @@ def start_investment_db(user_id: int, amount: int) -> InvestmentStartResult:
             )
             
         # 3. Verificar saldo suficiente
-        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
+        cursor.execute("SELECT Balance FROM Users WHERE UserID = %s FOR UPDATE", (user_id,))
         bal_row = cursor.fetchone()
         balance = bal_row[0] if bal_row else 0
         if balance < amount:
