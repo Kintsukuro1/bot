@@ -9,7 +9,7 @@ from src.db import db_cursor, ensure_user, get_balance
 from src.services.economy_service import EconomyService
 from src.services.bank_service import BankService
 
-async def test_concurrent_transfers():
+async def run_concurrent_transfers():
     print("--- Probando Transferencias Concurrentes ---")
     user_a = 999111
     user_b = 999222
@@ -53,7 +53,7 @@ async def test_concurrent_transfers():
     else:
         print("[ERROR] Fallo: Se procesaron incorrectamente", success_count, "transferencias.")
 
-async def test_concurrent_loans():
+async def run_concurrent_loans():
     print("\n--- Probando Préstamos Concurrentes ---")
     user_c = 999333
     
@@ -94,8 +94,8 @@ async def test_concurrent_loans():
 
 async def main():
     try:
-        await test_concurrent_transfers()
-        await test_concurrent_loans()
+        await run_concurrent_transfers()
+        await run_concurrent_loans()
     except Exception as e:
         print(f"Error durante la ejecución del test: {e}")
         print("Asegúrate de que la base de datos PostgreSQL local esté iniciada y accesible con la configuración de .env.")

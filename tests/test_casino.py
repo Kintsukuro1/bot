@@ -11,8 +11,9 @@ from src.services import CasinoService
 
 class TestCasinoService(unittest.TestCase):
     
+    @patch('src.services.casino_service.CasinoService.check_game_circuit_breaker', return_value=(True, ""))
     @patch('src.db.db_cursor')
-    def test_place_bet_success(self, mock_db_cursor):
+    def test_place_bet_success(self, mock_db_cursor, mock_check_cb):
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = (4000,) # Saldo restante tras restar
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
@@ -29,8 +30,9 @@ class TestCasinoService(unittest.TestCase):
             RETURNING Balance
         """, (1000, 12345, 1000))
 
+    @patch('src.services.casino_service.CasinoService.check_game_circuit_breaker', return_value=(True, ""))
     @patch('src.db.db_cursor')
-    def test_place_bet_insufficient_funds(self, mock_db_cursor):
+    def test_place_bet_insufficient_funds(self, mock_db_cursor, mock_check_cb):
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_db_cursor.return_value.__enter__.return_value = mock_cursor
@@ -361,6 +363,71 @@ class TestCrashGeneration(unittest.IsolatedAsyncioTestCase):
         mock_crash_view.assert_called_with(
             interaction, interaction.user, 1000, 9000, 1000.00, 0.0, "normal", False
         )
+
+
+class TestCasinoCircuitBreaker(unittest.TestCase):
+    @patch('src.db.check_game_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_place_bet_blocked_by_circuit_breaker(self, mock_db_cursor, mock_check_cb):
+        # Configurar el circuit breaker para reportar que el juego está bloqueado
+        mock_check_cb.return_value = (False, "Bloqueado por pruebas")
+        
+        # Intentar apostar debe lanzar la excepción CasinoCircuitBreakerError
+        from src.services.casino_service import CasinoCircuitBreakerError
+        with self.assertRaises(CasinoCircuitBreakerError) as context:
+            asyncio.run(CasinoService.place_bet(12345, 1000, "slots"))
+        
+        self.assertIn("Este juego está temporalmente deshabilitado", str(context.exception))
+
+    @patch('src.services.casino_service.CasinoService._notify_staff_circuit_breaker')
+    @patch('src.services.casino_service.CasinoService.get_total_server_balance')
+    @patch('src.db.track_game_payout_db')
+    @patch('src.db.activar_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_settle_win_triggers_circuit_breaker(self, mock_db_cursor, mock_activar, mock_track, mock_get_total_balance, mock_notify):
+        # 1. Configurar la economía total en 100,000 monedas
+        mock_get_total_balance.return_value = 100000
+        
+        # 2. Configurar que el juego ha pagado acumuladamente 30,000 monedas hoy (30% > 25%)
+        mock_track.return_value = 30000
+        
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 3. Procesar una victoria
+        asyncio.run(
+            CasinoService.settle_win(12345, 1000, 2000, "slots", 0.0, 5000)
+        )
+        
+        # Verificar que se activa el circuit breaker
+        mock_activar.assert_called_once_with("slots", 2, unittest.mock.ANY)
+        # Verificar que se notifica al staff
+        mock_notify.assert_called_once()
+
+    @patch('src.services.casino_service.CasinoService.get_total_server_balance')
+    @patch('src.db.track_game_payout_db')
+    @patch('src.db.activar_circuit_breaker_db')
+    @patch('src.db.db_cursor')
+    def test_settle_win_does_not_trigger_circuit_breaker_below_threshold(self, mock_db_cursor, mock_activar, mock_track, mock_get_total_balance):
+        # 1. Configurar la economía total en 100,000 monedas
+        mock_get_total_balance.return_value = 100000
+        
+        # 2. Configurar que el juego ha pagado acumuladamente 20,000 monedas hoy (20% < 25%)
+        mock_track.return_value = 20000
+        
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_db_cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # 3. Procesar una victoria
+        asyncio.run(
+            CasinoService.settle_win(12345, 1000, 2000, "slots", 0.0, 5000)
+        )
+        
+        # Verificar que NO se activa el circuit breaker
+        mock_activar.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

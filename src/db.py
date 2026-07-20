@@ -2810,6 +2810,25 @@ def init_db():
 
             # ─── FIN BANCO CENTRAL ───
 
+            # ─── INICIO MIGRACIÓN CIRCUIT BREAKER ───
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GameDailyStats (
+                    GameKey VARCHAR(20) NOT NULL,
+                    FechaDia DATE NOT NULL,
+                    TotalPagado BIGINT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (GameKey, FechaDia)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GameCircuitBreaker (
+                    GameKey VARCHAR(20) PRIMARY KEY,
+                    BloqueadoHasta TIMESTAMP DEFAULT NULL,
+                    MotivoBloqueo TEXT DEFAULT NULL
+                )
+            """)
+            # ─── FIN MIGRACIÓN CIRCUIT BREAKER ───
+
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
     except Exception as e:
@@ -4165,6 +4184,58 @@ def apply_casino_lockout(user_id: int, bloqueado_hasta, nuevo_saldo_ref: int):
             SET CasinoBloqueadoHasta = %s, SaldoReferenciaCasino = %s, SaldoReferenciaTimestamp = CURRENT_TIMESTAMP 
             WHERE UserID = %s
         """, (bloqueado_hasta, nuevo_saldo_ref, user_id))
+
+
+def track_game_payout_db(game_key: str, ganancia_neta: int) -> int:
+    """Suma ganancia_neta a GameDailyStats para el día de hoy (UPSERT) y retorna el acumulado."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO GameDailyStats (GameKey, FechaDia, TotalPagado)
+            VALUES (%s, CURRENT_DATE, %s)
+            ON CONFLICT (GameKey, FechaDia) DO UPDATE
+            SET TotalPagado = GameDailyStats.TotalPagado + EXCLUDED.TotalPagado
+            RETURNING TotalPagado
+        """, (game_key, ganancia_neta))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+
+def get_total_server_balance_db() -> int:
+    """Obtiene la suma de todos los saldos de Users."""
+    with db_cursor() as cursor:
+        cursor.execute("SELECT SUM(Balance) FROM Users")
+        row = cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+
+def activar_circuit_breaker_db(game_key: str, duracion_horas: int, motivo: str):
+    """Activa el circuit breaker insertando o actualizando GameCircuitBreaker."""
+    from datetime import datetime, timedelta
+    bloqueado_hasta = datetime.now() + timedelta(hours=duracion_horas)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO GameCircuitBreaker (GameKey, BloqueadoHasta, MotivoBloqueo)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (GameKey) DO UPDATE
+            SET BloqueadoHasta = EXCLUDED.BloqueadoHasta,
+                MotivoBloqueo = EXCLUDED.MotivoBloqueo
+        """, (game_key, bloqueado_hasta, motivo))
+
+
+def check_game_circuit_breaker_db(game_key: str) -> tuple:
+    """Verifica si un juego está bloqueado por circuit breaker.
+    Retorna (True, '') si está disponible, o (False, motivo) si está bloqueado."""
+    from datetime import datetime
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT BloqueadoHasta, MotivoBloqueo FROM GameCircuitBreaker WHERE GameKey = %s
+        """, (game_key,))
+        row = cursor.fetchone()
+        if row:
+            bloqueado_hasta, motivo = row
+            if bloqueado_hasta and bloqueado_hasta > datetime.now():
+                return False, motivo
+        return True, ""
 
 
 
