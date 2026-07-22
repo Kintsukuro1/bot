@@ -108,10 +108,11 @@ class ConsumableShopSelect(discord.ui.Select):
     def __init__(self, catalog: list):
         options = []
         for item in catalog:
+            ckey = item.get('consumable_key') or item.get('key')
             options.append(
                 discord.SelectOption(
                     label=f"{item['name']} ({item['price']} 🪙)",
-                    value=item['key'],
+                    value=ckey,
                     description=item['description'][:100],
                     emoji="🧪"
                 )
@@ -125,10 +126,11 @@ class ConsumableShopSelect(discord.ui.Select):
             return
 
         consumable_key = self.values[0]
-        selected_item = next((item for item in view.catalog if item['key'] == consumable_key), None)
+        selected_item = next((item for item in view.catalog if (item.get('consumable_key') or item.get('key')) == consumable_key), None)
         if not selected_item:
             await interaction.response.send_message("❌ Objeto no encontrado.", ephemeral=True)
             return
+
 
         from src.db import buy_consumable
         success, msg = await asyncio.to_thread(buy_consumable, interaction.user.id, consumable_key, 1)
