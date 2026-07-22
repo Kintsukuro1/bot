@@ -16,13 +16,16 @@ from src.utils.combat_progression import (
     get_combat_rank, get_combat_rank_emoji, calc_combat_xp_needed,
     format_stat_type, SLOT_EMOJIS,
     EQUIPMENT_SLOTS, MIN_BET, MAX_LEVEL_DIFFERENCE, CHALLENGE_TIMEOUT_SECONDS,
-    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL, format_currency
+    format_currency
 )
 
 from src.utils.prestige_config import format_username_with_prestige
 
+from src.utils.subclass_config import (
+    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL,
+    get_all_subclass_info_for_display, get_available_subclasses, SUBCLASSES
+)
 
-from src.utils.subclass_config import get_all_subclass_info_for_display, get_available_subclasses, SUBCLASSES
 from src.commands.duels.pvp.pvp_combatant import Combatant
 from src.commands.duels.pvp.duel_view import ChallengeView, DuelView
 from src.commands.duels.pvp.loot_views import GemShopView, ConsumableShopView, ClassSelectionView, SubclassSelectionView, format_item_stats_display
