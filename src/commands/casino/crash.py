@@ -40,15 +40,9 @@ class Crash(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="crash", description="Juega Crash: apuesta y retírate antes de que el multiplicador explote!")
-    @app_commands.describe(apuesta="Cantidad de monedas a apostar")
-    @CASINO_COOLDOWN
-    async def crash_slash(self, interaction: discord.Interaction, apuesta: int):
-        await self._crash_game(interaction, apuesta, is_slash=True)
+    async def crash(self, ctx_or_interaction, apuesta: int):
+        await self._crash_game(ctx_or_interaction, apuesta, is_slash=isinstance(ctx_or_interaction, discord.Interaction))
 
-    @commands.command(name="crash", help="Juega Crash: apuesta y retírate antes de que el multiplicador explote! Uso: !crash <apuesta>")
-    async def crash(self, ctx, apuesta: int):
-        await self._crash_game(ctx, apuesta, is_slash=False)
 
     async def _crash_game(self, ctx_or_interaction, apuesta: int, is_slash: bool = False):
         if is_slash:

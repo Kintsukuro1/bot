@@ -364,13 +364,8 @@ class Coinflip(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="coinflip", description="Juega un coinflip: elige cara o sello con los botones")
-    @app_commands.describe(
-        apuesta="Cantidad de monedas a apostar",
-        retar="Usuario al que quieres retar a un duelo (opcional)"
-    )
-    @CASINO_COOLDOWN
-    async def coinflip(self, interaction: discord.Interaction, apuesta: int, retar: Optional[discord.Member] = None):
+    async def coinflip_cmd(self, interaction: discord.Interaction, apuesta: int, retar: Optional[discord.Member] = None):
+
         await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name

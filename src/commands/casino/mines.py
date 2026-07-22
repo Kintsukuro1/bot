@@ -425,10 +425,8 @@ class Mines(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="mines", description="Juega al Buscaminas. Encuentra diamantes y evita las bombas.")
-    @app_commands.describe(apuesta="Cantidad a apostar")
-    @CASINO_COOLDOWN
     async def mines(self, interaction: discord.Interaction, apuesta: int):
+
         user_id = interaction.user.id
         user_name = interaction.user.name
 

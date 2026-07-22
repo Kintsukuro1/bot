@@ -218,82 +218,134 @@ class HorseRaceView(discord.ui.View):
         # Estado de la carrera (distancia 0 a 20)
         positions = [0] * len(self.horses)
         race_length = 20
-        winner_idx = -1
+        raw_winner_idx = -1
 
-        emojis_pista = []
+        # Punto 2B: Evaluación inicial de Infartos por sobredosis progresiva
+        # (1 dosis: 5%, 2 dosis: 25%, 3 dosis: 60%, 4+ dosis: 100%)
+        infarto_probs = {0: 0.0, 1: 0.05, 2: 0.25, 3: 0.60}
+        muertos = set()
         caballos_muertos = []
+
         for i in range(len(self.horses)):
-            if self.horse_doping[i] > 3:
-                emojis_pista.append("💀")
+            dosis = self.horse_doping.get(i, 0)
+            if dosis >= 4 or (dosis > 0 and random.random() < infarto_probs.get(dosis, 0.60)):
+                muertos.add(i)
                 caballos_muertos.append(self.horses[i]['name'])
-            else:
-                emojis_pista.append(self.horses[i]['emoji'])
+
+        emojis_pista = ["💀" if i in muertos else self.horses[i]['emoji'] for i in range(len(self.horses))]
 
         if caballos_muertos:
-            embed.description = f"⚠️ **¡ATENCIÓN!** {', '.join(caballos_muertos)} ha sufrido un infarto por sobredosis de doping antes de iniciar la carrera.\n\n"
+            embed.description = f"⚠️ **¡ATENCIÓN!** {', '.join(caballos_muertos)} ha sufrido un infarto cardíaco por exceso de dopaje antes de iniciar la carrera.\n\n"
         else:
             embed.description = ""
 
-        # Dibujar pista inicial
-        track = ""
-        for i, h in enumerate(self.horses):
-            line = emojis_pista[i] + "➖" * race_length + " 🏁"
-            track += f"{line}\n"
-
         ticks = 0
         max_ticks = 100
-        while winner_idx == -1 and ticks < max_ticks:
+        cramped_horses = {} # i -> bool
+
+        while raw_winner_idx == -1 and ticks < max_ticks:
             ticks += 1
             await asyncio.sleep(1.5)
             
+            cramped_horses.clear()
+
             # Avanzar caballos aleatoriamente
             for i in range(len(self.horses)):
-                if self.horse_doping[i] > 3:
-                    # El caballo murió por sobredosis, no avanza
-                    pass
+                if i in muertos:
+                    # Caballo muerto, no avanza
+                    continue
+
+                dosis = self.horse_doping.get(i, 0)
+
+                # Punto 2C: 25% de probabilidad de sufrir un Calambre por esteroides en este tick
+                if dosis > 0 and random.random() < 0.25:
+                    cramped_horses[i] = True
+                    move = 0
                 else:
-                    # Caballos con multiplicador más bajo (favoritos) tienen un leve bonus de velocidad
                     speed_bonus = (5.0 - self.multipliers[i]) * 0.2
-                    doping_bonus = self.horse_doping[i] * 1.5
+                    doping_bonus = dosis * 1.0
                     move = random.randint(1, 3) + random.random() * speed_bonus + doping_bonus
-                    positions[i] += int(move)
+
+                positions[i] += int(move)
                 
                 if positions[i] >= race_length:
                     positions[i] = race_length
-                    if winner_idx == -1:
-                        winner_idx = i
+                    if raw_winner_idx == -1:
+                        raw_winner_idx = i
                         
             # Dibujar pista
             track = ""
             for i, h in enumerate(self.horses):
                 pos = min(positions[i], race_length)
-                line = "➖" * pos + emojis_pista[i] + "➖" * (race_length - pos) + " 🏁"
+                cramp_tag = " 💥 (Calambre)" if cramped_horses.get(i) else ""
+                line = "➖" * pos + emojis_pista[i] + "➖" * (race_length - pos) + " 🏁" + cramp_tag
                 track += f"{line}\n"
                 
             embed.description = f"**Pista:**\n\n{track}"
             if caballos_muertos:
-                embed.description = f"⚠️ **Sobredosis:** {', '.join(caballos_muertos)} (Eliminados)\n\n" + embed.description
+                embed.description = f"⚠️ **Infartos:** {', '.join(caballos_muertos)} (Eliminados)\n\n" + embed.description
             await self.message.edit(embed=embed, view=self)
 
-        # Si terminó por límite de ticks sin un ganador oficial, resolver según posiciones actuales
-        if winner_idx == -1:
+        # Si terminó por límite de ticks sin ganador oficial
+        if raw_winner_idx == -1:
             max_pos = -1
             for i in range(len(self.horses)):
-                # Priorizar caballos vivos
-                if self.horse_doping[i] <= 3 and positions[i] > max_pos:
+                if i not in muertos and positions[i] > max_pos:
                     max_pos = positions[i]
-                    winner_idx = i
-            if winner_idx == -1:
-                winner_idx = 0
+                    raw_winner_idx = i
+            if raw_winner_idx == -1:
+                raw_winner_idx = 0
 
-        # Carrera terminada
+        # Punto 2A: Prueba Antidoping Post-Carrera al Ganador
+        # (1 dosis: 10% descalificación, 2 dosis: 35%, 3 dosis: 70% + multa de 20k)
+        antidoping_probs = {0: 0.0, 1: 0.10, 2: 0.35, 3: 0.70}
+        dosis_raw_winner = self.horse_doping.get(raw_winner_idx, 0)
+        descalificado = False
+        multa_aplicada = False
+
+        if dosis_raw_winner > 0 and random.random() < antidoping_probs.get(dosis_raw_winner, 0.70):
+            descalificado = True
+            if dosis_raw_winner == 3:
+                # Aplicar multa de 20.000 al doper
+                from src.db import deduct_balance, registrar_transaccion
+                for d_uid, (h_idx, d_num) in getattr(self, "dopers", {}).items():
+                    if h_idx == raw_winner_idx and d_num == 3:
+                        await asyncio.to_thread(deduct_balance, d_uid, 20000)
+                        await asyncio.to_thread(registrar_transaccion, d_uid, -20000, "Multa Antidoping Casino (Dosis 3)")
+                        multa_aplicada = True
+
+        # Determinar el ganador final legítimo
+        if descalificado:
+            # Buscar el siguiente caballo vivo no descalificado con mayor avance
+            valid_horses = [(i, positions[i]) for i in range(len(self.horses)) if i != raw_winner_idx and i not in muertos]
+            if valid_horses:
+                valid_horses.sort(key=lambda x: x[1], reverse=True)
+                winner_idx = valid_horses[0][0]
+            else:
+                winner_idx = raw_winner_idx  # Fallback
+        else:
+            winner_idx = raw_winner_idx
+
         winner_horse = self.horses[winner_idx]
         winner_mult = self.multipliers[winner_idx]
         
         embed.title = f"🏆 ¡{winner_horse['name']} ({winner_horse['emoji']}) GANA LA CARRERA! 🏆"
         embed.color = discord.Color.gold()
-        embed.description = f"**Pista:**\n\n{track}\n\n**Pagos (x{winner_mult}):**\n"
         
+        desc_final = f"**Pista:**\n\n{track}\n\n"
+        if descalificado:
+            raw_horse = self.horses[raw_winner_idx]
+            desc_final += (
+                f"🚨 **PRUEBA ANTIDOPING POST-CARRERA:**\n"
+                f"¡{raw_horse['emoji']} **{raw_horse['name']}** dio **POSITIVO** en la inspección médica y ha sido **DESCALIFICADO**!\n"
+            )
+            if multa_aplicada:
+                desc_final += "💸 **Multa Antidoping:** Se cobró una multa de **20,000 🪙** por infracción grave de nivel 3.\n"
+            desc_final += f"🏆 ¡El título de ganador oficial pasa a {winner_horse['emoji']} **{winner_horse['name']}**!\n\n"
+
+        desc_final += f"**Pagos (x{winner_mult}):**\n"
+        embed.description = desc_final
+
         # Calcular totales para el pozo
         total_losing_bets = sum(b['amount'] for b in self.bets.values() if b['horse_idx'] != winner_idx)
         total_winning_bets = sum(b['amount'] for b in self.bets.values() if b['horse_idx'] == winner_idx)
@@ -304,14 +356,11 @@ class HorseRaceView(discord.ui.View):
             bet_amt = bet_data['amount']
             user = bet_data['user']
             
-            # Calcular dificultad
             diff_mod, _ = await asyncio.to_thread(DynamicDifficulty.calculate_dynamic_difficulty, user_id, bet_amt, 'horse_race')
             
             if bet_data['horse_idx'] == winner_idx:
-                # Ganancia = apuesta * multiplicador + proporción del pozo de perdedores
                 base_winnings = bet_amt * winner_mult
                 pool_share = total_losing_bets * (bet_amt / total_winning_bets) if total_winning_bets > 0 else 0
-                
                 winnings = int(base_winnings + pool_share)
                 
                 current_bal = await asyncio.to_thread(get_balance, user_id)
@@ -344,6 +393,7 @@ class HorseRaceView(discord.ui.View):
             
         embed.add_field(name="Resultados de las apuestas", value=winners_text)
         await self.message.edit(embed=embed, view=None)
+
 
 class HorseRace(commands.Cog):
     def __init__(self, bot):
