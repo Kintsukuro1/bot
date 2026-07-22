@@ -9,15 +9,16 @@ from src.db import (
     get_user_equipment, get_combat_wallet, add_combat_currency,
     get_gem_catalog, get_consumable_catalog, get_user_consumables,
     calc_base_stats, calc_equipment_bonus, get_effective_bonus,
-    format_currency, get_duel_leaderboard
+    get_duel_leaderboard
 )
 from src.utils.combat_progression import (
     get_duel_cooldown_minutes, format_hp_bar, format_progress_bar,
     get_combat_rank, get_combat_rank_emoji, calc_combat_xp_needed,
     format_username_with_prestige, format_stat_type, SLOT_EMOJIS,
     EQUIPMENT_SLOTS, MIN_BET, MAX_LEVEL_DIFFERENCE, CHALLENGE_TIMEOUT_SECONDS,
-    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL
+    SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL, format_currency
 )
+
 from src.utils.subclass_config import get_all_subclass_info_for_display, get_available_subclasses, SUBCLASSES
 from src.commands.duels.pvp.pvp_combatant import Combatant
 from src.commands.duels.pvp.duel_view import ChallengeView, DuelView
