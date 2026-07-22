@@ -1,6 +1,6 @@
-
 __all__ = [
     'blackjack',
+    'casino_hub',
     'casino_info',
     'casino_war',
     'coinflip',
@@ -20,6 +20,7 @@ __all__ = [
 
 async def setup(bot):
     from .blackjack import setup as setup_blackjack
+    from .casino_hub import setup as setup_casino_hub
     from .casino_info import setup as setup_casino_info
     from .casino_war import setup as setup_casino_war
     from .coinflip import setup as setup_coinflip
@@ -37,6 +38,7 @@ async def setup(bot):
     from .slots import setup as setup_slots
 
     await setup_blackjack(bot)
+    await setup_casino_hub(bot)
     await setup_casino_info(bot)
     await setup_casino_war(bot)
     await setup_coinflip(bot)
@@ -52,4 +54,3 @@ async def setup(bot):
     await setup_rps_bet(bot)
     await setup_russian_roulette(bot)
     await setup_slots(bot)
-

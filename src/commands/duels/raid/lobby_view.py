@@ -55,8 +55,9 @@ class RaidLobbyView(discord.ui.View):
             }
             stats_label = "**Stats del Miniboss** (Fijos):"
         else:
-            scaled_stats = calc_boss_stats(boss, total_power, self.difficulty)
-            stats_label = f"**Stats del Boss** (escalado a Poder total {total_power:.1f}):"
+            scaled_stats = calc_boss_stats(boss, total_power, self.difficulty, num_players=len(self.players))
+            stats_label = f"**Stats del Boss** (escalado a {len(self.players)} jugadores · Poder {total_power:.1f}):"
+
 
         embed = discord.Embed(
             title=f"{boss['emoji']} Raid — {boss['name']} ({self.difficulty.capitalize()})",

@@ -754,6 +754,36 @@ class RaidCombatView(discord.ui.View):
                 elif ckey == "bomba_humo":
                     p.guaranteed_dodge_next = True
                     logs.append(f"💨 **Bomba de Humo:** {p.user.display_name} lanza una bomba de humo y se oculta. ¡Garantiza esquivar el próximo golpe!")
+                elif ckey == "pocion_curacion_colectiva":
+                    for ally in self._alive_players():
+                        if ally.anti_heal_turns == 0:
+                            heal_amt = int(ally.max_hp * 0.30)
+                            heal_amt = int(heal_amt * (1.0 + ally.healing_bonus_pct))
+                            ally.hp = min(ally.max_hp, ally.hp + heal_amt)
+                    logs.append(f"🧪 **Poción de Curación Colectiva:** {p.user.display_name} usa una poción mágica y cura **30% HP** a todo el equipo.")
+                elif ckey == "totem_baluarte":
+                    for ally in self._alive_players():
+                        shield_val = int(ally.max_hp * 0.20)
+                        ally.shield += shield_val
+                    logs.append(f"🛡️ **Tótem de Baluarte:** {p.user.display_name} despliega un tótem que otorga un escudo de **20% HP** a todo el grupo.")
+                elif ckey == "pergamino_purificacion_grupo":
+                    for ally in self._alive_players():
+                        ally.stun_turns = 0
+                        ally.frozen_turns = 0
+                        ally.silence_turns = 0
+                        ally.weakness_turns = 0
+                        ally.fragility_turns = 0
+                        ally.vulnerability_turns = 0
+                        ally.bleed_turns = 0
+                        ally.anti_heal_turns = 0
+                        ally.poison_turns = 0
+                        ally.atk_debuff_turns = 0
+                    logs.append(f"📜 **Pergamino de Purificación de Grupo:** {p.user.display_name} purifica todas las afecciones de todo el equipo.")
+                elif ckey == "elixir_ultimate":
+                    self.equipment_ultimate_charge = min(100.0, self.equipment_ultimate_charge + 30.0)
+                    logs.append(f"⚡ **Elixir de Carga de Ultimate:** {p.user.display_name} consume un elixir místico y recarga **+30%** la barra de Ultimate de Equipo.")
+                elif ckey == "manjar_companero":
+                    logs.append(f"🥩 **Manjar del Compañero:** {p.user.display_name} alimenta a su mascota, restaurando su lealtad al 100%.")
                 elif ckey == "frasco_silencio":
                     target_type = parts[2] if len(parts) > 2 else "boss"
                     if target_type == "boss":
@@ -769,6 +799,7 @@ class RaidCombatView(discord.ui.View):
                         self.boss.silence_turns = 3
                         logs.append(f"🤫 **Frasco de Silencio:** {p.user.display_name} lanza un frasco a {self.boss.name}. ¡Lo silencia por 2 turnos!")
                 continue
+
 
             if action == "ultimate_equipo":
                 alive_players = self._alive_players()
@@ -917,9 +948,13 @@ class RaidCombatView(discord.ui.View):
                     if crit:
                         crit_mult = 1.5 + p.subclass_extras.get("crit_mult_bonus", 0.0)
                         damage = int(damage * crit_mult)
-                        crit_text = " **¡CRÍTICO BRUTAL!**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **¡CRÍTICO!**"
+                        crit_text = " **(¡CRÍTICO BRUTAL!)**" if p.subclass_extras.get("crit_mult_bonus", 0.0) > 0 else " **(¡CRÍTICO!)**"
                     else:
                         crit_text = ""
+
+                    target_name = active_target.name if hasattr(active_target, 'name') else active_target['name']
+                    logs.append(f"⚔️ **{p.user.display_name}** ataca a **{target_name}** infligiendo **{damage}** de daño{crit_text}!")
+
 
             elif action == 'defend':
                 p.is_defending = True
@@ -1738,9 +1773,7 @@ class RaidCombatView(discord.ui.View):
                     # Acumular daño para la verificación de canalización
                     if self.boss_channeling:
                         self.boss_channeled_damage += damage
-                    
-                    crit_str = crit_text if 'crit_text' in locals() else ""
-                    logs.append(f"   → Daño al jefe: **{damage}** daño{crit_str}.")
+
 
                 # Procs de pasivos nuevos (windfury, blinding_edge, chain_lightning, deathtouch)
                 if damage > 0:
@@ -2736,61 +2769,70 @@ class RaidsCog(commands.Cog):
         self.bot = bot
         self.active_raids: set[int] = set()
 
-    @app_commands.command(name="raid", description="Inicia una raid cooperativa contra el boss del día")
+    @app_commands.command(name="raid", description="Abre el Panel Hub Central de Combate y Raids")
     async def raid_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         user = interaction.user
         user_id = user.id
 
-        # Verificar que no esté en otra raid
-        if user_id in self.active_raids:
-            await interaction.response.send_message(
-                "❌ Ya tienes una raid en curso.", ephemeral=True
-            )
-            return
-
-        # Asegurar usuario
         await asyncio.to_thread(ensure_user, user_id, user.name)
-
-        # Cargar stats
         stats = await asyncio.to_thread(get_combat_stats, user_id)
         equip = await asyncio.to_thread(get_user_equipment, user_id)
-
-        # Obtener boss del día
         boss_config = get_today_boss()
 
-        # Roll miniboss
+        rank_emoji = get_combat_rank_emoji(stats['level'])
+        rank_name = get_combat_rank(stats['level'])
+
+        embed = discord.Embed(
+            title=f"⚔️ Panel Central de Combate — {user.display_name}",
+            description=(
+                f"*{boss_config['emoji']} **Boss del Día:** {boss_config['name']} ({boss_config['element']})*\n"
+                f"*{boss_config['lore']}*\n\n"
+                f"{rank_emoji} **Rango:** {rank_name} (Nivel **{stats['level']}**)\n"
+                f"📊 **Victorias:** {stats['wins']} | **Derrotas:** {stats['losses']}\n"
+                f"🔮 **Habilidad Especial:** {BOSS_ABILITIES[boss_config['ability']]['emoji']} {BOSS_ABILITIES[boss_config['ability']]['name']}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Selecciona una opción del menú interactivo para acceder:"
+            ),
+            color=boss_config["color"]
+        )
+        embed.set_footer(text="Panel Efímero Privado · Únicamente tú ves este menú")
+
+        from src.commands.duels.raid.hub_view import RaidHubView
+        hub_view = RaidHubView(user, self)
+        await interaction.followup.send(embed=embed, view=hub_view, ephemeral=True)
+
+    async def start_raid_lobby_from_hub(self, interaction: discord.Interaction):
+        user = interaction.user
+        user_id = user.id
+
+        if user_id in self.active_raids:
+            await interaction.followup.send("❌ Ya tienes una raid en curso.", ephemeral=True)
+            return
+
+        stats = await asyncio.to_thread(get_combat_stats, user_id)
+        equip = await asyncio.to_thread(get_user_equipment, user_id)
+        boss_config = get_today_boss()
+
         import random
         from src.utils.raid_config import MINIBOSS_CHANCE, MINIBOSSES
         if random.random() < MINIBOSS_CHANCE:
             miniboss_key = random.choice(list(MINIBOSSES.keys()))
             boss_config = build_miniboss_config(miniboss_key, MINIBOSSES[miniboss_key])
 
-        # Marcar como activo
         self.active_raids.add(user_id)
 
-        if boss_config.get("is_shop"):
-            merchant_view = PhantomMerchantView([user], self)
-            embed = merchant_view._build_embed()
-            await interaction.response.send_message(embed=embed, view=merchant_view)
-            msg = await interaction.original_response()
-            merchant_view.message = msg
-            await merchant_view.wait()
-            return
-
-        # Crear lobby
         lobby = RaidLobbyView(user, boss_config, self)
         lobby.player_stats[user_id] = stats
         lobby.player_equipments[user_id] = equip
 
         embed = lobby._build_lobby_embed()
-        await interaction.response.send_message(embed=embed, view=lobby)
-        msg = await interaction.original_response()
+        msg = await interaction.channel.send(embed=embed, view=lobby)
+        lobby.message = msg
 
-        # Esperar
         await lobby.wait()
 
         if not lobby.started:
-            # Cancelada o timeout
             for p in lobby.players:
                 self.active_raids.discard(p.id)
             if not lobby.cancelled:
@@ -2807,10 +2849,14 @@ class RaidsCog(commands.Cog):
                     pass
             return
 
-        # Iniciar combate
+        if boss_config.get("is_shop"):
+            merchant_view = PhantomMerchantView(lobby.players, self)
+            embed = merchant_view._build_embed()
+            await interaction.channel.send(embed=embed, view=merchant_view)
+            return
+
         await asyncio.sleep(1)
 
-        # Cargar equipo de todos los jugadores
         combatants = []
         for p in lobby.players:
             p_stats = lobby.player_stats.get(p.id, await asyncio.to_thread(get_combat_stats, p.id))
@@ -2821,22 +2867,46 @@ class RaidsCog(commands.Cog):
                 combat_subclass=p_stats.get('combat_subclass')
             ))
 
-        # Calcular stats del boss
         from src.utils.combat_progression import calc_power_level
         total_power = sum(calc_power_level(c.level, lobby.player_equipments.get(c.user.id, {}), c.combat_subclass) for c in combatants)
-        boss = RaidBoss(boss_config, total_power, lobby.difficulty, is_miniboss=boss_config.get("is_miniboss", False))
+        boss = RaidBoss(boss_config, total_power, lobby.difficulty, is_miniboss=boss_config.get("is_miniboss", False), num_players=len(combatants))
 
-        # Seleccionar afijo aleatorio de la arena
         affix_name = random.choice(list(RAID_AFFIXES.keys()))
-
-        # Crear vista de combate con afijo
         combat_view = RaidCombatView(combatants, boss, self, affix=affix_name, difficulty=lobby.difficulty)
         combat_embed = combat_view._build_embed()
 
-        combat_msg = await interaction.followup.send(embed=combat_embed, view=combat_view)
+        combat_msg = await interaction.channel.send(embed=combat_embed, view=combat_view)
         combat_view.interaction_msg = combat_msg
+
+
+    @app_commands.command(name="tienda_raid", description="Tienda de utilidades y consumibles exclusivos para Raids y Aventura")
+    async def tienda_raid_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+
+        embed = discord.Embed(
+            title="⚔️ Tienda de Raids y Aventura",
+            description="Consumibles y brebajes de utilidad diseñados para proteger al equipo y potenciar tus expediciones PvE.",
+            color=discord.Color.dark_purple()
+        )
+
+        for item in catalog:
+            key = item["consumable_key"]
+            name = item["name"]
+            desc = item["description"]
+            price = item["price"]
+            embed.add_field(
+                name=f"🧪 {name} — {format_currency(price)}",
+                value=f"*{desc}*",
+                inline=False
+            )
+
+        from src.commands.duels.pvp.loot_views import ConsumableShopView
+        view = ConsumableShopView(interaction.user, catalog)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot):
     await bot.add_cog(RaidsCog(bot))
     logger.info("Raids cog loaded successfully.")
+

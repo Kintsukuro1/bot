@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from src.commands.shop.black_market_items import BLACK_MARKET
 from src.db import get_balance, set_balance, deduct_balance, registrar_transaccion, ensure_user, comprar_item_tienda
-from src.services.shop_rotation_service import get_rotation_info, select_rotated_items, BLACKMARKET_ROTATION_SECONDS
+from src.services.shop_rotation_service import get_rotation_info, select_rotated_items, BLACKMARKET_ROTATION_SECONDS, get_stock_remaining, consume_stock
 import asyncio
 
 def get_current_blackmarket_items():
@@ -80,8 +80,10 @@ class BlackMarket(commands.Cog):
             req = item.get("prestige_required", 0)
             if prestige_level >= req:
                 job_tag = f" `[{item['job'].upper()}]`" if "job" in item else ""
+                stock_rem = await asyncio.to_thread(get_stock_remaining, "blackmarket", item, BLACKMARKET_ROTATION_SECONDS)
+                stock_tag = f" (Stock: **{stock_rem}**)" if stock_rem > 0 else " **(❌ AGOTADO)**"
                 embed.add_field(
-                    name=f"{item['nombre']} — {item['precio']:,} 🪙{job_tag}",
+                    name=f"{item['nombre']} — {item['precio']:,} 🪙{job_tag}{stock_tag}",
                     value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
                     inline=False
                 )
@@ -106,6 +108,12 @@ class BlackMarket(commands.Cog):
         prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
         if item.get("prestige_required", 0) > prestige_level:
             await interaction.response.send_message("❌ Requieres un nivel de Prestigio más alto para esta mejora.", ephemeral=True)
+            return
+
+        # Consumir 1 unidad del stock rotativo del Blackmarket
+        has_stock = await asyncio.to_thread(consume_stock, "blackmarket", item, BLACKMARKET_ROTATION_SECONDS)
+        if not has_stock:
+            await interaction.response.send_message("❌ Este artefacto se ha **agotado** en la rotación actual del Mercado Negro.", ephemeral=True)
             return
 
         precio = item["precio"]

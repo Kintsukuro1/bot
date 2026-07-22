@@ -3,7 +3,7 @@ from src.utils.raid_config import BOSS_ABILITIES, calc_boss_stats
 class RaidBoss:
     """Estado del boss durante el combate de raid."""
 
-    def __init__(self, boss_config: dict, total_power: float = 0.0, difficulty: str = "normal", total_level: float | None = None, is_miniboss: bool = False):
+    def __init__(self, boss_config: dict, total_power: float = 0.0, difficulty: str = "normal", total_level: float | None = None, is_miniboss: bool = False, num_players: int = 1):
         self.name = boss_config["name"]
         self.emoji = boss_config["emoji"]
         self.element = boss_config["element"]
@@ -23,12 +23,13 @@ class RaidBoss:
             self.atk = boss_config["atk"]
             self.def_stat = boss_config["def_stat"]
         else:
-            # Stats escalados
-            stats = calc_boss_stats(boss_config, total_power, difficulty)
+            # Stats escalados dinámicamente por número de jugadores y poder
+            stats = calc_boss_stats(boss_config, total_power, difficulty, num_players=num_players)
             self.max_hp = stats["max_hp"]
             self._hp = stats["hp"]
             self.atk = stats["atk"]
             self.def_stat = stats["def_stat"]
+
 
         self.miniboss_key = boss_config.get("miniboss_key")
         self.is_miniboss = is_miniboss

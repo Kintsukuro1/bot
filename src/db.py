@@ -1794,6 +1794,50 @@ def init_db():
                     CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserShopStock (
+                    RotationSeed BIGINT NOT NULL,
+                    ShopType VARCHAR(20) NOT NULL,
+                    ItemID INT NOT NULL,
+                    StockRemaining INT NOT NULL,
+                    PRIMARY KEY (RotationSeed, ShopType, ItemID)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GuildPoblado (
+                    GuildID BIGINT PRIMARY KEY,
+                    RecursoMadera INT DEFAULT 0,
+                    RecursoPiedra INT DEFAULT 0,
+                    RecursoCristal INT DEFAULT 0,
+                    RecursoSolar INT DEFAULT 0,
+                    ProyectoActivo VARCHAR(50) DEFAULT 'Herrería de Combate',
+                    ProgresoProyecto INT DEFAULT 0,
+                    PuntosSemanales INT DEFAULT 0,
+                    UltimoResetSemanal TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GuildEdificios (
+                    GuildID BIGINT NOT NULL,
+                    NombreEdificio VARCHAR(50) NOT NULL,
+                    Nivel INT DEFAULT 1,
+                    PRIMARY KEY (GuildID, NombreEdificio)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS PobladoContribuciones (
+                    GuildID BIGINT NOT NULL,
+                    UserID BIGINT NOT NULL,
+                    PuntosAportados INT DEFAULT 0,
+                    MaterialesDonados INT DEFAULT 0,
+                    PRIMARY KEY (GuildID, UserID)
+                )
+            """)
+
+
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS GamblerProgress (
@@ -3456,8 +3500,35 @@ def update_user_class_and_subclass(user_id: int, class_name: str, subclass_name:
         return False
 
 
+def ensure_consumables_catalog_seeded(cursor=None):
+    items = [
+        ("pocion_curacion", "Poción de Curación", "Cura un 25% del HP máximo del usuario.", 150),
+        ("pergamino_purificacion", "Pergamino de Purificación", "Limpia todos los debuffs y DoTs del usuario.", 200),
+        ("bomba_humo", "Bomba de Humo", "Esquiva con 100% de certeza el próximo ataque recibido.", 250),
+        ("frasco_silencio", "Frasco de Silencio", "Silencia las habilidades especiales del objetivo por 2 turnos.", 200),
+        ("pocion_curacion_colectiva", "Poción de Curación Colectiva", "Cura un 30% del HP Máximo a todo el grupo en Raid o Aventura.", 300),
+        ("totem_baluarte", "Tótem de Baluarte", "Confiere un escudo de absorción del 20% HP a todo el equipo.", 500),
+        ("pergamino_purificacion_grupo", "Pergamino de Purificación de Grupo", "Limpia todos los debuffs y DoTs de la party.", 400),
+        ("elixir_ultimate", "Elixir de Carga de Ultimate", "Suma +30% de carga a la barra de Ultimate de Equipo.", 650),
+        ("manjar_companero", "Manjar del Compañero", "Restaura la lealtad de la mascota al 100% y le otorga +25% Bronce en Aventura.", 350)
+    ]
+    def _run(c):
+        for key, name, desc, price in items:
+            c.execute("""
+                INSERT INTO ConsumableCatalog (ConsumableKey, Name, Description, Price)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ConsumableKey) DO NOTHING
+            """, (key, name, desc, price))
+
+    if cursor:
+        _run(cursor)
+    else:
+        with db_cursor() as c:
+            _run(c)
+
 def get_consumable_catalog():
-    """Retorna los 4 consumibles disponibles."""
+    """Retorna los consumibles disponibles en el catálogo."""
+    ensure_consumables_catalog_seeded()
     with db_cursor() as cursor:
         cursor.execute("SELECT ConsumableKey, Name, Description, Price FROM ConsumableCatalog ORDER BY Price ASC")
         catalog = []
@@ -3469,6 +3540,7 @@ def get_consumable_catalog():
                 'price': row[3]
             })
         return catalog
+
 
 
 def buy_consumable(user_id, consumable_key, quantity=1):
@@ -4342,6 +4414,132 @@ def check_game_circuit_breaker_db(game_key: str) -> tuple:
             if bloqueado_hasta and bloqueado_hasta > datetime.now():
                 return False, motivo
         return True, ""
+
+
+# ══════════════════════════════════════════════
+# POBLADO COMUNITARIO HELPERS
+# ══════════════════════════════════════════════
+
+def ensure_guild_poblado(guild_id: int):
+    """Asegura que el servidor tenga registro en GuildPoblado y sus 6 edificios iniciales."""
+    if not guild_id:
+        return
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO GuildPoblado (GuildID) VALUES (%s)
+            ON CONFLICT (GuildID) DO NOTHING
+        """, (guild_id,))
+        
+        edificios = [
+            "Herrería de Combate",
+            "Gran Mercado del Servidor",
+            "Bastión de Raids",
+            "Gran Biblioteca Arcana",
+            "Templo del Alba",
+            "Taberna del Aventurero"
+        ]
+        for ed in edificios:
+            cursor.execute("""
+                INSERT INTO GuildEdificios (GuildID, NombreEdificio, Nivel)
+                VALUES (%s, %s, 1)
+                ON CONFLICT (GuildID, NombreEdificio) DO NOTHING
+            """, (guild_id, ed))
+
+def get_guild_poblado(guild_id: int) -> dict:
+    """Obtiene los recursos y estado del Poblado del servidor."""
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT RecursoMadera, RecursoPiedra, RecursoCristal, RecursoSolar,
+                   ProyectoActivo, ProgresoProyecto, PuntosSemanales, UltimoResetSemanal
+            FROM GuildPoblado WHERE GuildID = %s
+        """, (guild_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        return {
+            "madera": row[0],
+            "piedra": row[1],
+            "cristal": row[2],
+            "solar": row[3],
+            "proyecto_activo": row[4],
+            "progreso_proyecto": row[5],
+            "puntos_semanales": row[6],
+            "ultimo_reset": row[7]
+        }
+
+def get_guild_buildings(guild_id: int) -> dict:
+    """Devuelve los niveles de todos los edificios construidos en el servidor."""
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("SELECT NombreEdificio, Nivel FROM GuildEdificios WHERE GuildID = %s", (guild_id,))
+        rows = cursor.fetchall()
+        return {r[0]: r[1] for r in rows}
+
+def get_building_level(guild_id: int, building_name: str) -> int:
+    """Obtiene el nivel de un edificio específico en el servidor."""
+    if not guild_id:
+        return 0
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Nivel FROM GuildEdificios WHERE GuildID = %s AND NombreEdificio = %s", (guild_id, building_name))
+        row = cursor.fetchone()
+        return row[0] if row else 1
+
+def add_poblado_resources(guild_id: int, madera: int = 0, piedra: int = 0, cristal: int = 0, solar: int = 0, puntos: int = 0):
+    """Suma recursos y puntos semanales al Poblado del servidor."""
+    if not guild_id:
+        return
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE GuildPoblado
+            SET RecursoMadera = RecursoMadera + %s,
+                RecursoPiedra = RecursoPiedra + %s,
+                RecursoCristal = RecursoCristal + %s,
+                RecursoSolar = RecursoSolar + %s,
+                PuntosSemanales = PuntosSemanales + %s
+            WHERE GuildID = %s
+        """, (madera, piedra, cristal, solar, puntos, guild_id))
+
+def set_active_project(guild_id: int, building_name: str) -> tuple[bool, str]:
+    """Establece el proyecto de edificio activo a construir/mejorar."""
+    ensure_guild_poblado(guild_id)
+    current_lvl = get_building_level(guild_id, building_name)
+    if current_lvl >= 5:
+        return False, f"El edificio **{building_name}** ya alcanzó el nivel máximo (5)."
+
+    with db_cursor() as cursor:
+        cursor.execute("UPDATE GuildPoblado SET ProyectoActivo = %s WHERE GuildID = %s", (building_name, guild_id))
+        return True, f"Proyecto activo cambiado a **{building_name}** (Nivel actual: {current_lvl})."
+
+def record_poblado_contribution(guild_id: int, user_id: int, puntos: int, materiales: int):
+    """Registra los aportes individuales de un usuario al Poblado del servidor."""
+    if not guild_id or not user_id:
+        return
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO PobladoContribuciones (GuildID, UserID, PuntosAportados, MaterialesDonados)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (GuildID, UserID) DO UPDATE
+            SET PuntosAportados = PobladoContribuciones.PuntosAportados + EXCLUDED.PuntosAportados,
+                MaterialesDonados = PobladoContribuciones.MaterialesDonados + EXCLUDED.MaterialesDonados
+        """, (guild_id, user_id, puntos, materiales))
+
+def get_poblado_leaderboard(guild_id: int, limit: int = 10) -> list:
+    """Devuelve el ranking de mayores aportadores al Poblado en el servidor."""
+    if not guild_id:
+        return []
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT UserID, PuntosAportados, MaterialesDonados
+            FROM PobladoContribuciones
+            WHERE GuildID = %s
+            ORDER BY (PuntosAportados + MaterialesDonados * 5) DESC
+            LIMIT %s
+        """, (guild_id, limit))
+        return cursor.fetchall()
+
 
 
 

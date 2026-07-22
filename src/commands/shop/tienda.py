@@ -10,7 +10,7 @@ from src.db import (
     get_user_prestige_level
 )
 from src.utils.cooldowns import ECONOMY_COOLDOWN
-from src.services.shop_rotation_service import get_rotation_info, select_rotated_items, NORMAL_SHOP_ROTATION_SECONDS
+from src.services.shop_rotation_service import get_rotation_info, select_rotated_items, NORMAL_SHOP_ROTATION_SECONDS, get_stock_remaining, consume_stock
 
 TIENDA_CATALOGO = [
     {"id": 3, "nombre": "Bebida Energética 🥤", "precio": 500, "descripcion": "Recupera +50 de energía de inmediato. Úsala con `/usar 3`.", "rarity_weight": 50, "prestige_required": 0},
@@ -38,6 +38,11 @@ def _comprar_articulo_db(user_id, user_name, item):
     prestige_level = get_user_prestige_level(user_id)
     if item.get("prestige_required", 0) > prestige_level:
         return "prestige_required"
+
+    # Intentar consumir 1 unidad del stock rotativo de la tienda
+    has_stock = consume_stock("normal", item, NORMAL_SHOP_ROTATION_SECONDS)
+    if not has_stock:
+        return "out_of_stock"
         
     expiry_date = datetime.now() + timedelta(days=3650)
 
@@ -49,6 +54,7 @@ def _comprar_articulo_db(user_id, user_name, item):
         return "no_balance"
     registrar_transaccion(user_id, -precio_final, f"Compra: {item['nombre']}")
     return "ok", precio_final, prestige_discount
+
 
 def _usar_articulo_db(user_id, user_name, articulo_id):
     ensure_user(user_id, user_name)
@@ -113,8 +119,10 @@ class Tienda(commands.Cog):
         for item in active_items:
             req = item.get("prestige_required", 0)
             if prestige_level >= req:
+                stock_rem = await asyncio.to_thread(get_stock_remaining, "normal", item, NORMAL_SHOP_ROTATION_SECONDS)
+                stock_tag = f" (Stock: **{stock_rem}**)" if stock_rem > 0 else " **(❌ AGOTADO)**"
                 embed.add_field(
-                    name=f"{item['nombre']} — {item['precio']:,} 🪙",
+                    name=f"{item['nombre']} — {item['precio']:,} 🪙{stock_tag}",
                     value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
                     inline=False
                 )
@@ -182,9 +190,14 @@ class Tienda(commands.Cog):
 
         status = await asyncio.to_thread(_comprar_articulo_db, user_id, user_name, item)
 
+        if status == "out_of_stock" or (isinstance(status, tuple) and status[0] == "out_of_stock"):
+            await interaction.response.send_message("❌ Este artículo se ha **agotado** en la rotación actual.", ephemeral=True)
+            return
+
         if status == "prestige_required" or (isinstance(status, tuple) and status[0] == "prestige_required"):
             await interaction.response.send_message("❌ No cumples con el nivel de Prestigio requerido para comprar este artículo.", ephemeral=True)
             return
+
 
         if status == "no_balance" or (isinstance(status, tuple) and status[0] == "no_balance"):
             await interaction.response.send_message("❌ No tienes suficiente saldo para comprar este artículo.", ephemeral=True)
