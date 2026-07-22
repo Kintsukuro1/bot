@@ -149,24 +149,22 @@ class ShopHubView(discord.ui.View):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
-        embed = discord.Embed(
-            title="⬛ Mercado Negro",
-            description="Usa el comando `/blackmarket` para consultar las ofertas exclusivas de rotación de 3 horas.",
-            color=discord.Color.dark_grey()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        bm_cog = self.cog.bot.get_cog("BlackMarket")
+        if bm_cog:
+            await bm_cog.blackmarket(interaction)
+        else:
+            await interaction.response.send_message("❌ Módulo de Mercado Negro no cargado.", ephemeral=True)
 
     @discord.ui.button(label="🤝 Mercado P2P", style=discord.ButtonStyle.secondary, row=1)
     async def p2p_market_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
-        embed = discord.Embed(
-            title="🤝 Mercado de Jugadores",
-            description="Usa `/mercado` para ver ofertas públicas o `/vender_item`, `/vender_equipo`, `/vender_mascota` para comerciar.",
-            color=discord.Color.purple()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        um_cog = self.cog.bot.get_cog("UserMarket")
+        if um_cog:
+            await um_cog.mercado(interaction)
+        else:
+            await interaction.response.send_message("❌ Módulo de Mercado P2P no cargado.", ephemeral=True)
 
     @discord.ui.button(label="🔨 Subastas", style=discord.ButtonStyle.secondary, row=1)
     async def auctions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -174,10 +172,12 @@ class ShopHubView(discord.ui.View):
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
         embed = discord.Embed(
-            title="🔨 Casa de Subastas",
-            description="Usa `/pujar` para ofrecer por una subasta o `/subastar_equipo`, `/subastar_mascota` para iniciar un remate.",
+            title="🔨 Casa de Subastas Central",
+            description="Aquí puedes ver la lista de subastas activas del servidor e ingresar tu puja directamente.",
             color=discord.Color.dark_gold()
         )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

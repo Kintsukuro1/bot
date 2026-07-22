@@ -28,23 +28,196 @@ def get_bank_info(user_id: int) -> dict:
         row = c.fetchone()
         return {"bank_balance": row[0] if row and row[0] is not None else 0}
 
-class CasinoGamesSelectView(discord.ui.View):
-    """Vista efímera de selección de juegos de casino."""
-    def __init__(self, user: discord.Member):
+class QuickBetModal(discord.ui.Modal):
+    """Modal para ingresar la apuesta y lanzar el juego directamente."""
+    def __init__(self, game_key: str, game_name: str, cog):
+        super().__init__(title=f"🎲 Apostar en {game_name}")
+        self.game_key = game_key
+        self.cog = cog
+
+        self.bet_input = discord.ui.TextInput(
+            label="Monto de la Apuesta 🪙",
+            placeholder="Ejemplo: 500",
+            min_length=1,
+            max_length=10,
+            required=True
+        )
+        self.add_item(self.bet_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        val_str = self.bet_input.value.strip()
+        if not val_str.isdigit() or int(val_str) <= 0:
+            await interaction.response.send_message("❌ Ingresa un monto entero válido mayor a 0.", ephemeral=True)
+            return
+
+        apuesta = int(val_str)
+        user_id = interaction.user.id
+        user_name = interaction.user.name
+
+        if self.game_key == "mines":
+            from src.commands.casino.mines import MinesSetupView, calculate_multiplier
+            await interaction.response.defer()
+            view = MinesSetupView(user_id, apuesta, user_name)
+            embed = discord.Embed(
+                title="💣 Configuración de Buscaminas",
+                description=(
+                    f"💰 Apuesta: **{apuesta}**\n"
+                    f"💣 Bombas seleccionadas: **3**\n\n"
+                    f"Multiplicador al primer acierto: **x{calculate_multiplier(3, 20, 1):.2f}**\n"
+                    "A mayor cantidad de bombas, mayor el riesgo y las ganancias."
+                ),
+                color=discord.Color.blue()
+            )
+            msg = await interaction.followup.send(embed=embed, view=view)
+            view.message = msg
+
+        elif self.game_key == "slots":
+            slots_cog = self.cog.bot.get_cog("Slots")
+            if slots_cog:
+                await slots_cog.slots(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de tragamonedas no disponible.", ephemeral=True)
+
+        elif self.game_key == "blackjack":
+            bj_cog = self.cog.bot.get_cog("Blackjack")
+            if bj_cog:
+                await bj_cog.blackjack(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de blackjack no disponible.", ephemeral=True)
+
+        elif self.game_key == "crash":
+            crash_cog = self.cog.bot.get_cog("Crash")
+            if crash_cog:
+                await crash_cog.crash(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de crash no disponible.", ephemeral=True)
+
+        elif self.game_key == "plinko":
+            plinko_cog = self.cog.bot.get_cog("Plinko")
+            if plinko_cog:
+                await plinko_cog.plinko(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de plinko no disponible.", ephemeral=True)
+
+        elif self.game_key == "coinflip":
+            coin_cog = self.cog.bot.get_cog("Coinflip")
+            if coin_cog:
+                await coin_cog.coinflip_cmd(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de coinflip no disponible.", ephemeral=True)
+
+        elif self.game_key == "roulette":
+            roulette_cog = self.cog.bot.get_cog("Roulette")
+            if roulette_cog:
+                await roulette_cog.roulette(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de ruleta no disponible.", ephemeral=True)
+
+
+class RobarModal(discord.ui.Modal):
+    """Modal para realizar un robo especificando ID de usuario o mención."""
+    def __init__(self, cog):
+        super().__init__(title="🥷 Ejecutar Robo")
+        self.cog = cog
+        self.target_input = discord.ui.TextInput(
+            label="ID o Nombre del Usuario Objetivo",
+            placeholder="Ingresa la ID del usuario a robar...",
+            min_length=3,
+            max_length=30,
+            required=True
+        )
+        self.add_item(self.target_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        target_str = self.target_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+        if not target_str.isdigit():
+            await interaction.response.send_message("❌ Ingresa una ID de usuario numérica válida.", ephemeral=True)
+            return
+
+        target_id = int(target_str)
+        target_user = interaction.guild.get_member(target_id) if interaction.guild else None
+        if not target_user:
+            await interaction.response.send_message("❌ No se encontró a ese usuario en el servidor.", ephemeral=True)
+            return
+
+        robar_cog = self.cog.bot.get_cog("Robar")
+        if robar_cog:
+            await robar_cog.robar(interaction, target_user)
+        else:
+            await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
+
+
+class BankTransactionModal(discord.ui.Modal):
+    """Modal para realizar depósitos o retiros bancarios."""
+    def __init__(self, is_deposit: bool, cog):
+        super().__init__(title="📥 Depositar al Banco" if is_deposit else "📤 Retirar del Banco")
+        self.is_deposit = is_deposit
+        self.cog = cog
+        self.amount_input = discord.ui.TextInput(
+            label="Monto de Monedas",
+            placeholder="Ejemplo: 1000",
+            min_length=1,
+            max_length=12,
+            required=True
+        )
+        self.add_item(self.amount_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        val_str = self.amount_input.value.strip()
+        if not val_str.isdigit() or int(val_str) <= 0:
+            await interaction.response.send_message("❌ Ingresa un monto entero válido.", ephemeral=True)
+            return
+
+        monto = int(val_str)
+        banco_cog = self.cog.bot.get_cog("Banco")
+        if banco_cog:
+            if self.is_deposit:
+                await banco_cog.depositar(interaction, monto)
+            else:
+                await banco_cog.retirar(interaction, monto)
+        else:
+            await interaction.response.send_message("❌ Módulo de banco no disponible.", ephemeral=True)
+
+
+class BankActionsView(discord.ui.View):
+    """Vista de acciones de banco con botones Depositar y Retirar."""
+    def __init__(self, user: discord.Member, cog):
         super().__init__(timeout=60)
         self.user = user
+        self.cog = cog
+
+    @discord.ui.button(label="📥 Depositar", style=discord.ButtonStyle.success)
+    async def deposit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.send_modal(BankTransactionModal(is_deposit=True, cog=self.cog))
+
+    @discord.ui.button(label="📤 Retirar", style=discord.ButtonStyle.danger)
+    async def withdraw_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.send_modal(BankTransactionModal(is_deposit=False, cog=self.cog))
+
+
+class CasinoGamesSelectView(discord.ui.View):
+    """Vista efímera de selección y lanzamiento directo de juegos de casino."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=60)
+        self.user = user
+        self.cog = cog
 
         options = [
-            discord.SelectOption(label="🎰 Tragamonedas", value="slots", description="/apuesta_tragamonedas <apuesta>"),
-            discord.SelectOption(label="🃏 Blackjack", value="blackjack", description="/apuesta_blackjack <apuesta>"),
-            discord.SelectOption(label="🎲 Ruleta", value="roulette", description="/apuesta_ruleta <apuesta> <opcion>"),
-            discord.SelectOption(label="📈 Crash / Cohete", value="crash", description="/apuesta_cohete <apuesta>"),
-            discord.SelectOption(label="💣 Minas", value="mines", description="/apuesta_minas <apuesta> <minas>"),
-            discord.SelectOption(label="🟢 Plinko", value="plinko", description="/apuesta_plinko <apuesta>"),
-            discord.SelectOption(label="🪙 Coinflip", value="coinflip", description="/apuesta_moneda <apuesta> <cara/cruz>"),
-            discord.SelectOption(label="🎟️ Lotería", value="loto", description="/loto comprar"),
+            discord.SelectOption(label="🎰 Tragamonedas", value="slots", description="Lanzar tragamonedas"),
+            discord.SelectOption(label="🃏 Blackjack", value="blackjack", description="Lanzar partidas de 21"),
+            discord.SelectOption(label="🎲 Ruleta", value="roulette", description="Lanzar ruleta europea"),
+            discord.SelectOption(label="📈 Crash / Cohete", value="crash", description="Lanzar cohete multiplicador"),
+            discord.SelectOption(label="💣 Minas", value="mines", description="Lanzar campo minado"),
+            discord.SelectOption(label="🟢 Plinko", value="plinko", description="Lanzar bola de plinko"),
+            discord.SelectOption(label="🪙 Coinflip", value="coinflip", description="Lanzar moneda de la suerte"),
         ]
-        self.select = discord.ui.Select(placeholder="🎮 Selecciona un juego para ver su comando...", options=options)
+        self.select = discord.ui.Select(placeholder="🎮 Selecciona un juego para apostar...", options=options)
         self.select.callback = self.select_callback
         self.add_item(self.select)
 
@@ -54,19 +227,18 @@ class CasinoGamesSelectView(discord.ui.View):
             return
 
         val = self.select.values[0]
-        commands_info = {
-            "slots": ("🎰 Tragamonedas", "Usa `/apuesta_tragamonedas <cantidad>` para girar los rodillos."),
-            "blackjack": ("🃏 Blackjack", "Usa `/apuesta_blackjack <cantidad>` para jugar 21 contra la banca."),
-            "roulette": ("🎲 Ruleta", "Usa `/apuesta_ruleta <cantidad> <rojo/negro/verde/numero>` para apostar."),
-            "crash": ("📈 Crash / Cohete", "Usa `/apuesta_cohete <cantidad>` para arriesgar y retirar a tiempo."),
-            "mines": ("💣 Minas", "Usa `/apuesta_minas <cantidad> <minas>` para encontrar diamantes."),
-            "plinko": ("🟢 Plinko", "Usa `/apuesta_plinko <cantidad>` para soltar la bola."),
-            "coinflip": ("🪙 Coinflip", "Usa `/apuesta_moneda <cantidad> <cara/cruz>` para duplicar tu apuesta."),
-            "loto": ("🎟️ Lotería", "Usa `/loto comprar` para adquirir tu boleto del sorteo acumulado.")
+        names = {
+            "slots": "Tragamonedas",
+            "blackjack": "Blackjack",
+            "roulette": "Ruleta",
+            "crash": "Crash / Cohete",
+            "mines": "Buscaminas",
+            "plinko": "Plinko",
+            "coinflip": "Coinflip"
         }
-        title, desc = commands_info.get(val, ("Juego de Casino", "Usa los comandos del casino."))
-        embed = discord.Embed(title=title, description=desc, color=discord.Color.gold())
-        await interaction.response.edit_message(embed=embed, view=self)
+        name = names.get(val, "Juego")
+        modal = QuickBetModal(val, name, self.cog)
+        await interaction.response.send_modal(modal)
 
 
 class CasinoHubView(discord.ui.View):
@@ -83,10 +255,10 @@ class CasinoHubView(discord.ui.View):
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
 
-        view = CasinoGamesSelectView(self.user)
+        view = CasinoGamesSelectView(self.user, self.cog)
         embed = discord.Embed(
-            title="🎮 Menú Completo de Juegos de Casino",
-            description="Selecciona cualquier modalidad de juego para desplegar sus instrucciones y comando:",
+            title="🎮 Menú de Juegos de Casino",
+            description="Selecciona cualquier modalidad en el menú desplegable para ingresar tu apuesta y jugar de inmediato:",
             color=discord.Color.gold()
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -97,12 +269,7 @@ class CasinoHubView(discord.ui.View):
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title="🥷 Sistema de Robo",
-            description="Usa el comando `/robar usuario:@usuario` para intentar hurtar un porcentaje del saldo en mano de otra persona.\n\n⚠️ *¡Atención! Si el robo falla, serás multado por las autoridades.*",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_modal(RobarModal(self.cog))
 
     @discord.ui.button(label="🏦 Banco", style=discord.ButtonStyle.primary, row=0)
     async def bank_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -119,11 +286,12 @@ class CasinoHubView(discord.ui.View):
             description=(
                 f"💵 **Saldo en Mano:** **{format_currency(u_bal)}**\n"
                 f"🏦 **Saldo en Banco:** **{format_currency(b_info['bank_balance'])}**\n\n"
-                f"Usa `/depositar <cantidad>` para proteger tus fondos o `/retirar <cantidad>` para disponer de tu dinero."
+                f"Usa los botones para depositar o retirar fondos:"
             ),
             color=discord.Color.blue()
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        view = BankActionsView(self.user, self.cog)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="📈 Inversiones", style=discord.ButtonStyle.secondary, row=1)
     async def investments_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -131,12 +299,12 @@ class CasinoHubView(discord.ui.View):
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title="📈 Mercado de Valores e Inversiones",
-            description="Usa el comando `/bolsa` para consultar las acciones, criptos e índices en tiempo real y comprar o vender títulos financieros.",
-            color=discord.Color.purple()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        bolsa_cog = self.cog.bot.get_cog("BolsaCog")
+        if bolsa_cog:
+            await bolsa_cog.bolsa(interaction)
+        else:
+            await interaction.response.send_message("❌ Módulo de bolsa no disponible.", ephemeral=True)
+
 
     @discord.ui.button(label="🐾 Mascota", style=discord.ButtonStyle.secondary, row=1)
     async def pet_button(self, interaction: discord.Interaction, button: discord.ui.Button):
