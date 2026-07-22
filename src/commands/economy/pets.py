@@ -483,10 +483,6 @@ class PetsMasterCog(commands.Cog):
         embed = view._build_embed()
         await interaction.followup.send(embed=embed, view=view)
 
-    @app_commands.command(name="pets_catalogo", description="Muestra el catálogo interactivo de mascotas (5 por página). (Alias de /catalogo_mascotas)")
-    async def pets_catalogo_cmd(self, interaction: discord.Interaction):
-        await self.catalogo_mascotas_cmd(interaction)
-
     @app_commands.command(name="pets", description="Muestra tu colección de mascotas con sus 3 slots, nivel (1-15) y habilidades.")
     async def pets_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer()

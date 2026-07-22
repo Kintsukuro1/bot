@@ -2879,9 +2879,7 @@ class RaidsCog(commands.Cog):
         combat_view.interaction_msg = combat_msg
 
 
-    @app_commands.command(name="tienda_raid", description="Tienda de utilidades y consumibles exclusivos para Raids y Aventura")
-    async def tienda_raid_cmd(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+    async def open_tienda_raid(self, interaction: discord.Interaction):
         catalog = await asyncio.to_thread(get_consumable_catalog)
 
         embed = discord.Embed(
@@ -2904,6 +2902,7 @@ class RaidsCog(commands.Cog):
         from src.commands.duels.pvp.loot_views import ConsumableShopView
         view = ConsumableShopView(interaction.user, catalog)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
 
 
 async def setup(bot):

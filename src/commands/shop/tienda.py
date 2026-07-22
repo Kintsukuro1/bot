@@ -96,26 +96,27 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
 
     return "unsupported", None
 
-class Tienda(commands.Cog):
-    """Cog para la tienda de artículos consumibles de un solo uso."""
-    def __init__(self, bot):
-        self.bot = bot
+class ShopHubView(discord.ui.View):
+    """Vista del Panel Hub Efímero de Comercio y Mercado."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=120)
+        self.user = user
+        self.cog = cog
 
-    @app_commands.command(name="tienda", description="Muestra los artículos disponibles en la rotación actual (30 min).")
-    async def tienda(self, interaction: discord.Interaction):
-        user_id = interaction.user.id
-        prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
-        
+    @discord.ui.button(label="🏪 Tienda Rotativa", style=discord.ButtonStyle.success, row=0)
+    async def rotative_shop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
         active_items = get_current_shop_items()
         _, _, time_str = get_rotation_info(NORMAL_SHOP_ROTATION_SECONDS)
-
+        prestige_level = await asyncio.to_thread(get_user_prestige_level, self.user.id)
         embed = discord.Embed(
             title="🛒 Tienda General — Stock Rotativo",
             description=f"¡Stock actualizado cada 30 minutos!\n⏱️ **Próxima rotación en:** `{time_str}`",
             color=discord.Color.gold()
         )
-        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/263/263142.png")
-        
         for item in active_items:
             req = item.get("prestige_required", 0)
             if prestige_level >= req:
@@ -126,8 +127,87 @@ class Tienda(commands.Cog):
                     value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
                     inline=False
                 )
-        embed.set_footer(text="Usa /comprar <ID> para adquirir un artículo. Usa /usar <ID> para usar consumibles.")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="🎒 Mi Inventario", style=discord.ButtonStyle.primary, row=0)
+    async def inventory_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        items = await asyncio.to_thread(_get_inventory_db, self.user.id, self.user.name)
+        embed = discord.Embed(title="🎒 Tu Inventario", color=discord.Color.blue())
+        if not items:
+            embed.description = "No tienes ningún artículo en tu inventario."
+        else:
+            lines = [f"📦 **Item ID {item.get('item_id')}** — Cantidad: {item.get('cantidad', 1)}" for item in items]
+            embed.description = "\n".join(lines)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="⬛ Mercado Negro", style=discord.ButtonStyle.secondary, row=0)
+    async def blackmarket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="⬛ Mercado Negro",
+            description="Usa el comando `/blackmarket` para consultar las ofertas exclusivas de rotación de 3 horas.",
+            color=discord.Color.dark_grey()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="🤝 Mercado P2P", style=discord.ButtonStyle.secondary, row=1)
+    async def p2p_market_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="🤝 Mercado de Jugadores",
+            description="Usa `/mercado` para ver ofertas públicas o `/vender_item`, `/vender_equipo`, `/vender_mascota` para comerciar.",
+            color=discord.Color.purple()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="🔨 Subastas", style=discord.ButtonStyle.secondary, row=1)
+    async def auctions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="🔨 Casa de Subastas",
+            description="Usa `/pujar` para ofrecer por una subasta o `/subastar_equipo`, `/subastar_mascota` para iniciar un remate.",
+            color=discord.Color.dark_gold()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class Tienda(commands.Cog):
+    """Cog para la tienda de artículos consumibles de un solo uso."""
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="tienda", description="Abre el Hub Central de Comercio, Mercado e Inventario (Panel Efímero Privado)")
+    async def tienda(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user_id = interaction.user.id
+        balance = await asyncio.to_thread(get_balance, user_id)
+
+        embed = discord.Embed(
+            title="🛍️ Hub Central de Comercio y Mercado",
+            description=(
+                f"Bienvenido a la Plaza Comercial, **{interaction.user.display_name}**.\n\n"
+                f"💰 **Tu Saldo:** **{balance:,}** monedas\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Selecciona una sección comercial para explorar:"
+            ),
+            color=discord.Color.gold()
+        )
+        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/263/263142.png")
+        embed.set_footer(text="Panel Efímero Privado · Únicamente tú ves este menú")
+
+        view = ShopHubView(interaction.user, self)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
 
     @app_commands.command(name="inventario", description="Muestra los artículos que posees.")
     async def inventario(self, interaction: discord.Interaction):
