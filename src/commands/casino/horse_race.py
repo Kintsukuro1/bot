@@ -137,6 +137,18 @@ class HorseBetModal(discord.ui.Modal, title="Apostar en la Carrera"):
         await interaction.response.send_message(f"✅ Has apostado **{bet_amount}** a {self.horse_emoji} **{self.horse_name}**.", ephemeral=True)
         await self.race_view.update_embed()
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        from src.services.casino_service import CasinoCircuitBreakerError
+        msg = str(error) if isinstance(error, CasinoCircuitBreakerError) else "❌ Ocurrió un error inesperado al procesar tu apuesta."
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+        except Exception:
+            pass
+
+
 class HorseSelect(discord.ui.Select):
     def __init__(self, horses):
         options = [

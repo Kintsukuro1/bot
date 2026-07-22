@@ -8,12 +8,11 @@ Comandos principales:
 - blackmarket: Tienda de mercado negro con productos especiales
 """
 
-__all__ = ['tienda', 'comprar_mejora', 'blackmarket']
+__all__ = ['tienda', 'blackmarket']
 
 # Esta función permite cargar todos los cogs del módulo de una vez
 async def setup(bot):
     from .tienda import setup as setup_tienda
-    from .comprar_mejora import setup as setup_comprar_mejora
     from .blackmarket import setup as setup_blackmarket
     
     try:
@@ -21,12 +20,6 @@ async def setup(bot):
         print("Shop tienda cog loaded successfully")
     except Exception as e:
         print(f"Error loading shop tienda cog: {e}")
-    
-    try:
-        await setup_comprar_mejora(bot)
-        print("Shop comprar_mejora cog loaded successfully")
-    except Exception as e:
-        print(f"Error loading shop comprar_mejora cog: {e}")
         
     try:
         await setup_blackmarket(bot)
