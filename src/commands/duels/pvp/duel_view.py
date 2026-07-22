@@ -12,10 +12,12 @@ from src.db import (
 from src.utils.combat_progression import (
     calc_duel_xp, calc_defend_heal, format_progress_bar, format_hp_bar,
     get_combat_rank, get_combat_rank_emoji, generate_loot, calc_attack_damage,
-    can_proc, mark_proc, format_username_with_prestige,
+    can_proc, mark_proc,
     CHALLENGE_TIMEOUT_SECONDS, TURN_TIMEOUT_SECONDS,
     DROP_RATE_WINNER, DROP_RATE_LOSER, format_currency
 )
+from src.utils.prestige_config import format_username_with_prestige
+
 
 from src.utils.combat_config import SKILLS_CONFIG
 from src.commands.duels.pvp.pvp_combatant import Combatant
