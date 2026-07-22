@@ -116,8 +116,10 @@ async def load_cogs():
         'hacker.py', 'chef.py', 'artista.py', 'mecanico.py', 'minero.py', 'pescador.py',  # Módulos auxiliares de minijuegos
         'medico.py', 'piloto.py', 'cientifico.py', 'ladron.py', 'cazarrecompensas.py',
         'niveles_trabajo.py', 'job_fx.py',  # Sistema de niveles y efectos auxiliares
-        'black_market_items.py'  # Módulos de datos, no cogs
+        'black_market_items.py',  # Módulos de datos, no cogs
+        'comprar_mejora.py', 'casino_info.py'  # Cogs obsoletos unificados en blackmarket y casino_hub
     }
+
     
     # Primero, intentar cargar todos los paquetes de categorías directamente
     category_dirs = [
