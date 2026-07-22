@@ -8,16 +8,17 @@ from src.db import (
     get_combat_stats, update_user_class_and_subclass,
     get_user_equipment, get_combat_wallet, add_combat_currency,
     get_gem_catalog, get_consumable_catalog, get_user_consumables,
-    calc_base_stats, calc_equipment_bonus, get_effective_bonus,
     get_duel_leaderboard
 )
 from src.utils.combat_progression import (
+    calc_base_stats, calc_equipment_bonus, get_effective_bonus,
     get_duel_cooldown_minutes, format_hp_bar, format_progress_bar,
     get_combat_rank, get_combat_rank_emoji, calc_combat_xp_needed,
     format_stat_type, SLOT_EMOJIS,
     EQUIPMENT_SLOTS, MIN_BET, MAX_LEVEL_DIFFERENCE, CHALLENGE_TIMEOUT_SECONDS,
     SUBCLASS_UNLOCK_LEVEL, ULTIMATE_UNLOCK_LEVEL, format_currency
 )
+
 from src.utils.prestige_config import format_username_with_prestige
 
 
