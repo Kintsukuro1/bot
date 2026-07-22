@@ -13,10 +13,8 @@ class Slots(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="slots", description="Juega a las tragamonedas y prueba tu suerte.")
-    @app_commands.describe(apuesta="Cantidad a apostar")
-    @CASINO_COOLDOWN
     async def slots(self, interaction: discord.Interaction, apuesta: int):
+
         try:
             await interaction.response.defer()
             user_id = interaction.user.id

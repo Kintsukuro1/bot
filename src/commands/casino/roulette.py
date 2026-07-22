@@ -213,9 +213,8 @@ class Roulette(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="roulette", description="Juega a la Ruleta Europea.")
-    @app_commands.describe(apuesta="Cantidad de monedas a apostar")
     async def roulette(self, interaction: discord.Interaction, apuesta: int):
+
         user_id = interaction.user.id
         user_name = interaction.user.name
 

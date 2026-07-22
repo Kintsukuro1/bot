@@ -392,13 +392,7 @@ class BancoCog(commands.Cog):
     # COMANDO /banco_depositar
     # ──────────────────────────────────────────────
 
-    @app_commands.command(
-        name="banco_depositar",
-        description="Deposita monedas de tu cartera en tu cuenta bancaria protegida contra robos."
-    )
-    @app_commands.describe(monto="Cantidad de monedas a depositar")
-    @ECONOMY_COOLDOWN
-    async def banco_depositar(self, interaction: discord.Interaction, monto: int):
+    async def depositar(self, interaction: discord.Interaction, monto: int):
         if monto <= 0:
             await interaction.response.send_message("❌ El monto a depositar debe ser mayor a 0.", ephemeral=True)
             return
@@ -422,17 +416,7 @@ class BancoCog(commands.Cog):
             
         await interaction.followup.send(embed=embed)
 
-    # ──────────────────────────────────────────────
-    # COMANDO /banco_retirar
-    # ──────────────────────────────────────────────
-
-    @app_commands.command(
-        name="banco_retirar",
-        description="Retira monedas de tu cuenta bancaria hacia tu cartera."
-    )
-    @app_commands.describe(monto="Cantidad de monedas a retirar")
-    @ECONOMY_COOLDOWN
-    async def banco_retirar(self, interaction: discord.Interaction, monto: int):
+    async def retirar(self, interaction: discord.Interaction, monto: int):
         if monto <= 0:
             await interaction.response.send_message("❌ El monto a retirar debe ser mayor a 0.", ephemeral=True)
             return
@@ -455,6 +439,7 @@ class BancoCog(commands.Cog):
             embed.add_field(name="🔒 Saldo en Banco", value=f"`{new_bank:,}` monedas", inline=True)
             
         await interaction.followup.send(embed=embed)
+
 
     # ──────────────────────────────────────────────
     # COMANDO /proteccion

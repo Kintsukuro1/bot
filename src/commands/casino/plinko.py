@@ -260,8 +260,7 @@ class PlinkoCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="plinko", description="Juega al clásico Plinko con multiplicadores variables.")
-    async def plinko_cmd(self, interaction: discord.Interaction):
+    async def plinko(self, interaction: discord.Interaction, apuesta: int = 100):
         user_id = interaction.user.id
         can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
         if not can_play:
@@ -269,12 +268,17 @@ class PlinkoCog(commands.Cog):
             return
 
         view = PlinkoView(user_id)
+        view.apuesta = apuesta
         embed = discord.Embed(
             title="🎯 Plinko",
-            description="Haz clic en Configurar Apuesta para empezar.",
+            description=f"💰 Apuesta configurada: **{apuesta}** monedas.\nHaz clic en Configurar Apuesta para cambiarla o Soltar Bola para jugar.",
             color=discord.Color.blue()
         )
-        await interaction.response.send_message(embed=embed, view=view)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view)
+
 
 async def setup(bot):
     await bot.add_cog(PlinkoCog(bot))

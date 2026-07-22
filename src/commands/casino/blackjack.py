@@ -273,10 +273,8 @@ class Blackjack(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="blackjack", description="Juega una partida de blackjack contra la casa")
-    @app_commands.describe(apuesta="Cantidad de monedas a apostar")
-    @CASINO_COOLDOWN
     async def blackjack(self, interaction: discord.Interaction, apuesta: int):
+
         await interaction.response.defer()
         user_id = interaction.user.id
         user_name = interaction.user.name

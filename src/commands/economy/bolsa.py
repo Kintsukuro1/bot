@@ -265,24 +265,8 @@ class BolsaCog(commands.Cog):
         embed.set_footer(text="Impuesto por transacción: 1.5% · Usa /bolsa_comprar y /bolsa_vender para operar.")
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(
-        name="bolsa_comprar",
-        description="Compra unidades de un activo financiero especificando el dinero a gastar."
-    )
-    @app_commands.describe(
-        activo="Activo financiero a comprar",
-        monto="Cantidad de monedas que deseas gastar en la compra"
-    )
-    @app_commands.choices(activo=[
-        app_commands.Choice(name="AgroUnión (agrounion)", value="agrounion"),
-        app_commands.Choice(name="BancoNova (banconova)", value="banconova"),
-        app_commands.Choice(name="TecnoCorp (tecnocorp)", value="tecnocorp"),
-        app_commands.Choice(name="ObsidianChain (obsidianchain)", value="obsidianchain"),
-        app_commands.Choice(name="ByteCoin (bytecoin)", value="bytecoin"),
-        app_commands.Choice(name="MoonToken (moontoken)", value="moontoken"),
-    ])
-    @ECONOMY_COOLDOWN
     async def bolsa_comprar(self, interaction: discord.Interaction, activo: str, monto: int):
+
         if monto <= 0:
             await interaction.response.send_message("❌ El monto a comprar debe ser mayor a 0.", ephemeral=True)
             return
@@ -395,24 +379,8 @@ class BolsaCog(commands.Cog):
         
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(
-        name="bolsa_vender",
-        description="Vende una cantidad específica de unidades de un activo al precio actual."
-    )
-    @app_commands.describe(
-        activo="Activo financiero a vender",
-        cantidad="Cantidad de unidades a vender (acepta decimales)"
-    )
-    @app_commands.choices(activo=[
-        app_commands.Choice(name="AgroUnión (agrounion)", value="agrounion"),
-        app_commands.Choice(name="BancoNova (banconova)", value="banconova"),
-        app_commands.Choice(name="TecnoCorp (tecnocorp)", value="tecnocorp"),
-        app_commands.Choice(name="ObsidianChain (obsidianchain)", value="obsidianchain"),
-        app_commands.Choice(name="ByteCoin (bytecoin)", value="bytecoin"),
-        app_commands.Choice(name="MoonToken (moontoken)", value="moontoken"),
-    ])
-    @ECONOMY_COOLDOWN
     async def bolsa_vender(self, interaction: discord.Interaction, activo: str, cantidad: float):
+
         if cantidad <= 0:
             await interaction.response.send_message("❌ La cantidad a vender debe ser mayor a 0.", ephemeral=True)
             return
@@ -528,11 +496,8 @@ class BolsaCog(commands.Cog):
         
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(
-        name="bolsa_portafolio",
-        description="Muestra el estado de tu portafolio de activos, costo promedio y ganancias no realizadas."
-    )
     async def bolsa_portafolio(self, interaction: discord.Interaction):
+
         await interaction.response.defer()
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
