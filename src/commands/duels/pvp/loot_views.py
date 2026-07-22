@@ -104,11 +104,48 @@ class GemShopView(discord.ui.View):
         self.catalog = catalog
         self.equipment = equipment
 
+class ConsumableShopSelect(discord.ui.Select):
+    def __init__(self, catalog: list):
+        options = []
+        for item in catalog:
+            options.append(
+                discord.SelectOption(
+                    label=f"{item['name']} ({item['price']} 🪙)",
+                    value=item['key'],
+                    description=item['description'][:100],
+                    emoji="🧪"
+                )
+            )
+        super().__init__(placeholder="Elige un consumible para comprar...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: ConsumableShopView = self.view
+        if interaction.user.id != view.user.id:
+            await interaction.response.send_message("❌ Esta tienda no es tuya.", ephemeral=True)
+            return
+
+        consumable_key = self.values[0]
+        selected_item = next((item for item in view.catalog if item['key'] == consumable_key), None)
+        if not selected_item:
+            await interaction.response.send_message("❌ Objeto no encontrado.", ephemeral=True)
+            return
+
+        from src.db import buy_consumable
+        success, msg = await asyncio.to_thread(buy_consumable, interaction.user.id, consumable_key, 1)
+
+        if success:
+            await interaction.response.send_message(f"✅ ¡Compra realizada!\n{msg}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ {msg}", ephemeral=True)
+
 class ConsumableShopView(discord.ui.View):
     def __init__(self, user: discord.Member, catalog: list):
         super().__init__(timeout=120)
         self.user = user
         self.catalog = catalog
+        if catalog:
+            self.add_item(ConsumableShopSelect(catalog))
+
 
 class ClassSelectionView(discord.ui.View):
     def __init__(self, user: discord.Member, current_class: str | None):
