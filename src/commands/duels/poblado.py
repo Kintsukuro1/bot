@@ -45,6 +45,141 @@ BUILDINGS_INFO = {
     }
 }
 
+def create_poblado_display(guild_name: str, p_data: dict, buildings: dict):
+    proyecto_activo = p_data.get("proyecto_activo", "Herrería de Combate")
+
+    embed = discord.Embed(
+        title=f"🏘️ Poblado Comunitario — {guild_name}",
+        description="¡Unidos para progresar! Todos los miembros aportan jugando Raids y Aventuras.",
+        color=discord.Color.gold()
+    )
+    embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3209/3209995.png")
+
+    recursos_txt = (
+        f"🌲 **Madera Ancestral:** {p_data.get('madera', 0):,}\n"
+        f"🌋 **Piedra Ígnea:** {p_data.get('piedra', 0):,}\n"
+        f"🔮 **Cristal de Sombras:** {p_data.get('cristal', 0):,}\n"
+        f"☀️ **Lingote Solar:** {p_data.get('solar', 0):,}"
+    )
+    embed.add_field(name="📦 Arca de Recursos del Servidor", value=recursos_txt, inline=True)
+
+    puntos_sem = p_data.get("puntos_semanales", 0)
+    if puntos_sem >= 2000:
+        hitos_txt = f"`[██████████]` {puntos_sem:,}/2,000 pts 🥇 **¡HITO ORO ALCANZADO! (+35% XP / +25% Bronce)**"
+    elif puntos_sem >= 800:
+        hitos_txt = f"`[{format_progress_bar(puntos_sem, 2000)}]` {puntos_sem:,}/2,000 pts 🥈 **HITO PLATA ALCANZADO (+20% XP)**"
+    elif puntos_sem >= 300:
+        hitos_txt = f"`[{format_progress_bar(puntos_sem, 800)}]` {puntos_sem:,}/800 pts 🥉 **HITO BRONCE ALCANZADO (+10% XP)**"
+    else:
+        bar = format_progress_bar(puntos_sem, 300)
+        hitos_txt = f"`[{bar}]` {puntos_sem:,}/300 pts (Próximo: 🥉 Hito Bronce)"
+
+    embed.add_field(name="🎯 Hito Semanal de Servidor", value=hitos_txt, inline=False)
+
+    edificios_txt = ""
+    for name, info in BUILDINGS_INFO.items():
+        lvl = buildings.get(name, 1)
+        lvl_tag = f"⭐ Nvl {lvl}/5" if lvl < 5 else "🌟 **NVL MÁXIMO**"
+        is_active = " 🛠️ *(En obra)*" if name == proyecto_activo and lvl < 5 else ""
+        edificios_txt += f"{info['emoji']} **{name}** ({lvl_tag}){is_active}\n↳ *{info['desc']}*\n"
+
+    embed.add_field(name="🏛️ Edificios del Pueblo", value=edificios_txt, inline=False)
+    embed.set_footer(text="Interactúa con los botones de abajo para donar recursos, orar o consultar el ranking.")
+    return embed
+
+class DonarRecursosModal(discord.ui.Modal, title="Donar Recursos al Poblado"):
+    madera = discord.ui.TextInput(label="🌲 Madera Ancestral", placeholder="Cantidad a donar (Ej: 10)", required=False, default="0")
+    piedra = discord.ui.TextInput(label="🌋 Piedra Ígnea", placeholder="Cantidad a donar (Ej: 10)", required=False, default="0")
+    cristal = discord.ui.TextInput(label="🔮 Cristal de Sombras", placeholder="Cantidad a donar (Ej: 5)", required=False, default="0")
+    solar = discord.ui.TextInput(label="☀️ Lingote Solar", placeholder="Cantidad a donar (Ej: 2)", required=False, default="0")
+
+    def __init__(self, guild_id: int):
+        super().__init__()
+        self.guild_id = guild_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            m = max(0, int(self.madera.value or 0))
+            p = max(0, int(self.piedra.value or 0))
+            c = max(0, int(self.cristal.value or 0))
+            s = max(0, int(self.solar.value or 0))
+        except ValueError:
+            await interaction.response.send_message("❌ Ingresa números enteros válidos.", ephemeral=True)
+            return
+
+        total_mats = m + p + c + s
+        if total_mats <= 0:
+            await interaction.response.send_message("❌ Ingresa al menos 1 material a donar.", ephemeral=True)
+            return
+
+        puntos = total_mats * 10
+        await asyncio.to_thread(add_poblado_resources, self.guild_id, m, p, c, s, puntos)
+        await asyncio.to_thread(record_poblado_contribution, self.guild_id, interaction.user.id, puntos, total_mats)
+
+        embed = discord.Embed(
+            title="📦 Donación Registrada",
+            description=f"¡Gracias por tu aporte al Poblado! Has donado **{total_mats:,}** materiales (+{puntos:,} pts semanales).",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class PobladoView(discord.ui.View):
+    def __init__(self, guild_id: int, user: discord.Member):
+        super().__init__(timeout=180)
+        self.guild_id = guild_id
+        self.user = user
+
+    @discord.ui.button(label="✨ Oración Diaria", style=discord.ButtonStyle.success, row=0)
+    async def pray_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        def _pray():
+            lvl = get_building_level(self.guild_id, "Templo del Alba")
+            if lvl < 1:
+                return False, "El servidor aún no ha construido el **Templo del Alba**."
+
+            pets = get_user_pets(interaction.user.id)
+            if not pets:
+                return False, "No tienes ninguna mascota para recibir la bendición."
+
+            with db_cursor() as c:
+                c.execute("UPDATE UserPets SET Loyalty = 100 WHERE UserID = %s AND Status = 'Activo'", (interaction.user.id,))
+                return True, f"✨ ¡Has realizado tu oración diaria en el **Templo del Alba** (Nvl {lvl})! La lealtad de tus mascotas fue restaurada al **100%** y obtienes **+5% HP** para tu próxima expedición."
+
+        success, msg = await asyncio.to_thread(_pray)
+        if success:
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+
+    @discord.ui.button(label="📦 Donar Recursos", style=discord.ButtonStyle.primary, row=0)
+    async def donate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DonarRecursosModal(self.guild_id))
+
+    @discord.ui.button(label="🏆 Top Contribuidores", style=discord.ButtonStyle.secondary, row=0)
+    async def top_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        rows = await asyncio.to_thread(get_poblado_leaderboard, self.guild_id, 10)
+
+        embed = discord.Embed(
+            title=f"🏆 Mayores Contribuidores — Poblado del Servidor",
+            color=discord.Color.gold()
+        )
+
+        if not rows:
+            embed.description = "Aún no hay contribuciones registradas en este servidor."
+        else:
+            lines = []
+            medals = ["🥇", "🥈", "🥉"]
+            for i, r in enumerate(rows):
+                user_id, pts, mat = r
+                medal = medals[i] if i < 3 else f"`{i+1}.`"
+                member = interaction.guild.get_member(user_id)
+                name = member.display_name if member else f"Usuario {user_id}"
+                lines.append(f"{medal} **{name}** — **{pts:,}** Puntos ({mat:,} donados)")
+            embed.description = "\n".join(lines)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
 class Poblado(commands.Cog):
     """Cog para la gestión del Poblado Comunitario por Servidor."""
 
@@ -66,52 +201,11 @@ class Poblado(commands.Cog):
 
         p_data, buildings = await asyncio.to_thread(_fetch_data)
 
-        proyecto_activo = p_data.get("proyecto_activo", "Herrería de Combate")
-        current_lvl = buildings.get(proyecto_activo, 1)
+        embed = create_poblado_display(interaction.guild.name, p_data, buildings)
+        view = PobladoView(interaction.guild_id, interaction.user)
 
-        embed = discord.Embed(
-            title=f"🏘️ Poblado Comunitario — {interaction.guild.name}",
-            description=f"¡Unidos para progresar! Todos los miembros aportan jugando Raids y Aventuras.",
-            color=discord.Color.gold()
-        )
-        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3209/3209995.png")
+        await interaction.followup.send(embed=embed, view=view)
 
-        # Arca de Recursos
-        recursos_txt = (
-            f"🌲 **Madera Ancestral:** {p_data.get('madera', 0):,}\n"
-            f"🌋 **Piedra Ígnea:** {p_data.get('piedra', 0):,}\n"
-            f"🔮 **Cristal de Sombras:** {p_data.get('cristal', 0):,}\n"
-            f"☀️ **Lingote Solar:** {p_data.get('solar', 0):,}"
-        )
-        embed.add_field(name="📦 Arca de Recursos del Servidor", value=recursos_txt, inline=True)
-
-        # Hito Semanal
-        puntos_sem = p_data.get("puntos_semanales", 0)
-        hitos_txt = ""
-        if puntos_sem >= 2000:
-            hitos_txt = f"`[██████████]` {puntos_sem:,}/2,000 pts 🥇 **¡HITO ORO ALCANZADO! (+35% XP / +25% Bronce)**"
-        elif puntos_sem >= 800:
-            hitos_txt = f"`[{format_progress_bar(puntos_sem, 2000)}]` {puntos_sem:,}/2,000 pts 🥈 **HITO PLATA ALCANZADO (+20% XP)**"
-        elif puntos_sem >= 300:
-            hitos_txt = f"`[{format_progress_bar(puntos_sem, 800)}]` {puntos_sem:,}/800 pts 🥉 **HITO BRONCE ALCANZADO (+10% XP)**"
-        else:
-            bar = format_progress_bar(puntos_sem, 300)
-            hitos_txt = f"`[{bar}]` {puntos_sem:,}/300 pts (Próximo: 🥉 Hito Bronce)"
-
-        embed.add_field(name="🎯 Hito Semanal de Servidor", value=hitos_txt, inline=False)
-
-        # Edificios
-        edificios_txt = ""
-        for name, info in BUILDINGS_INFO.items():
-            lvl = buildings.get(name, 1)
-            lvl_tag = f"⭐ Nvl {lvl}/5" if lvl < 5 else "🌟 **NVL MÁXIMO**"
-            is_active = " 🛠️ *(En obra)*" if name == proyecto_activo and lvl < 5 else ""
-            edificios_txt += f"{info['emoji']} **{name}** ({lvl_tag}){is_active}\n↳ *{info['desc']}*\n"
-
-        embed.add_field(name="🏛️ Edificios del Pueblo", value=edificios_txt, inline=False)
-        embed.set_footer(text="Usa /poblado_construir para cambiar el proyecto. Usa /oracion para recibir la bendición diaria.")
-
-        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="poblado_construir", description="[ADMIN] Establece qué edificio construir o mejorar a continuación.")
     @app_commands.describe(edificio="Nombre del edificio a priorizar")

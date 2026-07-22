@@ -71,14 +71,21 @@ class RaidHubView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True)
-        p_data = await asyncio.to_thread(get_guild_poblado, interaction.guild_id)
+        from src.db import get_guild_buildings
+        from src.commands.duels.poblado import create_poblado_display, PobladoView
 
-        embed = discord.Embed(
-            title=f"🏘️ Poblado Comunitario — {interaction.guild.name}",
-            description=f"Proyecto Activo: **{p_data.get('proyecto_activo', 'Ninguno')}**\nPuntos Semanales: **{p_data.get('puntos_semanales', 0):,}**",
-            color=discord.Color.gold()
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        def _fetch_poblado():
+            p_data = get_guild_poblado(interaction.guild_id)
+            buildings = get_guild_buildings(interaction.guild_id)
+            return p_data, buildings
+
+        p_data, buildings = await asyncio.to_thread(_fetch_poblado)
+
+        embed = create_poblado_display(interaction.guild.name, p_data, buildings)
+        view = PobladoView(interaction.guild_id, interaction.user)
+
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
 
     @discord.ui.button(label="🛒 Tienda PvE", style=discord.ButtonStyle.secondary, row=1)
     async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
