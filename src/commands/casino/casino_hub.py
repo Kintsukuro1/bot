@@ -241,6 +241,96 @@ class CasinoGamesSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
+class RobarBandaModal(discord.ui.Modal):
+    """Modal para realizar un robo en banda especificando Cómplice y Víctima."""
+    def __init__(self, cog):
+        super().__init__(title="👥 Robo en Banda (Golpe Conjunto)")
+        self.cog = cog
+
+        self.complice_input = discord.ui.TextInput(
+            label="ID o Nombre del Cómplice",
+            placeholder="Ingresa la ID del compañero...",
+            min_length=3,
+            max_length=30,
+            required=True
+        )
+        self.target_input = discord.ui.TextInput(
+            label="ID o Nombre de la Víctima",
+            placeholder="Ingresa la ID de la víctima...",
+            min_length=3,
+            max_length=30,
+            required=True
+        )
+        self.add_item(self.complice_input)
+        self.add_item(self.target_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        c_str = self.complice_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+        t_str = self.target_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+
+        if not c_str.isdigit() or not t_str.isdigit():
+            await interaction.response.send_message("❌ Ingresa IDs numéricas válidas para el cómplice y la víctima.", ephemeral=True)
+            return
+
+        c_id, t_id = int(c_str), int(t_str)
+        c_user = interaction.guild.get_member(c_id) if interaction.guild else None
+        t_user = interaction.guild.get_member(t_id) if interaction.guild else None
+
+        if not c_user or not t_user:
+            await interaction.response.send_message("❌ No se encontró a uno de los usuarios en el servidor.", ephemeral=True)
+            return
+
+        robar_cog = self.cog.bot.get_cog("Robar")
+        if robar_cog:
+            await robar_cog.robar_banda_slash(interaction, c_user, t_user)
+        else:
+            await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
+
+
+class RobarSelectionView(discord.ui.View):
+    """Vista con los 3 tipos de robo: Individual, En Banda y Banco Central."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=60)
+        self.user = user
+        self.cog = cog
+
+    @discord.ui.button(label="👤 Robo Individual", style=discord.ButtonStyle.danger, emoji="🗡️")
+    async def rob_individual(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.send_modal(RobarModal(self.cog))
+
+    @discord.ui.button(label="👥 Robo en Banda", style=discord.ButtonStyle.primary, emoji="🥷")
+    async def rob_banda(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await interaction.response.send_modal(RobarBandaModal(self.cog))
+
+    @discord.ui.button(label="🏦 Robo al Banco Central", style=discord.ButtonStyle.secondary, emoji="💰")
+    async def rob_banco(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        robar_cog = self.cog.bot.get_cog("Robar")
+        if robar_cog and hasattr(robar_cog, "robar_banco_slash"):
+            await robar_cog.robar_banco_slash(interaction, None)
+        else:
+            await interaction.response.send_message("❌ Módulo de robo al banco no disponible.", ephemeral=True)
+
+    @discord.ui.button(label="📊 Perfil de Ladrón", style=discord.ButtonStyle.secondary, emoji="📋")
+    async def rob_perfil(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        robar_cog = self.cog.bot.get_cog("Robar")
+        if robar_cog:
+            await robar_cog.perfil_ladron_cmd(interaction)
+        else:
+            await interaction.response.send_message("❌ Módulo de perfil de ladrón no disponible.", ephemeral=True)
+
+
 class CasinoHubView(discord.ui.View):
     """Vista del Panel Hub Efímero del Casino y Economía."""
 
@@ -269,7 +359,14 @@ class CasinoHubView(discord.ui.View):
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(RobarModal(self.cog))
+        view = RobarSelectionView(self.user, self.cog)
+        embed = discord.Embed(
+            title="🥷 Sub-sistema de Robos & Asaltos",
+            description="Selecciona qué tipo de operativo criminal deseas realizar:",
+            color=discord.Color.dark_red()
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
     @discord.ui.button(label="🏦 Banco", style=discord.ButtonStyle.primary, row=0)
     async def bank_button(self, interaction: discord.Interaction, button: discord.ui.Button):
