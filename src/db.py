@@ -3526,7 +3526,25 @@ def ensure_consumables_catalog_seeded(cursor=None):
         with db_cursor() as c:
             _run(c)
 
+def get_user_combat_level(user_id: int) -> int:
+    """Obtiene el nivel de combate del usuario."""
+    stats = get_combat_stats(user_id)
+    return stats.get('level', 1)
+
+def get_user_pets(user_id: int):
+    """Obtiene todas las mascotas registradas del usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT up.*, pc.Name as name, pc.Emoji as emoji, pc.Rarity as rarity, pc.FlavorText as flavor_text
+            FROM UserPets up
+            JOIN PetsCatalog pc ON up.PetID = pc.PetID
+            WHERE up.UserID = %s AND up.Status != 'Escapó'
+        """, (user_id,))
+        columns = [desc[0] for desc in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
 def get_consumable_catalog():
+
     """Retorna los consumibles disponibles en el catálogo."""
     ensure_consumables_catalog_seeded()
     with db_cursor() as cursor:

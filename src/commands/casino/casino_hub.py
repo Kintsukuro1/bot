@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import logging
-from src.db import get_balance, format_currency, db_cursor, get_user_pets
+from src.db import get_balance, db_cursor, get_user_pets
+from src.utils.combat_progression import format_currency
+
 
 logger = logging.getLogger(__name__)
 
