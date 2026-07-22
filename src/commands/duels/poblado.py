@@ -45,6 +45,9 @@ BUILDINGS_INFO = {
     }
 }
 
+from datetime import datetime
+
+
 def create_poblado_display(guild_name: str, p_data: dict, buildings: dict):
     proyecto_activo = p_data.get("proyecto_activo", "Herrería de Combate")
 
@@ -78,13 +81,31 @@ def create_poblado_display(guild_name: str, p_data: dict, buildings: dict):
 
     edificios_txt = ""
     for name, info in BUILDINGS_INFO.items():
-        lvl = buildings.get(name, 1)
-        lvl_tag = f"⭐ Nvl {lvl}/5" if lvl < 5 else "🌟 **NVL MÁXIMO**"
-        is_active = " 🛠️ *(En obra)*" if name == proyecto_activo and lvl < 5 else ""
-        edificios_txt += f"{info['emoji']} **{name}** ({lvl_tag}){is_active}\n↳ *{info['desc']}*\n"
+        b_info = buildings.get(name, {})
+        if isinstance(b_info, dict):
+            lvl = b_info.get("nivel", 0)
+            fin_const = b_info.get("fin_construccion")
+        else:
+            lvl = b_info if isinstance(b_info, int) else 0
+            fin_const = None
+
+        if fin_const and isinstance(fin_const, datetime) and fin_const > datetime.now():
+            rem = fin_const - datetime.now()
+            hours = rem.seconds // 3600
+            mins = (rem.seconds % 3600) // 60
+            lvl_tag = f"🛠️ **EN OBRAS** (Habilitando Nvl {lvl + 1} en {hours}h {mins}m)"
+        elif lvl == 0:
+            lvl_tag = "🔒 **Sin Construir (Nvl 0/5)**"
+        elif lvl >= 5:
+            lvl_tag = "🌟 **NVL MÁXIMO (5/5)**"
+        else:
+            lvl_tag = f"⭐ **Nvl {lvl}/5**"
+
+        is_active = " 🛠️ *(Proyecto Activo)*" if name == proyecto_activo and lvl < 5 else ""
+        edificios_txt += f"{info['emoji']} **{name}** — {lvl_tag}{is_active}\n↳ *{info['desc']}*\n"
 
     embed.add_field(name="🏛️ Edificios del Pueblo", value=edificios_txt, inline=False)
-    embed.set_footer(text="Interactúa con los botones de abajo para donar recursos, orar o consultar el ranking.")
+    embed.set_footer(text="Los edificios inician en Nivel 0 y tardan 4h de obra en construirse/subir de nivel.")
     return embed
 
 class DonarRecursosModal(discord.ui.Modal, title="Donar Recursos al Poblado"):
@@ -135,7 +156,7 @@ class PobladoView(discord.ui.View):
         def _pray():
             lvl = get_building_level(self.guild_id, "Templo del Alba")
             if lvl < 1:
-                return False, "El servidor aún no ha construido el **Templo del Alba**."
+                return False, "El servidor aún no ha construido el **Templo del Alba** (Nivel 0 - Sin Construir)."
 
             pets = get_user_pets(interaction.user.id)
             if not pets:
@@ -151,11 +172,24 @@ class PobladoView(discord.ui.View):
         else:
             await interaction.followup.send(f"❌ {msg}", ephemeral=True)
 
+    @discord.ui.button(label="🔨 Iniciar Obra (4h)", style=discord.ButtonStyle.primary, row=0)
+    async def build_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        from src.db import start_building_construction, get_guild_poblado
+        p_data = await asyncio.to_thread(get_guild_poblado, self.guild_id)
+        proyecto_activo = p_data.get("proyecto_activo", "Herrería de Combate")
+
+        success, msg = await asyncio.to_thread(start_building_construction, self.guild_id, proyecto_activo)
+        if success:
+            await interaction.followup.send(f"✅ {msg}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+
     @discord.ui.button(label="📦 Donar Recursos", style=discord.ButtonStyle.primary, row=0)
     async def donate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(DonarRecursosModal(self.guild_id))
 
-    @discord.ui.button(label="🏆 Top Contribuidores", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🏆 Ranking Contribuidores", style=discord.ButtonStyle.secondary, row=0)
     async def top_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         rows = await asyncio.to_thread(get_poblado_leaderboard, self.guild_id, 10)
@@ -179,6 +213,7 @@ class PobladoView(discord.ui.View):
             embed.description = "\n".join(lines)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 class Poblado(commands.Cog):
     """Cog para la gestión del Poblado Comunitario por Servidor."""
