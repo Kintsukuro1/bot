@@ -29,10 +29,11 @@ ASSET_EMOJIS = {
     "moontoken": "🌙"
 }
 
-def get_price_24h_ago(asset_key: str, default_price: float) -> float:
-    """Obtiene el precio más cercano a hace 24 horas desde el historial."""
+def get_price_historical_baseline(asset_key: str, default_price: float) -> tuple[float, str]:
+    """Obtiene el precio histórico de referencia (hace 24h, 1h o registro previo) y la etiqueta del periodo."""
     try:
         with db_cursor() as cursor:
+            # 1. Intentar precio hace 24 horas
             cursor.execute("""
                 SELECT Precio FROM MarketPriceHistory 
                 WHERE AssetKey = %s AND Timestamp <= NOW() - INTERVAL '24 hours'
@@ -41,10 +42,32 @@ def get_price_24h_ago(asset_key: str, default_price: float) -> float:
             """, (asset_key,))
             row = cursor.fetchone()
             if row:
-                return float(row[0])
+                return float(row[0]), "24h"
+
+            # 2. Intentar precio hace 1 hora
+            cursor.execute("""
+                SELECT Precio FROM MarketPriceHistory 
+                WHERE AssetKey = %s AND Timestamp <= NOW() - INTERVAL '1 hour'
+                ORDER BY Timestamp DESC 
+                LIMIT 1
+            """, (asset_key,))
+            row = cursor.fetchone()
+            if row:
+                return float(row[0]), "1h"
+
+            # 3. Intentar el registro histórico más antiguo registrado
+            cursor.execute("""
+                SELECT Precio FROM MarketPriceHistory 
+                WHERE AssetKey = %s
+                ORDER BY Timestamp ASC 
+                LIMIT 1
+            """, (asset_key,))
+            row = cursor.fetchone()
+            if row:
+                return float(row[0]), "reciente"
     except Exception as e:
         logger.error(f"[BolsaCog] Error obteniendo precio histórico para {asset_key}: {e}")
-    return default_price
+    return default_price, "inicial"
 
 class BolsaCog(commands.Cog):
     """Cog de Bolsa de Valores: compra/venta de activos, portafolio y simulación de precios."""
@@ -81,9 +104,9 @@ class BolsaCog(commands.Cog):
     async def before_market_tick_loop(self):
         await self.bot.wait_until_ready()
 
-    @tasks.loop(seconds=120)
+    @tasks.loop(seconds=30)
     async def market_persist_loop(self):
-        """Persiste los precios actuales en memoria a la DB cada 2 minutos."""
+        """Persiste los precios actuales en memoria a la DB cada 30 segundos."""
         try:
             await asyncio.to_thread(MarketService.persist_prices)
         except Exception as e:
@@ -92,6 +115,7 @@ class BolsaCog(commands.Cog):
     @market_persist_loop.before_loop
     async def before_market_persist_loop(self):
         await self.bot.wait_until_ready()
+
 
     @tasks.loop(time=time(hour=5, minute=0, second=0))
     async def market_dividend_loop(self):
@@ -204,26 +228,31 @@ class BolsaCog(commands.Cog):
         
         for key, data in MARKET_ASSETS.items():
             precio_actual = MarketService.get_price(key)
-            precio_24h = await asyncio.to_thread(get_price_24h_ago, key, data["precio_inicial"])
-            
+            precio_base, periodo_tag = await asyncio.to_thread(get_price_historical_baseline, key, data["precio_inicial"])
+
             # Calcular variación
             variacion = 0.0
-            if precio_24h > 0:
-                variacion = ((precio_actual - precio_24h) / precio_24h) * 100
-                
+            if precio_base > 0:
+                variacion = ((precio_actual - precio_base) / precio_base) * 100
+
             emoji = ASSET_EMOJIS.get(key, "📦")
             nombre = data["nombre"]
-            
+
             # Formatear la línea del activo
-            if variacion > 0:
-                var_str = f"📈 `+{variacion:.2f}%`"
+            if variacion > 5.0:
+                var_str = f"🚀 `+{variacion:.2f}%` ({periodo_tag})"
+            elif variacion > 0:
+                var_str = f"📈 `+{variacion:.2f}%` ({periodo_tag})"
+            elif variacion < -5.0:
+                var_str = f"💥 `{variacion:.2f}%` ({periodo_tag})"
             elif variacion < 0:
-                var_str = f"📉 `{variacion:.2f}%`"
+                var_str = f"📉 `{variacion:.2f}%` ({periodo_tag})"
             else:
-                var_str = f"🟰 `0.00%`"
-                
+                var_str = f"🟰 `0.00%` ({periodo_tag})"
+
             div_info = f" | Div: `{data['dividendo_pct']*100:.1f}%`" if data["dividendo_pct"] > 0 else ""
-            linea = f"{emoji} **{nombre}** (`{key.upper()}`)\n└ Price: `{precio_actual:,.2f}` monedas | Var: {var_str}{div_info}\n\n"
+            linea = f"{emoji} **{nombre}** (`{key.upper()}`)\n└ Precio: `{precio_actual:,.2f}` monedas | Var: {var_str}{div_info}\n\n"
+
             
             if data["categoria"] == "accion":
                 acciones_text += linea

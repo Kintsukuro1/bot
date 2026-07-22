@@ -6,17 +6,18 @@ from src.db import db_cursor
 logger = logging.getLogger(__name__)
 
 MARKET_ASSETS = {
-    "agrounion":     {"nombre": "AgroUnión",     "categoria": "accion", "precio_inicial": 100.0, "sigma_tick": 0.00038, "drift": 0.00001, "dividendo_pct": 0.008},
-    "banconova":     {"nombre": "BancoNova",     "categoria": "accion", "precio_inicial": 150.0, "sigma_tick": 0.00044, "drift": 0.00002, "dividendo_pct": 0.005},
-    "tecnocorp":     {"nombre": "TecnoCorp",     "categoria": "accion", "precio_inicial": 80.0,  "sigma_tick": 0.00054, "drift": 0.00003, "dividendo_pct": 0.003},
-    "obsidianchain": {"nombre": "ObsidianChain",  "categoria": "cripto", "precio_inicial": 50.0,  "sigma_tick": 0.00093, "drift": 0.0,      "dividendo_pct": 0.0},
-    "bytecoin":      {"nombre": "ByteCoin",      "categoria": "cripto", "precio_inicial": 200.0, "sigma_tick": 0.00132, "drift": 0.00001, "dividendo_pct": 0.0},
-    "moontoken":     {"nombre": "MoonToken",     "categoria": "cripto", "precio_inicial": 10.0,  "sigma_tick": 0.00186, "drift": -0.00004, "dividendo_pct": 0.0},
+    "agrounion":     {"nombre": "AgroUnión",     "categoria": "accion", "precio_inicial": 100.0, "sigma_tick": 0.0018, "drift": 0.00005, "dividendo_pct": 0.008},
+    "banconova":     {"nombre": "BancoNova",     "categoria": "accion", "precio_inicial": 150.0, "sigma_tick": 0.0022, "drift": 0.00006, "dividendo_pct": 0.005},
+    "tecnocorp":     {"nombre": "TecnoCorp",     "categoria": "accion", "precio_inicial": 80.0,  "sigma_tick": 0.0028, "drift": 0.00008, "dividendo_pct": 0.003},
+    "obsidianchain": {"nombre": "ObsidianChain",  "categoria": "cripto", "precio_inicial": 50.0,  "sigma_tick": 0.0055, "drift": 0.00002, "dividendo_pct": 0.0},
+    "bytecoin":      {"nombre": "ByteCoin",      "categoria": "cripto", "precio_inicial": 200.0, "sigma_tick": 0.0070, "drift": 0.00005, "dividendo_pct": 0.0},
+    "moontoken":     {"nombre": "MoonToken",     "categoria": "cripto", "precio_inicial": 10.0,  "sigma_tick": 0.0095, "drift": -0.00002, "dividendo_pct": 0.0},
 }
-PUMP_DUMP_CHANCE = 0.0005  # por tick, solo activos categoria "cripto"
-PUMP_DUMP_RANGE = (0.25, 0.40)  # magnitud del salto, dirección aleatoria
+PUMP_DUMP_CHANCE = 0.0025  # por tick, solo activos categoria "cripto" (~1 cada 30 min)
+PUMP_DUMP_RANGE = (0.20, 0.35)  # magnitud del salto, dirección aleatoria
 TICK_SECONDS = 5
-PERSIST_EVERY_SECONDS = 120  # cada 2 minutos
+PERSIST_EVERY_SECONDS = 30  # cada 30 segundos
+
 
 class MarketService:
     _prices = {}  # {asset_key: precio_actual_float}, cargado desde DB al iniciar
