@@ -3,9 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import random
 import uuid
-import time
 import asyncio
-from src.db import get_balance, deduct_balance, add_balance, registrar_transaccion, save_multiplayer_game, get_multiplayer_game, delete_multiplayer_game
+from src.db import get_balance, save_multiplayer_game, delete_multiplayer_game
 from src.services.casino_service import CasinoService
 
 # Helpers para el motor
@@ -392,4 +391,3 @@ class LiarsDiceCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(LiarsDiceCog(bot))
-    print("Liar's Dice command loaded.")

@@ -4,7 +4,7 @@ from discord import app_commands
 import random
 import asyncio
 from typing import Optional, Dict, Any
-from src.db import get_balance, set_balance, ensure_user
+from src.db import get_balance, ensure_user
 from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
@@ -496,4 +496,3 @@ class HigherLower(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(HigherLower(bot))
-    print("HigherLower cog loaded successfully.")

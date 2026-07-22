@@ -1,14 +1,10 @@
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any
-import os
-import sys
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Importar configuración de base de datos
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.db import db_cursor, ensure_user
 
 class DynamicDifficulty:
@@ -182,7 +178,7 @@ class DynamicDifficulty:
             return new_difficulty, explanation
             
         except Exception as e:
-            print(f"Error calculando dificultad: {e}")
+            logger.error(f"Error calculando dificultad: {e}")
             return 0.0, "⚠️ Error calculando dificultad - Usando estándar"
     
     @staticmethod
@@ -213,7 +209,7 @@ class DynamicDifficulty:
             DynamicDifficulty._update_user_stats(user_id, result, bet_amount, winnings)
             
         except Exception as e:
-            print(f"Error registrando resultado: {e}")
+            logger.error(f"Error registrando resultado: {e}")
     
     @staticmethod
     def get_difficulty_stats(user_id: int) -> Dict[str, Any]:
@@ -285,7 +281,7 @@ class DynamicDifficulty:
                 return result[0] if result else 0
             
         except Exception as e:
-            print(f"Error obteniendo juegos recientes: {e}")
+            logger.error(f"Error obteniendo juegos recientes: {e}")
             return 0
     
     @staticmethod
@@ -314,7 +310,7 @@ class DynamicDifficulty:
                 
                 return 0.0
         except Exception as e:
-            print(f"Error calculando tendencia: {e}")
+            logger.error(f"Error calculando tendencia: {e}")
             return 0.0
     
     @staticmethod
@@ -441,6 +437,6 @@ class DynamicDifficulty:
                 return result[0] if result and result[0] is not None else 0
             
         except Exception as e:
-            print(f"Error obteniendo ganancias totales: {e}")
+            logger.error(f"Error obteniendo ganancias totales: {e}")
             return 0
 

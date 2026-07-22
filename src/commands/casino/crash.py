@@ -6,8 +6,7 @@ import asyncio
 import logging
 import math
 from src.db import (
-    get_balance, set_balance, deduct_balance, add_balance, ensure_user,
-    registrar_transaccion, record_game_result, usuario_tiene_item,
+    get_balance, ensure_user, usuario_tiene_item,
     usar_item_usuario, check_and_register_shield_use, usuario_tiene_mejora,
     get_provably_fair_seeds, advance_provably_fair_nonce
 )
@@ -628,4 +627,3 @@ class CrashView(discord.ui.View):
 
 async def setup(bot):
     await bot.add_cog(Crash(bot))
-    print("Crash cog loaded successfully.")

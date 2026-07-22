@@ -55,7 +55,7 @@ class Loto(commands.Cog):
             results = await LotteryService.draw_lottery()
             await self.announce_draw_results(results)
         except Exception as e:
-            raise
+            logger.error(f"Error en sorteo automático de lotería: {e}")
 
     @app_commands.command(name="loto", description="Muestra el pozo acumulado del loto del casino y tus boletos comprados hoy.")
     async def loto(self, interaction: discord.Interaction):
@@ -204,7 +204,6 @@ class Loto(commands.Cog):
             logger.error(f"Error en sorteo manual de loto: {e}")
             await interaction.followup.send(f"❌ Ocurrió un error al realizar el sorteo: {e}", ephemeral=True)
 
-            raise
     async def announce_draw_results(self, results: dict, manual_ctx=None):
         """Anuncia los resultados del sorteo en el canal de logs y en los canales públicos de los servidores."""
         if results.get('no_tickets', False):
@@ -222,7 +221,7 @@ class Loto(commands.Cog):
                 try:
                     logs_channel = await self.bot.fetch_channel(1519413696206737559)
                 except Exception:
-                    raise
+                    logs_channel = None
             if logs_channel:
                 await logs_channel.send(embed=embed)
             
@@ -284,16 +283,12 @@ class Loto(commands.Cog):
             try:
                 logs_channel = await self.bot.fetch_channel(1519413696206737559)
             except Exception:
-                pass
-        
-                raise
+                logs_channel = None
         if logs_channel:
             try:
                 await logs_channel.send(embed=embed)
             except Exception as e:
                 logger.error(f"Error enviando sorteo a canal de logs: {e}")
-            
-                raise
 
         # 1b. Enviar a canal específico de notificaciones con tags centralizado
         participants = results.get('participants', [])
@@ -316,7 +311,6 @@ class Loto(commands.Cog):
                 except Exception as e:
                     logger.error(f"Error enviando sorteo a canal publico {target_channel.name} en {guild.name}: {e}")
 
-                    raise
         # 3. Si se gatilló manualmente, responder
         if manual_ctx:
             if isinstance(manual_ctx, discord.Interaction):
@@ -326,4 +320,4 @@ class Loto(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Loto(bot))
-    logger.info("Cog Loto cargado exitosamente.")
+

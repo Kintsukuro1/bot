@@ -523,4 +523,3 @@ class Trabajo(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Trabajo(bot))
-    print("Trabajo system cog loaded successfully.")

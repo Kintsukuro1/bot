@@ -217,7 +217,7 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         
         try:
             await interaction.edit_original_response(embed=embed, view=view)
-        except:
+        except Exception:
             break
             
         await view.wait()
@@ -272,5 +272,5 @@ async def iniciar_trabajo_cientifico(interaction: discord.Interaction):
         
     try:
         await interaction.edit_original_response(embed=embed, view=view)
-    except:
+    except Exception:
         pass

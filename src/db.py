@@ -142,13 +142,6 @@ def get_connection():
     """
     return _connect_direct()
 
-def close_connection_pool():
-    """Cierra todas las conexiones del pool si fue inicializado."""
-    global _pool
-    if _pool is not None:
-        _pool.closeall()
-        _pool = None
-
 @contextmanager
 def db_cursor():
     """Context manager para obtener un cursor con commit/rollback automático."""
@@ -1652,7 +1645,7 @@ def init_db():
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS PetsCatalog (
                     PetID SERIAL PRIMARY KEY,
-                    Name VARCHAR(100) NOT NULL,
+                    Name VARCHAR(100) NOT NULL UNIQUE,
                     Rarity VARCHAR(20) NOT NULL,
                     Emoji VARCHAR(50) NOT NULL,
                     Family VARCHAR(50),
@@ -1670,6 +1663,75 @@ def init_db():
                     Enabled INT DEFAULT 1
                 )
             """)
+
+            # --- AUTO-SEEDING DE LAS 50 MASCOTAS ---
+            pets_seed_50 = [
+                ("Ratón de Casino", "Normal", "🐭", "Roedor", "Curioso", "proc_universal", 0.04, 0.14, 120, "any", "volume", "auto", 0, 0.20, "Se alimenta de las monedas caídas en las ranuras."),
+                ("Conejo de Cobre", "Normal", "🐰", "Mamífero", "Asustadizo", "multiplier", 1.02, 1.0, 0, "any", "hot_streak", "win_next_5", 1, 0.25, "Su pata de la suerte es más que un mito."),
+                ("Buitre del Fondo", "Normal", "🦅", "Ave", "Oportunista", "proc_derrota", 0.06, 0.20, 180, "any", "cold_streak", "pay", 300, 0.15, "Solo aparece cuando hueles a desesperación."),
+                ("Gato de la Fortuna", "Normal", "🐱", "Felino", "Tranquilo", "multiplier", 1.03, 1.0, 0, "trabajo", "volume", "auto", 0, 0.20, "Mueve su pata atrayendo moneditas y buena fortuna."),
+                ("Dron Chismoso", "Normal", "🛰️", "Tecnología", "Curioso", "proc_universal", 0.05, 0.10, 150, "robar", "volume", "auto", 0, 0.15, "Escanea saldos ajenos e informa de objetivos vulnerables."),
+                ("Escarabajo Neón", "Normal", "🪲", "Insecto", "Brillante", "proc_universal", 0.03, 0.15, 100, "any", "volume", "auto", 0, 0.20, "Genera Balance continuo con la energía estática del casino."),
+                ("Cuervo Transmisor", "Normal", "📡", "Tecnología", "Vigilante", "proc_universal", 0.04, 0.12, 130, "any", "volume", "auto", 0, 0.15, "Transmite alertas tempranas de movimientos sospechosos."),
+                ("Abeja Obrera", "Normal", "🐝", "Insecto", "Trabajador", "multiplier", 1.05, 1.0, 0, "trabajo", "volume", "auto", 0, 0.20, "Aumenta la producción en todos los oficios manuales."),
+                ("Pez Neón Flotante", "Normal", "🐠", "Marino", "Pacífico", "proc_universal", 0.04, 0.12, 140, "pesca", "volume", "auto", 0, 0.20, "Atrae especies de peces exóticos con su fulgor bioluminiscente."),
+                ("Mapache Reciclador", "Normal", "🦝", "Mamífero", "Ingenioso", "proc_derrota", 0.10, 0.10, 200, "mines", "cold_streak", "auto", 0, 0.20, "Rebusca entre los restos para rescatar fichas perdidas."),
+
+                ("Zorro de la Mesa Roja", "Rara", "🦊", "Mamífero", "Astuto", "proc_juego", 0.08, 0.15, 300, "coinflip", "specialized", "play_more", 3, 0.20, "Le encanta apostar a doble o nada."),
+                ("Tortuga del Tesoro", "Rara", "🐢", "Piedra", "Conservador", "multiplier_safe", 1.03, 1.0, 0, "any", "wealth", "pay", 1500, 0.10, "Camina lento, pero su caparazón está forrado de oro."),
+                ("Polilla de la Ruina", "Rara", "🦋", "Insecto", "Atraído por la luz", "proc_derrota", 0.10, 0.12, 500, "any", "cold_streak", "pay", 2000, 0.15, "Se alimenta del polvo de las billeteras vacías."),
+                ("Búho Místico", "Rara", "🦉", "Ave", "Sabio", "proc_universal", 0.07, 0.15, 400, "any", "volume", "auto", 0, 0.15, "Sus ojos ven a través del destino y disipan debuffs."),
+                ("Gólem de Obsidiana", "Rara", "🗿", "Piedra", "Resistente", "multiplier_safe", 1.04, 1.0, 0, "any", "wealth", "pay", 2500, 0.10, "Forjado en roca volcánica para absorber impactos y comisiones."),
+                ("Ciber-Gato 9000", "Rara", "🤖", "Tecnología", "Calculador", "proc_juego", 0.10, 0.12, 350, "slots", "specialized", "auto", 0, 0.15, "Filtra algoritmos de las tragaperras para dar procs frecuentes."),
+                ("Perro Biónico", "Rara", "🐕", "Tecnología", "Leal", "proc_universal", 0.06, 0.15, 300, "robar", "volume", "auto", 0, 0.15, "Guardián cibernético con sensor de presencia de ladrones."),
+                ("Cerdito Gourmet", "Rara", "🐷", "Mamífero", "Glotón", "multiplier", 1.04, 1.0, 0, "any", "volume", "auto", 0, 0.15, "Potencia los efectos nutritivos de los consumibles."),
+                ("Topo Minero", "Rara", "⛏️", "Roedor", "Trabajador", "proc_universal", 0.08, 0.12, 450, "mineria", "volume", "auto", 0, 0.15, "Excava túneles profundos en busca de gemas raras."),
+                ("Sombra Errante", "Rara", "👻", "Sombra", "Furtivo", "proc_universal", 0.09, 0.14, 500, "robar", "specialized", "auto", 0, 0.15, "Se desliza inadvertida durante los asaltos nocturnos."),
+                ("Murciélago Vampírico", "Rara", "🦇", "Mamífero", "Nocturno", "proc_universal", 0.08, 0.12, 400, "duelo", "volume", "auto", 0, 0.15, "Drena la energía del oponente en duelos de combate."),
+                ("Salamandra de Fuego", "Rara", "🔥", "Reptil", "Ferviente", "proc_universal", 0.07, 0.15, 380, "any", "volume", "auto", 0, 0.15, "Resiste las llamas de las pérdidas continuas."),
+                ("Medusa de Cristal", "Rara", "🪼", "Marino", "Reflejante", "proc_derrota", 0.12, 0.10, 600, "robar", "cold_streak", "auto", 0, 0.15, "Refleja los intentos de asalto con su veneno paralizante."),
+                ("Panda Sabio", "Rara", "🐼", "Mamífero", "Pacífico", "multiplier_safe", 1.05, 1.0, 0, "any", "wealth", "auto", 0, 0.10, "Equilibra el chi financiero reduciendo multas bancarias."),
+                ("Camaleón Ilusorio", "Rara", "🦎", "Reptil", "Evasivo", "proc_universal", 0.08, 0.14, 420, "any", "volume", "auto", 0, 0.15, "Se mimetiza con el saldo para engañar a los estafadores."),
+
+                ("Lobo del Streak", "Épica", "🐺", "Lobo", "Depredador", "multiplier_scaling", 1.01, 1.0, 0, "any", "hot_streak", "keep_streak_or_pay", 4000, 0.18, "Un cazador implacable que huele la victoria."),
+                ("Ballena Dorada", "Épica", "🐳", "Marino", "Codicioso", "proc_high_roller", 0.12, 0.12, 1500, "any", "wealth", "pay", 7500, 0.20, "Nada en mares de opulencia. Exige grandes apuestas."),
+                ("Cuervo del Pacto", "Épica", "🐦‍⬛", "Ave", "Oscuro", "proc_universal", 0.09, 0.14, 900, "any", "ritual", "sacrifice", 0, 0.40, "Un trato en las sombras. No te quedes sin dinero..."),
+                ("Grifo de Tormenta", "Épica", "🦅", "Ave", "Imponente", "proc_universal", 0.11, 0.12, 1000, "raid", "volume", "auto", 0, 0.20, "Desata ráfagas de viento que aceleran el trabajo y aturden a los jefes."),
+                ("Basilisco de Esmeralda", "Épica", "🐍", "Reptil", "Venenoso", "proc_derrota", 0.15, 0.10, 1200, "any", "cold_streak", "pay", 5000, 0.20, "Sombra petrificante que reduce el impacto de las pérdidas."),
+                ("Mantícora de Sombras", "Épica", "🦂", "Sombra", "Agresivo", "proc_high_roller", 0.14, 0.10, 1300, "robar", "specialized", "pay", 6000, 0.20, "Afecta a sus presas con un veneno corrosivo e implacable."),
+                ("Pegaso Rúnico", "Épica", "🐴", "Mítico", "Ágil", "multiplier", 1.08, 1.0, 0, "any", "hot_streak", "auto", 0, 0.15, "Galopa por los cielos recortando cooldowns de robos y batallas."),
+                ("Pulpo Subterráneo", "Épica", "🐙", "Marino", "Astuto", "proc_juego", 0.14, 0.10, 1100, "crash", "specialized", "auto", 0, 0.20, "Especialista en hackear operaciones de bolsa y casino."),
+                ("Búho Erudito", "Épica", "📜", "Ave", "Erudito", "multiplier", 1.10, 1.0, 0, "trabajo", "volume", "auto", 0, 0.15, "Guarda compendios de conocimiento que aceleran el nivel de oficio."),
+                ("Espectro Codicioso", "Épica", "👹", "Sombra", "Desalmado", "proc_universal", 0.12, 0.12, 1400, "robar", "specialized", "auto", 0, 0.25, "Extrae fragmentos de fortuna adicional en cada atraco."),
+                ("Íncubo de Furia", "Épica", "😈", "Furia", "Indomable", "proc_juego_y_mult", 0.15, 0.10, 1250, "blackjack", "specialized", "auto", 0, 0.20, "Alimenta su fuego interno con la tensión de las grandes apuestas."),
+                ("Axolote Astral", "Épica", "🦎", "Mítico", "Místico", "proc_universal", 0.10, 0.15, 1150, "any", "volume", "auto", 0, 0.15, "Ser místico capaz de sanar la lealtad y vida de aliados."),
+
+                ("Dragón del Jackpot", "Legendaria", "🐉", "Furia", "Orgulloso", "proc_juego_y_mult", 0.18, 0.10, 3000, "slots", "specialized", "pay", 15000, 0.15, "Custodia las máquinas tragamonedas más calientes."),
+                ("Tiburón del Abismo", "Legendaria", "🦈", "Marino", "Agresivo", "proc_high_roller", 0.20, 0.08, 4000, "any", "volume", "pay", 12000, 0.25, "Huele el miedo y la codicia. Solo respeta a los arriesgados."),
+                ("Quimera Oscura", "Legendaria", "🦁", "Sombra", "Furtivo", "proc_universal", 0.15, 0.10, 3500, "robar", "specialized", "pay", 14000, 0.20, "Acecha en la penumbra para garantizar golpes limpios."),
+                ("Kirin del Firmamento", "Legendaria", "🦄", "Mítico", "Noble", "multiplier", 1.12, 1.0, 0, "any", "hot_streak", "pay", 16000, 0.10, "Bestia sagrada que restaura la lealtad de la party y otorga bendición."),
+                ("Behemoth de Piedra", "Legendaria", "🦣", "Piedra", "Colosal", "multiplier_safe", 1.10, 1.0, 0, "any", "wealth", "pay", 18000, 0.10, "Coloso legendario que protege grandes fortunas ante asaltos."),
+                ("Kraken del Abismo", "Legendaria", "🦑", "Marino", "Monstruoso", "proc_juego", 0.22, 0.08, 4500, "crash", "specialized", "pay", 17000, 0.20, "Gigante de las profundidades que atrapa grandes multiplicadores."),
+                ("Cerbero del Infierno", "Legendaria", "🐕‍🦺", "Furia", "Feroz", "proc_universal", 0.18, 0.10, 3800, "robar", "specialized", "pay", 15500, 0.20, "Tres cabezas que velan por tu saldo e imponen quemadura en Raids."),
+                ("Zorro del Firmamento", "Legendaria", "🦊", "Mítico", "Celestial", "proc_universal", 0.16, 0.12, 3200, "loteria", "volume", "pay", 14500, 0.15, "Nueve colas de luz que manipulan la probabilidad del destino."),
+                ("Oso del Helero", "Legendaria", "🧊", "Gólem", "Implacable", "multiplier_safe", 1.08, 1.0, 0, "raid", "wealth", "pay", 13500, 0.15, "Guardián de hielo que congela jefes y mantiene la estabilidad."),
+
+                ("Fénix de las Cenizas", "Mítica", "🔥", "Fénix", "Protector", "proc_derrota_y_revive", 0.25, 0.07, 5000, "any", "recovery", "pay_and_survive", 20000, 0.05, "Renace de la bancarrota absoluta."),
+                ("Hidra de Siete Cabezas", "Mítica", "🐍", "Furia", "Insaciable", "proc_derrota", 0.30, 0.06, 6000, "any", "cold_streak", "pay_and_survive", 25000, 0.05, "Cada cabeza que cae resurge con un ataque feroz e incesante."),
+                ("Dragón Estelar", "Mítica", "🌟", "Mítico", "Cosmico", "multiplier", 1.20, 1.0, 0, "any", "wealth", "pay_and_survive", 30000, 0.05, "Entidad astral que altera la realidad financiera de toda la economía."),
+                ("Llama Sagrada", "Mítica", "🦙", "Mítico", "Divino", "proc_universal", 0.25, 0.08, 5500, "any", "ritual", "pay_and_survive", 22000, 0.05, "Ser divino que concede bonificaciones astronómicas y protección total.")
+            ]
+            seed_q = """
+                INSERT INTO PetsCatalog (
+                    Name, Rarity, Emoji, Family, Temperament, EffectType, 
+                    EffectValue, EffectChance, EffectCap, FavoriteGame, 
+                    EncounterType, CaptureType, CaptureConfig, BaseLeaveChance, FlavorText
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            for pet_item in pets_seed_50:
+                cursor.execute("SELECT 1 FROM PetsCatalog WHERE Name = %s", (pet_item[0],))
+                if not cursor.fetchone():
+                    cursor.execute(seed_q, pet_item)
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS UserPets (
@@ -1688,6 +1750,94 @@ def init_db():
                 )
             """)
             cursor.execute("ALTER TABLE UserPets ADD COLUMN IF NOT EXISTS Nickname VARCHAR(32)")
+            cursor.execute("ALTER TABLE UserPets ADD COLUMN IF NOT EXISTS Level INT DEFAULT 1")
+            cursor.execute("ALTER TABLE UserPets ADD COLUMN IF NOT EXISTS XP BIGINT DEFAULT 0")
+            cursor.execute("ALTER TABLE UserPets ADD COLUMN IF NOT EXISTS EquippedSlot VARCHAR(20) DEFAULT NULL")
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GuildConfig (
+                    GuildID BIGINT PRIMARY KEY,
+                    AuctionChannelID BIGINT DEFAULT NULL
+                )
+            """)
+            cursor.execute("ALTER TABLE GuildConfig ADD COLUMN IF NOT EXISTS AuctionChannelID BIGINT DEFAULT NULL")
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserPityState (
+                    UserID BIGINT PRIMARY KEY,
+                    UnluckyBoxesCount INT DEFAULT 0
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserMarketListings (
+                    ListingID SERIAL PRIMARY KEY,
+                    SellerID BIGINT NOT NULL,
+                    ItemType VARCHAR(20) NOT NULL,
+                    ItemID INT NOT NULL,
+                    Price BIGINT NOT NULL,
+                    Currency VARCHAR(20) DEFAULT 'balance',
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserAuctions (
+                    AuctionID SERIAL PRIMARY KEY,
+                    SellerID BIGINT NOT NULL,
+                    ItemType VARCHAR(20) NOT NULL,
+                    ItemID INT NOT NULL,
+                    CurrentBid BIGINT NOT NULL,
+                    HighestBidderID BIGINT DEFAULT NULL,
+                    AuctionEndTime TIMESTAMP NOT NULL,
+                    Currency VARCHAR(20) DEFAULT 'balance',
+                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserShopStock (
+                    RotationSeed BIGINT NOT NULL,
+                    ShopType VARCHAR(20) NOT NULL,
+                    ItemID INT NOT NULL,
+                    StockRemaining INT NOT NULL,
+                    PRIMARY KEY (RotationSeed, ShopType, ItemID)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GuildPoblado (
+                    GuildID BIGINT PRIMARY KEY,
+                    RecursoMadera INT DEFAULT 0,
+                    RecursoPiedra INT DEFAULT 0,
+                    RecursoCristal INT DEFAULT 0,
+                    RecursoSolar INT DEFAULT 0,
+                    ProyectoActivo VARCHAR(50) DEFAULT 'Herrería de Combate',
+                    ProgresoProyecto INT DEFAULT 0,
+                    PuntosSemanales INT DEFAULT 0,
+                    UltimoResetSemanal TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS GuildEdificios (
+                    GuildID BIGINT NOT NULL,
+                    NombreEdificio VARCHAR(50) NOT NULL,
+                    Nivel INT DEFAULT 1,
+                    PRIMARY KEY (GuildID, NombreEdificio)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS PobladoContribuciones (
+                    GuildID BIGINT NOT NULL,
+                    UserID BIGINT NOT NULL,
+                    PuntosAportados INT DEFAULT 0,
+                    MaterialesDonados INT DEFAULT 0,
+                    PRIMARY KEY (GuildID, UserID)
+                )
+            """)
+
+
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS GamblerProgress (
@@ -3350,8 +3500,35 @@ def update_user_class_and_subclass(user_id: int, class_name: str, subclass_name:
         return False
 
 
+def ensure_consumables_catalog_seeded(cursor=None):
+    items = [
+        ("pocion_curacion", "Poción de Curación", "Cura un 25% del HP máximo del usuario.", 150),
+        ("pergamino_purificacion", "Pergamino de Purificación", "Limpia todos los debuffs y DoTs del usuario.", 200),
+        ("bomba_humo", "Bomba de Humo", "Esquiva con 100% de certeza el próximo ataque recibido.", 250),
+        ("frasco_silencio", "Frasco de Silencio", "Silencia las habilidades especiales del objetivo por 2 turnos.", 200),
+        ("pocion_curacion_colectiva", "Poción de Curación Colectiva", "Cura un 30% del HP Máximo a todo el grupo en Raid o Aventura.", 300),
+        ("totem_baluarte", "Tótem de Baluarte", "Confiere un escudo de absorción del 20% HP a todo el equipo.", 500),
+        ("pergamino_purificacion_grupo", "Pergamino de Purificación de Grupo", "Limpia todos los debuffs y DoTs de la party.", 400),
+        ("elixir_ultimate", "Elixir de Carga de Ultimate", "Suma +30% de carga a la barra de Ultimate de Equipo.", 650),
+        ("manjar_companero", "Manjar del Compañero", "Restaura la lealtad de la mascota al 100% y le otorga +25% Bronce en Aventura.", 350)
+    ]
+    def _run(c):
+        for key, name, desc, price in items:
+            c.execute("""
+                INSERT INTO ConsumableCatalog (ConsumableKey, Name, Description, Price)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ConsumableKey) DO NOTHING
+            """, (key, name, desc, price))
+
+    if cursor:
+        _run(cursor)
+    else:
+        with db_cursor() as c:
+            _run(c)
+
 def get_consumable_catalog():
-    """Retorna los 4 consumibles disponibles."""
+    """Retorna los consumibles disponibles en el catálogo."""
+    ensure_consumables_catalog_seeded()
     with db_cursor() as cursor:
         cursor.execute("SELECT ConsumableKey, Name, Description, Price FROM ConsumableCatalog ORDER BY Price ASC")
         catalog = []
@@ -3363,6 +3540,7 @@ def get_consumable_catalog():
                 'price': row[3]
             })
         return catalog
+
 
 
 def buy_consumable(user_id, consumable_key, quantity=1):
@@ -4236,6 +4414,132 @@ def check_game_circuit_breaker_db(game_key: str) -> tuple:
             if bloqueado_hasta and bloqueado_hasta > datetime.now():
                 return False, motivo
         return True, ""
+
+
+# ══════════════════════════════════════════════
+# POBLADO COMUNITARIO HELPERS
+# ══════════════════════════════════════════════
+
+def ensure_guild_poblado(guild_id: int):
+    """Asegura que el servidor tenga registro en GuildPoblado y sus 6 edificios iniciales."""
+    if not guild_id:
+        return
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO GuildPoblado (GuildID) VALUES (%s)
+            ON CONFLICT (GuildID) DO NOTHING
+        """, (guild_id,))
+        
+        edificios = [
+            "Herrería de Combate",
+            "Gran Mercado del Servidor",
+            "Bastión de Raids",
+            "Gran Biblioteca Arcana",
+            "Templo del Alba",
+            "Taberna del Aventurero"
+        ]
+        for ed in edificios:
+            cursor.execute("""
+                INSERT INTO GuildEdificios (GuildID, NombreEdificio, Nivel)
+                VALUES (%s, %s, 1)
+                ON CONFLICT (GuildID, NombreEdificio) DO NOTHING
+            """, (guild_id, ed))
+
+def get_guild_poblado(guild_id: int) -> dict:
+    """Obtiene los recursos y estado del Poblado del servidor."""
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT RecursoMadera, RecursoPiedra, RecursoCristal, RecursoSolar,
+                   ProyectoActivo, ProgresoProyecto, PuntosSemanales, UltimoResetSemanal
+            FROM GuildPoblado WHERE GuildID = %s
+        """, (guild_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        return {
+            "madera": row[0],
+            "piedra": row[1],
+            "cristal": row[2],
+            "solar": row[3],
+            "proyecto_activo": row[4],
+            "progreso_proyecto": row[5],
+            "puntos_semanales": row[6],
+            "ultimo_reset": row[7]
+        }
+
+def get_guild_buildings(guild_id: int) -> dict:
+    """Devuelve los niveles de todos los edificios construidos en el servidor."""
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("SELECT NombreEdificio, Nivel FROM GuildEdificios WHERE GuildID = %s", (guild_id,))
+        rows = cursor.fetchall()
+        return {r[0]: r[1] for r in rows}
+
+def get_building_level(guild_id: int, building_name: str) -> int:
+    """Obtiene el nivel de un edificio específico en el servidor."""
+    if not guild_id:
+        return 0
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Nivel FROM GuildEdificios WHERE GuildID = %s AND NombreEdificio = %s", (guild_id, building_name))
+        row = cursor.fetchone()
+        return row[0] if row else 1
+
+def add_poblado_resources(guild_id: int, madera: int = 0, piedra: int = 0, cristal: int = 0, solar: int = 0, puntos: int = 0):
+    """Suma recursos y puntos semanales al Poblado del servidor."""
+    if not guild_id:
+        return
+    ensure_guild_poblado(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE GuildPoblado
+            SET RecursoMadera = RecursoMadera + %s,
+                RecursoPiedra = RecursoPiedra + %s,
+                RecursoCristal = RecursoCristal + %s,
+                RecursoSolar = RecursoSolar + %s,
+                PuntosSemanales = PuntosSemanales + %s
+            WHERE GuildID = %s
+        """, (madera, piedra, cristal, solar, puntos, guild_id))
+
+def set_active_project(guild_id: int, building_name: str) -> tuple[bool, str]:
+    """Establece el proyecto de edificio activo a construir/mejorar."""
+    ensure_guild_poblado(guild_id)
+    current_lvl = get_building_level(guild_id, building_name)
+    if current_lvl >= 5:
+        return False, f"El edificio **{building_name}** ya alcanzó el nivel máximo (5)."
+
+    with db_cursor() as cursor:
+        cursor.execute("UPDATE GuildPoblado SET ProyectoActivo = %s WHERE GuildID = %s", (building_name, guild_id))
+        return True, f"Proyecto activo cambiado a **{building_name}** (Nivel actual: {current_lvl})."
+
+def record_poblado_contribution(guild_id: int, user_id: int, puntos: int, materiales: int):
+    """Registra los aportes individuales de un usuario al Poblado del servidor."""
+    if not guild_id or not user_id:
+        return
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO PobladoContribuciones (GuildID, UserID, PuntosAportados, MaterialesDonados)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (GuildID, UserID) DO UPDATE
+            SET PuntosAportados = PobladoContribuciones.PuntosAportados + EXCLUDED.PuntosAportados,
+                MaterialesDonados = PobladoContribuciones.MaterialesDonados + EXCLUDED.MaterialesDonados
+        """, (guild_id, user_id, puntos, materiales))
+
+def get_poblado_leaderboard(guild_id: int, limit: int = 10) -> list:
+    """Devuelve el ranking de mayores aportadores al Poblado en el servidor."""
+    if not guild_id:
+        return []
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT UserID, PuntosAportados, MaterialesDonados
+            FROM PobladoContribuciones
+            WHERE GuildID = %s
+            ORDER BY (PuntosAportados + MaterialesDonados * 5) DESC
+            LIMIT %s
+        """, (guild_id, limit))
+        return cursor.fetchall()
+
 
 
 

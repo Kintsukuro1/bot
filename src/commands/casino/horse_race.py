@@ -5,9 +5,8 @@ import random
 import asyncio
 from typing import Dict, List, Tuple
 
-from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, ensure_user
 from src.services.casino_service import CasinoService
-from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 HORSE_TEMPLATES = [
@@ -377,4 +376,3 @@ class HorseRace(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(HorseRace(bot))
-    print("HorseRace cog cargado con éxito.")

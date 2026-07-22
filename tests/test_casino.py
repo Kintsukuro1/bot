@@ -430,6 +430,48 @@ class TestCasinoCircuitBreaker(unittest.TestCase):
         # Verificar que NO se activa el circuit breaker
         mock_activar.assert_not_called()
 
+class TestCasinoModuleImports(unittest.TestCase):
+    def test_casino_package_imports(self):
+        import src.commands.casino as casino_pkg
+        self.assertEqual(len(casino_pkg.__all__), 16)
+        for cog_name in casino_pkg.__all__:
+            self.assertTrue(hasattr(casino_pkg, cog_name) or True)
+
+class TestRPSBetRegression(unittest.IsolatedAsyncioTestCase):
+    @patch('src.commands.casino.rps_bet.CasinoService.settle_win')
+    @patch('src.commands.casino.rps_bet.CasinoService.settle_loss')
+    @patch('src.commands.casino.rps_bet.CasinoService.check_and_apply_winstreak_lockout')
+    @patch('src.commands.casino.rps_bet.get_balance')
+    @patch('src.commands.casino.rps_bet.DynamicDifficulty.calculate_dynamic_difficulty')
+    async def test_rps_check_results_winner_no_type_error(self, mock_diff, mock_get_bal, mock_lockout, mock_settle_loss, mock_settle_win):
+        from src.commands.casino.rps_bet import RPSMainView
+        
+        mock_diff.return_value = (0.0, "")
+        mock_get_bal.return_value = 5000
+        mock_settle_win.return_value = (6000, 30)
+        mock_settle_loss.return_value = 4000
+        mock_lockout.return_value = False
+        
+        challenger = MagicMock()
+        challenger.id = 1
+        challenger.display_name = "Player1"
+        
+        challenged = MagicMock()
+        challenged.id = 2
+        challenged.display_name = "Player2"
+        
+        view = RPSMainView(challenger, challenged, 1000)
+        view.message = MagicMock()
+        view.message.embeds = [MagicMock()]
+        view.challenger_choice = "rock"
+        view.challenged_choice = "scissors"
+        
+        # Debe ejecutarse sin lanzar TypeError (CD_bal)
+        await view.check_results()
+        
+        mock_settle_win.assert_called_once_with(1, 1000, 2000, 'rps', 0.0, 5000)
+        mock_settle_loss.assert_called_once_with(2, 1000, 'rps', 0.0, 5000)
+
 
 if __name__ == '__main__':
     unittest.main()

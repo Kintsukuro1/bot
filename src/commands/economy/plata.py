@@ -67,4 +67,3 @@ class Plata(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Plata(bot))
-    print("Plata cog loaded successfully.")

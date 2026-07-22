@@ -1,18 +1,6 @@
 import os
 import sys
 import asyncio
-import functools
-import contextvars
-
-# Polyfill para asyncio.to_thread (necesario para Python 3.8 o inferior)
-if not hasattr(asyncio, 'to_thread'):
-    async def to_thread(func, /, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        ctx = contextvars.copy_context()
-        func_call = functools.partial(ctx.run, func, *args, **kwargs)
-        return await loop.run_in_executor(None, func_call)
-    asyncio.to_thread = to_thread
-
 import logging
 import discord
 from discord.ext import commands
@@ -84,28 +72,11 @@ bot = commands.Bot(
     help_command=None
 )
 
-# Leer configuración desde config.ini
-config = configparser.ConfigParser()
-config_file = os.path.join(BASE_DIR, 'config.ini')
-
-# Si el archivo de configuración existe, leerlo
-if os.path.exists(config_file):
-    config.read(config_file)
-    logger.info(f"[CONFIG] Cargando configuración desde: {config_file}")
-else:
-    logger.warning(f"[CONFIG] No se encontró el archivo de configuración: {config_file}")
-
-# La configuración de módulos ahora se carga en load_cogs()
-
 async def load_cogs():
     """Carga automática de cogs con manejo de errores mejorado."""
     cogs_dir = os.path.join(os.path.dirname(__file__), 'commands')
     loaded_count = 0
     failed_count = 0
-    
-    # Cargar configuración de módulos
-    config = configparser.ConfigParser()
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
     
     # Módulos activos por defecto
     enabled_modules = {
@@ -119,7 +90,9 @@ async def load_cogs():
         "duels": True
     }
     
-    # Intentar cargar la configuración
+    # Cargar la configuración desde config.ini si existe
+    config = configparser.ConfigParser()
+    config_path = os.path.join(BASE_DIR, 'config.ini')
     try:
         if os.path.exists(config_path):
             config.read(config_path)
@@ -128,9 +101,9 @@ async def load_cogs():
                     enabled_modules[module] = enabled.lower() in ('true', 'yes', '1')
                 logger.info(f"[CONFIG] Módulos configurados desde {config_path}")
         else:
-            logger.warning(f"[CONFIG] No se encontró el archivo {config_path}, usando configuración por defecto")
+            logger.warning(f"[CONFIG] No se encontró {config_path}, usando configuración por defecto")
     except Exception as e:
-        logger.error(f"[CONFIG] Error leyendo configuración: {e}")
+        logger.error(f"[CONFIG] Error leyendo configuración de módulos: {e}")
     
     # Mostrar módulos activados/desactivados
     for module, enabled in enabled_modules.items():

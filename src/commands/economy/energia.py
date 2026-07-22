@@ -11,9 +11,7 @@ from src.db import (
     init_energia_db,
     get_energia,
     set_energia,
-    tiempo_hasta_recarga_completa,
     get_energia_info,
-    fix_timestamps_energia,
     db_cursor
 )
 
@@ -148,7 +146,6 @@ class Energia(commands.Cog):
                 
         except Exception as e:
             estado = f"❌ Error: {str(e)}"
-            raise
         
         embed = discord.Embed(
             title=f"🔧 Debug: Energía de {target_user.display_name}",
@@ -167,4 +164,3 @@ class Energia(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Energia(bot))
-    print("Energia command cog loaded successfully.")

@@ -1,7 +1,10 @@
 import asyncio
 import time
+import logging
 from typing import Tuple
 from src.db import add_balance, deduct_balance, registrar_transaccion, record_game_result
+
+logger = logging.getLogger(__name__)
 
 class CasinoCircuitBreakerError(Exception):
     """Excepción lanzada cuando un juego del casino está deshabilitado por el circuit breaker."""
@@ -119,10 +122,8 @@ class CasinoService:
     @staticmethod
     async def _notify_staff_circuit_breaker(game_key: str, total_pagado: int, total_economia: int, motivo: str):
         """Envía una alerta detallada al canal de logs del staff."""
-        import logging
         import discord
         from datetime import datetime
-        logger = logging.getLogger("discord_bot")
         logger.warning(f"🚨 [CIRCUIT BREAKER] {game_key} activado. Payout: {total_pagado}, Economía: {total_economia}. Motivo: {motivo}")
         
         try:
@@ -189,8 +190,7 @@ class CasinoService:
                         stats["hot_streak"] = max(0, row[0] if row[0] is not None else 0)
                         stats["net_profit"] = max(0, row[1] if row[1] is not None else 0)
             except Exception as e:
-                import logging
-                logging.getLogger("discord_bot").warning(f"Error al obtener estadísticas secretas en casino_service: {e}")
+                logger.warning(f"Error al obtener estadísticas secretas en casino_service: {e}")
             return stats
             
         return await asyncio.to_thread(_get_stats)
