@@ -7,15 +7,16 @@ from src.db import (
     deduct_balance, add_balance, registrar_transaccion,
     update_combat_stats_after_duel, log_duel, get_user_equipment,
     get_user_consumables, get_consumable_catalog, use_consumable,
-    add_combat_currency, format_currency
+    add_combat_currency
 )
 from src.utils.combat_progression import (
     calc_duel_xp, calc_defend_heal, format_progress_bar, format_hp_bar,
     get_combat_rank, get_combat_rank_emoji, generate_loot, calc_attack_damage,
     can_proc, mark_proc, format_username_with_prestige,
     CHALLENGE_TIMEOUT_SECONDS, TURN_TIMEOUT_SECONDS,
-    DROP_RATE_WINNER, DROP_RATE_LOSER
+    DROP_RATE_WINNER, DROP_RATE_LOSER, format_currency
 )
+
 from src.utils.combat_config import SKILLS_CONFIG
 from src.commands.duels.pvp.pvp_combatant import Combatant
 
