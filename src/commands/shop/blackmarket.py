@@ -17,43 +17,70 @@ class DopeCaballoSelect(discord.ui.Select):
             discord.SelectOption(label=h['name'], emoji=h['emoji'], value=str(i))
             for i, h in enumerate(race_view.horses)
         ]
-        super().__init__(placeholder="Elige un caballo para inyectar...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Elige tu caballo apostado para inyectar...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if self.race_view.started:
             await interaction.response.send_message("❌ La carrera ya ha comenzado.", ephemeral=True)
             return
 
-        horse_idx = int(self.values[0])
         user_id = interaction.user.id
-        
-        costo_doping = 5000
+        horse_idx = int(self.values[0])
+
+        # Punto 1A (Anti-Griefing): Solo puedes dopear al caballo al que le has apostado
+        if user_id not in self.race_view.bets or self.race_view.bets[user_id]['horse_idx'] != horse_idx:
+            await interaction.response.send_message(
+                "❌ **Acceso Denegado:** Solo puedes administrar sustancias al caballo en el que has apostado tu dinero.",
+                ephemeral=True
+            )
+            return
+
+        dosis_actual = self.race_view.horse_doping.get(horse_idx, 0)
+        if dosis_actual >= 3:
+            await interaction.response.send_message("❌ Este caballo ya ha alcanzado el límite máximo de 3 dosis de dopaje.", ephemeral=True)
+            return
+
+        # Punto 3 (Costo Escalonado): 1a: 5k, 2a: 15k, 3a: 35k
+        costos = [5000, 15000, 35000]
+        costo_doping = costos[dosis_actual]
+
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
-        
         success, balance = await asyncio.to_thread(deduct_balance, user_id, costo_doping)
         if not success:
-            await interaction.response.send_message(f"❌ No tienes suficientes monedas. Necesitas {costo_doping} 🪙.", ephemeral=True)
+            await interaction.response.send_message(f"❌ No tienes suficiente dinero. La dosis {dosis_actual + 1} cuesta **{costo_doping:,} 🪙**.", ephemeral=True)
             return
-        
+
         horse_name = self.race_view.horses[horse_idx]['name']
         horse_emoji = self.race_view.horses[horse_idx]['emoji']
 
-        await asyncio.to_thread(registrar_transaccion, user_id, -costo_doping, f"Mercado Negro: Doping para {horse_name}")
-        
+        await asyncio.to_thread(registrar_transaccion, user_id, -costo_doping, f"Mercado Negro: Doping dosis {dosis_actual + 1} para {horse_name}")
+
         self.race_view.horse_doping[horse_idx] += 1
-        dosis_actual = self.race_view.horse_doping[horse_idx]
-        
-        if dosis_actual > 3:
-            msg = f"💉 Has inyectado una dosis letal a {horse_emoji} **{horse_name}**... El caballo no resistirá la carrera (Sobredosis 💀)."
-        else:
-            msg = f"💉 Has inyectado doping a {horse_emoji} **{horse_name}**. Correrá mucho más rápido. (Dosis acumuladas: {dosis_actual}/3)"
-            
+        dosis_nueva = self.race_view.horse_doping[horse_idx]
+
+        # Punto 3 (Ajuste de Cuota): reducir cuota de pago al recibir dopaje
+        old_mult = self.race_view.multipliers[horse_idx]
+        new_mult = max(1.1, round(old_mult * 0.75, 1))
+        self.race_view.multipliers[horse_idx] = new_mult
+
+        # Registrar doper para posibles multas post-carrera
+        if not hasattr(self.race_view, "dopers"):
+            self.race_view.dopers = {}
+        self.race_view.dopers[user_id] = (horse_idx, dosis_nueva)
+
+        msg = (
+            f"💉 Has inyectado la **dosis {dosis_nueva}/3** a {horse_emoji} **{horse_name}** por **{costo_doping:,} 🪙**.\n"
+            f"📉 La cuota del caballo se redujo de `x{old_mult}` a `x{new_mult}` por aviso médico.\n"
+            f"🤫 *Información confidencial: La cantidad de dosis se mantendrá en secreto hasta el inicio de la carrera.*"
+        )
         await interaction.response.send_message(msg, ephemeral=True)
+        await self.race_view.update_embed()
 
 class DopeCaballoView(discord.ui.View):
     def __init__(self, race_view):
         super().__init__(timeout=60)
         self.add_item(DopeCaballoSelect(race_view))
+
 
 class BlackMarket(commands.Cog):
     """Cog para mostrar mejoras y artefactos del Mercado Negro en rotación de 3h."""
