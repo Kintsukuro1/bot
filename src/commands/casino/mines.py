@@ -461,4 +461,3 @@ class Mines(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Mines(bot))
-    print("Mines cog cargado con éxito.")

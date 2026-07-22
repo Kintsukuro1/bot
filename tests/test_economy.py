@@ -853,6 +853,38 @@ class TestRoboBandaAndBanco(unittest.TestCase):
         # The fine is 50,000, and it is added back to reserves
         mock_cursor.execute.assert_any_call("UPDATE BancoCentral SET Reservas = Reservas + %s WHERE ID = 1", (50000,))
 
+class TestEconomyModuleImports(unittest.TestCase):
+    def test_economy_package_imports(self):
+        import src.commands.economy as economy_pkg
+        self.assertEqual(len(economy_pkg.__all__), 8)
+        expected_cogs = {'banco', 'bolsa', 'energia', 'flex', 'pets', 'plata', 'prestigio', 'trabajo'}
+        self.assertEqual(set(economy_pkg.__all__), expected_cogs)
+
+class TestEnergiaDebugRegression(unittest.IsolatedAsyncioTestCase):
+    @patch('src.commands.economy.energia.db_cursor')
+    async def test_energia_debug_exception_handled_gracefully(self, mock_db_cursor):
+        from src.commands.economy.energia import Energia
+        
+        # Simulate DB cursor exception inside fetch_debug
+        mock_db_cursor.side_effect = Exception("DB Connection Lost")
+        
+        bot = MagicMock()
+        cog = Energia(bot)
+        
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.user.display_name = "TestUser"
+        interaction.response.defer = unittest.mock.AsyncMock()
+        interaction.followup.send = unittest.mock.AsyncMock()
+        
+        # Should not raise exception
+        await cog.energia_debug.callback(cog, interaction)
+        
+        interaction.followup.send.assert_called_once()
+        _, kwargs = interaction.followup.send.call_args
+        embed = kwargs['embed']
+        self.assertIn("DB Connection Lost", embed.fields[0].value)
+
 
 if __name__ == '__main__':
     unittest.main()

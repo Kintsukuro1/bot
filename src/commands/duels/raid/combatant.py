@@ -265,6 +265,71 @@ class RaidCombatant:
         self.used_erratic_ward = False
         self.used_eternal_watch = False
         self.eternal_watch_trigger_log = None
+        self.group_stance = "Normal"  # Postura de grupo: Normal, Defensiva, Ofensiva, Canalizacion
+
+    def execute_pet_raid_ai(self, boss_hp_pct: float, is_boss_fury: bool) -> str:
+        """
+        Analiza la situación del combate en la Raid y ejecuta la acción automática
+        de la mascota equipada en el Slot 'raid'.
+        """
+        # Buscar la mascota activa en slot 'raid'
+        from src.db import db_cursor
+        user_id = self.user.id
+        with db_cursor() as c:
+            c.execute("""
+                SELECT p.Name, p.Emoji, p.Family, up.Level, up.Loyalty, up.Nickname
+                FROM UserPets up
+                JOIN PetsCatalog p ON up.PetID = p.PetID
+                WHERE up.UserID = %s AND up.EquippedSlot = 'raid' AND up.Status != 'Escapó'
+                LIMIT 1
+            """, (user_id,))
+            pet_row = c.fetchone()
+
+        if not pet_row:
+            return ""
+
+        p_name, p_emoji, family, level, loyalty, nickname = pet_row
+        pet_display = nickname if nickname and nickname.strip() else p_name
+        hp_pct = (self.hp / self.max_hp) if self.max_hp > 0 else 1.0
+
+        # Nivel escala la potencia (Nv 1 a 15)
+        power_mult = 1.0 + ((level - 1) * 0.05)
+
+        # 1. ARQUETIPO GUARDIÁN (Tanque / Protección)
+        if family in ["Gólem", "Tortuga", "Guardián", "Piedra"]:
+            if hp_pct < 0.40:
+                shield_val = int(self.max_hp * 0.15 * power_mult)
+                self.shield += shield_val
+                return f"🛡️ **[Mascota {p_emoji} {pet_display}]** detectó peligro crítico y activó *Piel de Granito* (Otorgó +{shield_val} de Escudo)."
+            elif is_boss_fury:
+                self.damage_reduction_turns = 1
+                self.damage_reduction_pct = 0.20 * power_mult
+                return f"🛡️ **[Mascota {p_emoji} {pet_display}]** usó *Provocación Leal* (-{int(self.damage_reduction_pct*100)}% daño recibido esta ronda)."
+
+        # 2. ARQUETIPO VITALIS / SOPORTE (Curación / Dispel)
+        elif family in ["Fénix", "Hada", "Luz", "Sagrado"]:
+            if self.poison_turns > 0 or self.bleed_turns > 0 or self.burn_turns > 0:
+                self.poison_turns = max(0, self.poison_turns - 1)
+                self.bleed_turns = max(0, self.bleed_turns - 1)
+                self.burn_turns = max(0, self.burn_turns - 1)
+                return f"✨ **[Mascota {p_emoji} {pet_display}]** usó *Purificación Astral* (Disipó 1 estado alterado del jugador)."
+            elif hp_pct < 0.60:
+                heal_val = int(self.max_hp * 0.12 * power_mult)
+                self.hp = min(self.max_hp, self.hp + heal_val)
+                return f"💚 **[Mascota {p_emoji} {pet_display}]** usó *Aliento Curativo* (Restauró +{heal_val} HP)."
+
+        # 3. ARQUETIPO DEPREDADOR / DAÑO (Burst)
+        elif family in ["Lobo", "Tigre", "Grifo", "Sombra", "Furia"]:
+            if is_boss_fury or boss_hp_pct < 0.30:
+                bonus_atk = int(self.atk * 0.15 * power_mult)
+                self.atk_buff_turns = 1
+                self.atk_buff_pct = 0.15 * power_mult
+                return f"⚔️ **[Mascota {p_emoji} {pet_display}]** usó *Garra Crítica* en la Fase de Furia (+{int(self.atk_buff_pct*100)}% ATK esta ronda)."
+
+        # 4. ARQUETIPO TÁCTICO / MÍSTICO (Default / Buff)
+        crit_bonus = 0.08 * power_mult
+        self.subclass_extras["crit_chance_bonus"] = min(0.35, self.subclass_extras.get("crit_chance_bonus", 0.0) + crit_bonus)
+        return f"🔮 **[Mascota {p_emoji} {pet_display}]** usó *Ojo Avizor* (+{int(crit_bonus*100)}% Prob. Crítico esta ronda)."
 
     def has_eternal_watch_active(self) -> bool:
         return any(p['id'] == 'eternal_watch' for p in self.passives) and not getattr(self, "used_eternal_watch", False)

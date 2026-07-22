@@ -3,9 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result
+from src.db import get_balance, ensure_user
 from src.services.casino_service import CasinoService
-from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
 
 CHOICES = {
@@ -156,7 +155,7 @@ class RPSMainView(discord.ui.View):
                 self.bet,
                 'rps',
                 diff_2,
-                CD_bal=bal_2
+                bal_2
             )
             lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenger.id, nuevo_saldo)
 
@@ -174,14 +173,14 @@ class RPSMainView(discord.ui.View):
                 pozo,
                 'rps',
                 diff_2,
-                CD_bal=bal_2
+                bal_2
             )
             await CasinoService.settle_loss(
                 self.challenger.id,
                 self.bet,
                 'rps',
                 diff_1,
-                CD_bal=bal_1
+                bal_1
             )
             lockout_activated = await CasinoService.check_and_apply_winstreak_lockout(self.challenged.id, nuevo_saldo)
 
@@ -193,8 +192,8 @@ class RPSMainView(discord.ui.View):
 
         try:
             await self.message.edit(embed=embed, view=None)
-        except:
-            raise
+        except Exception:
+            pass
 
     async def on_timeout(self):
         self.clear_items()
@@ -213,8 +212,8 @@ class RPSMainView(discord.ui.View):
                     await CasinoService.refund_bet(self.challenged.id, self.bet, 'rps', "PPT Cancelado por inactividad")
                     
                 await self.message.edit(embed=embed, view=None)
-        except:
-            raise
+        except Exception:
+            pass
 
 class RPSBet(commands.Cog):
     def __init__(self, bot):
@@ -270,4 +269,4 @@ class RPSBet(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(RPSBet(bot))
-    print("RPSBet cog cargado con éxito.")
+

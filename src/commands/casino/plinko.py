@@ -2,8 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-import math
-from src.db import get_balance, deduct_balance, add_balance, ensure_user, registrar_transaccion, record_game_result, get_provably_fair_seeds, advance_provably_fair_nonce
+from src.db import get_balance, ensure_user, get_provably_fair_seeds, advance_provably_fair_nonce
 from src.services.casino_service import CasinoService
 from src.utils.provably_fair import get_uniform_float
 
@@ -267,4 +266,3 @@ class PlinkoCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(PlinkoCog(bot))
-    print("Plinko command loaded.")

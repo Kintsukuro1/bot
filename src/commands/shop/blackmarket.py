@@ -2,8 +2,13 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from src.commands.shop.black_market_items import BLACK_MARKET
-from src.db import get_balance, set_balance, deduct_balance, registrar_transaccion, ensure_user
+from src.db import get_balance, set_balance, deduct_balance, registrar_transaccion, ensure_user, comprar_item_tienda
+from src.services.shop_rotation_service import get_rotation_info, select_rotated_items, BLACKMARKET_ROTATION_SECONDS
 import asyncio
+
+def get_current_blackmarket_items():
+    """Devuelve los 7 ítems activos en el Blackmarket para la rotación actual de 3h."""
+    return select_rotated_items(BLACK_MARKET, count=7, rotation_seconds=BLACKMARKET_ROTATION_SECONDS)
 
 class DopeCaballoSelect(discord.ui.Select):
     def __init__(self, race_view):
@@ -22,7 +27,6 @@ class DopeCaballoSelect(discord.ui.Select):
         horse_idx = int(self.values[0])
         user_id = interaction.user.id
         
-        # Verificar y descontar dinero
         costo_doping = 5000
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
         
@@ -36,7 +40,6 @@ class DopeCaballoSelect(discord.ui.Select):
 
         await asyncio.to_thread(registrar_transaccion, user_id, -costo_doping, f"Mercado Negro: Doping para {horse_name}")
         
-        # Incrementar doping en la vista de la carrera
         self.race_view.horse_doping[horse_idx] += 1
         dosis_actual = self.race_view.horse_doping[horse_idx]
         
@@ -53,71 +56,96 @@ class DopeCaballoView(discord.ui.View):
         self.add_item(DopeCaballoSelect(race_view))
 
 class BlackMarket(commands.Cog):
-    """Cog para mostrar mejoras permanentes del mercado negro."""
+    """Cog para mostrar mejoras y artefactos del Mercado Negro en rotación de 3h."""
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="blackmarket", description="Muestra las mejoras permanentes del mercado negro.")
+    @app_commands.command(name="blackmarket", description="Muestra las mejoras exclusivas del Mercado Negro (Stock rotativo 3h).")
     async def blackmarket(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         from src.db import get_user_prestige_level
         prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
 
+        active_items = get_current_blackmarket_items()
+        _, _, time_str = get_rotation_info(BLACKMARKET_ROTATION_SECONDS)
+
         embed = discord.Embed(
-            title="🕶️ Black Market (Mejoras Permanentes)",
-            description="Mejoras exclusivas para los más arriesgados.",
+            title="🕶️ Black Market — Artefactos & Mejoras de Oficio",
+            description=f" Stock exclusivo que rota cada **3 horas**.\n⏱️ **Próxima rotación en:** `{time_str}`",
             color=discord.Color.dark_purple()
         )
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3062/3062634.png")
 
-        # Filtrar ítems visibles (prestige_required <= prestige_level)
-        visible_items = [item for item in BLACK_MARKET if item.get("prestige_required", 0) <= prestige_level]
-
-        # Separar en normales y exclusivos
-        normal_items = [item for item in visible_items if item.get("prestige_required", 0) < 2]
-        prestige_items = [item for item in visible_items if item.get("prestige_required", 0) >= 2]
-
-        for item in normal_items:
-            embed.add_field(
-                name=f"{item['nombre']} — {item['precio']} 🪙",
-                value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
-                inline=False
-            )
-
-        if prestige_items:
-            embed.add_field(
-                name="───────────────────",
-                value="🌟 **EXCLUSIVO PRESTIGIO II** 🌟",
-                inline=False
-            )
-            for item in prestige_items:
+        for item in active_items:
+            req = item.get("prestige_required", 0)
+            if prestige_level >= req:
+                job_tag = f" `[{item['job'].upper()}]`" if "job" in item else ""
                 embed.add_field(
-                    name=f"{item['nombre']} — {item['precio']} 🪙",
+                    name=f"{item['nombre']} — {item['precio']:,} 🪙{job_tag}",
                     value=f"`ID:` `{item['id']}`\n{item['descripcion']}",
                     inline=False
                 )
 
-        embed.set_footer(text="Usa /comprar_mejora <ID> para adquirir una mejora permanente.")
+        embed.set_footer(text="Usa /comprar_mejora <ID> para adquirir un artefacto o mejora del Mercado Negro.")
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="comprar_mejora", description="Compra una mejora o artefacto del Mercado Negro por su ID.")
+    @app_commands.describe(mejora_id="ID de la mejora a comprar")
+    async def comprar_mejora(self, interaction: discord.Interaction, mejora_id: int):
+        user_id = interaction.user.id
+        user_name = interaction.user.name
+
+        active_items = get_current_blackmarket_items()
+        item = next((i for i in active_items if i["id"] == mejora_id), None)
+
+        if not item:
+            await interaction.response.send_message("❌ Este artefacto no está en el stock rotativo actual del Mercado Negro.", ephemeral=True)
+            return
+
+        from src.db import get_user_prestige_level
+        prestige_level = await asyncio.to_thread(get_user_prestige_level, user_id)
+        if item.get("prestige_required", 0) > prestige_level:
+            await interaction.response.send_message("❌ Requieres un nivel de Prestigio más alto para esta mejora.", ephemeral=True)
+            return
+
+        precio = item["precio"]
+        success, balance = await asyncio.to_thread(deduct_balance, user_id, precio)
+        if not success:
+            await interaction.response.send_message(f"❌ No tienes suficiente saldo ({precio:,} 🪙) para comprar este artefacto.", ephemeral=True)
+            return
+
+        # Guardar en inventario de usuario con ID desplazado 1000 para indicar BM
+        db_item_id = item["id"] + 1000
+        from datetime import datetime, timedelta
+        expiry = datetime.now() + timedelta(days=3650)
+        await asyncio.to_thread(comprar_item_tienda, user_id, db_item_id, 0, expiry)
+        await asyncio.to_thread(registrar_transaccion, user_id, -precio, f"Mercado Negro: {item['nombre']}")
+
+        embed = discord.Embed(
+            title="🕶️ Compra en Mercado Negro Exitosa",
+            description=f"¡Has adquirido **{item['nombre']}**!",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="💰 Precio Pagado", value=f"{precio:,} monedas", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="dopear_caballo", description="[MERCADO NEGRO] Inyecta sustancias a un caballo para su próxima carrera (Costo: 5000).")
     async def dopear_caballo(self, interaction: discord.Interaction):
         horse_race_cog = interaction.client.get_cog("HorseRace")
         if not horse_race_cog or interaction.channel_id not in horse_race_cog.active_races:
-            await interaction.response.send_message("❌ No hay ninguna carrera activa o en preparación en este canal. ¡Primero inicia una carrera con `/horse_race`!", ephemeral=True)
+            await interaction.response.send_message("❌ No hay ninguna carrera activa en este canal. ¡Primero inicia una con `/horse_race`!", ephemeral=True)
             return
 
         race_view = horse_race_cog.active_races[interaction.channel_id]
         if race_view.started:
-            await interaction.response.send_message("❌ La carrera ya ha comenzado, no puedes dopear caballos ahora.", ephemeral=True)
+            await interaction.response.send_message("❌ La carrera ya comenzó.", ephemeral=True)
             return
 
         embed = discord.Embed(
             title="💉 Mercado Negro: Doping de Caballos",
-            description="Selecciona un caballo para inyectarle una dosis especial. Correrá mucho más rápido en esta carrera.\n\n⚠️ **Cuidado:** Si un caballo recibe **más de 3 dosis**, sufrirá un infarto al iniciar la carrera y perderá automáticamente.\n\n💰 **Costo por dosis:** 5000 monedas.",
+            description="Selecciona un caballo para inyectarle una dosis especial.\n\n⚠️ **Cuidado:** Si recibe **más de 3 dosis**, sufrirá un infarto (Sobredosis 💀).\n\n💰 **Costo:** 5,000 monedas.",
             color=discord.Color.dark_red()
         )
-        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3062/3062634.png")
         view = DopeCaballoView(race_view)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 

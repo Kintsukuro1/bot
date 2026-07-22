@@ -195,7 +195,7 @@ class Slots(commands.Cog):
         except Exception as e:
             try:
                 await interaction.followup.send(f"Ocurrió un error: {e}", ephemeral=True)
-            except:
+            except Exception:
                 pass
             raise
 

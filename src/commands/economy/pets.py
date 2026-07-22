@@ -3,31 +3,54 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import random
+import math
 import logging
 from typing import Optional
 
-from src.db import db_cursor, add_balance, deduct_balance, rename_user_pet, get_fusionable_pets, fuse_pets
+from src.db import db_cursor, add_balance, deduct_balance, rename_user_pet, get_fusionable_pets, fuse_pets, get_user_items, usar_item_usuario
 
 logger = logging.getLogger(__name__)
+
+SLOTS_PERMITIDOS = ["casino", "robar", "raid"]
+
+REEMBOLSO_RAREZA = {
+    "Normal": 5000,
+    "Rara": 25000,
+    "Épica": 120000,
+    "Legendaria": 600000,
+    "Mítica": 2500000
+}
 
 def display_pet_name(catalog_name, nickname=None):
     if nickname and str(nickname).strip():
         return str(nickname).strip()
     return catalog_name
 
+def get_xp_for_level(level: int) -> int:
+    return level * 200
+
+def _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favorite_game):
+    pct_chance = int((effect_chance or 0) * 100) if effect_chance else None
+    cap_text = f" (máx {effect_cap:,})" if effect_cap and effect_cap > 0 else ""
+    
+    descriptions = {
+        "multiplier": f"Multiplica las ganancias x{effect_value:.2f} en victorias{cap_text}",
+        "refund": f"Recupera el {int((effect_value or 0) * 100)}% de la apuesta al perder{cap_text}",
+        "proc_universal": f"{pct_chance}% de prob. de hallar bonus extra de monedas{cap_text}",
+        "proc_derrota": f"{pct_chance}% de recuperar parte de la apuesta al perder{cap_text}",
+        "proc_derrota_y_revive": f"{pct_chance}% de recuperar apuesta al perder + resurge si llega a 0 lealtad{cap_text}",
+        "proc_juego": f"{pct_chance}% de bonus multiplicador en **{favorite_game or 'juego preferido'}**{cap_text}",
+        "proc_juego_y_mult": f"{pct_chance}% de bonus x{effect_value:.1f} en **{favorite_game or 'slots'}**{cap_text}",
+        "proc_high_roller": f"{pct_chance}% de bonus en apuestas de alto riesgo (≥10% de saldo){cap_text}",
+        "multiplier_safe": f"Multiplicador seguro x{effect_value:.2f} y protección contra pérdidas{cap_text}",
+        "multiplier_scaling": f"Multiplicador escalable por racha de victorias consecutivas{cap_text}",
+    }
+    return descriptions.get(effect_type, "Habilidad pasiva de beneficio económico/combate.")
+
 async def process_post_game_events(interaction: discord.Interaction, user_id: int, game_type: str, bet_amount: int, profit: int):
-    """
-    Función central del Plan Maestro de Pets.
-    Se ejecuta al final de cualquier partida de casino.
-    Maneja:
-    1. Procs de la mascota activa.
-    2. Evaluación de lealtad y abandono.
-    3. Triggers de encuentros.
-    """
     if bet_amount <= 0:
         return
 
-    # Si es Context, envolverlo en un objeto compatible con Interaction
     if not isinstance(interaction, discord.Interaction):
         class ContextWrapper:
             def __init__(self, ctx):
@@ -37,36 +60,35 @@ async def process_post_game_events(interaction: discord.Interaction, user_id: in
                 self.user = ctx.author
         interaction = ContextWrapper(interaction)
 
-    # Evitamos bloquear el event loop con las consultas DB
     await asyncio.to_thread(_process_db_logic, interaction, user_id, game_type, bet_amount, profit)
-
 
 def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
     with db_cursor() as cursor:
         is_win = profit > 0
         
-        # 1. Obtener Mascota Activa
         cursor.execute("""
-            SELECT up.UserPetID, p.PetID, p.Name, p.Emoji, p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame, up.Loyalty, up.Nickname
+            SELECT up.UserPetID, p.PetID, p.Name, p.Emoji, p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame, up.Loyalty, up.Nickname, up.Level, up.XP
             FROM UserPets up
             JOIN PetsCatalog p ON up.PetID = p.PetID
-            WHERE up.UserID = %s AND up.IsActive = 1
+            WHERE up.UserID = %s AND (up.EquippedSlot = 'casino' OR (up.IsActive = 1 AND up.EquippedSlot IS NULL))
+            LIMIT 1
         """, (user_id,))
         active_pet = cursor.fetchone()
         
         proc_amount = 0
-        pet_escaped = False
         
         if active_pet:
-            up_id, pet_id, p_name, p_emoji, effect_type, eff_val, eff_chance, eff_cap, fav_game, loyalty, nickname = active_pet
+            up_id, pet_id, p_name, p_emoji, effect_type, eff_val, eff_chance, eff_cap, fav_game, loyalty, nickname, p_level, p_xp = active_pet
             p_display_name = display_pet_name(p_name, nickname)
             
-            # 2. Evaluar Proc
+            level_mult = 1.0 + ((p_level - 1) * 0.05) if p_level else 1.0
+            eff_val = (eff_val or 1.0) * level_mult
+            
             proc_trigger = False
             
             if effect_type == "multiplier" and is_win:
                 proc_trigger = True
-                raw_proc = int(profit * (eff_val - 1.0)) # Ej: 1.10 -> 0.10
+                raw_proc = int(profit * (eff_val - 1.0))
             elif effect_type == "refund" and not is_win:
                 proc_trigger = True
                 raw_proc = int(bet_amount * eff_val)
@@ -93,38 +115,41 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
                 proc_amount = min(raw_proc, eff_cap) if eff_cap > 0 else raw_proc
                 if proc_amount > 0:
                     add_balance(user_id, proc_amount)
-                    # Notificamos el proc
                     asyncio.run_coroutine_threadsafe(
                         send_proc_message(interaction, p_emoji, p_display_name, proc_amount, effect_type),
                         interaction.client.loop
                     )
             
-            # 3. Lealtad y Abandono
+            new_xp = (p_xp or 0) + 15
+            new_level = p_level or 1
+            xp_needed = get_xp_for_level(new_level)
+            if new_xp >= xp_needed and new_level < 15:
+                new_level += 1
+                new_xp -= xp_needed
+            
             new_loyalty = loyalty + 1 if is_win else loyalty - 2
             new_loyalty = max(0, min(100, new_loyalty))
             
-            cursor.execute("UPDATE UserPets SET Loyalty = %s, GamesWithOwner = GamesWithOwner + 1, WinsWithOwner = WinsWithOwner + %s, LossesWithOwner = LossesWithOwner + %s WHERE UserPetID = %s",
-                           (new_loyalty, 1 if is_win else 0, 0 if is_win else 1, up_id))
+            cursor.execute("""
+                UPDATE UserPets
+                SET Loyalty = %s, Level = %s, XP = %s, GamesWithOwner = GamesWithOwner + 1, WinsWithOwner = WinsWithOwner + %s, LossesWithOwner = LossesWithOwner + %s
+                WHERE UserPetID = %s
+            """, (new_loyalty, new_level, new_xp, 1 if is_win else 0, 0 if is_win else 1, up_id))
             
             if new_loyalty <= 0:
-                # Abandono
                 if effect_type == "proc_derrota_y_revive":
-                    # Fénix revive una vez
                     cursor.execute("UPDATE UserPets SET Loyalty = 50 WHERE UserPetID = %s", (up_id,))
                     asyncio.run_coroutine_threadsafe(
                         send_revive_message(interaction, p_emoji, p_display_name),
                         interaction.client.loop
                     )
                 else:
-                    cursor.execute("UPDATE UserPets SET IsActive = 0, Status = 'Escapó' WHERE UserPetID = %s", (up_id,))
-                    pet_escaped = True
+                    cursor.execute("DELETE FROM UserPets WHERE UserPetID = %s", (up_id,))
                     asyncio.run_coroutine_threadsafe(
                         send_escape_message(interaction, p_emoji, p_display_name),
                         interaction.client.loop
                     )
 
-        # 4. Triggers de Encuentro
-        # Obtenemos stats del usuario
         cursor.execute("SELECT GamblerLevel, TotalBetVolume FROM GamblerProgress WHERE UserID = %s", (user_id,))
         gp = cursor.fetchone()
         g_level = gp[0] if gp else 1
@@ -134,12 +159,10 @@ def _process_db_logic(interaction, user_id, game_type, bet_amount, profit):
         hot_streak = stats[0] if stats else 0
         cold_streak = stats[1] if stats else 0
         
-        # Evaluamos si hay encuentro
         encounter = evaluate_encounters(cursor, user_id, g_level, hot_streak, cold_streak, bet_amount, game_type)
         if encounter:
             pet_data = get_random_pet_by_encounter(cursor, encounter['type'], g_level)
             if pet_data:
-                # Disparar UI de captura
                 asyncio.run_coroutine_threadsafe(
                     send_encounter_ui(interaction, user_id, pet_data),
                     interaction.client.loop
@@ -151,8 +174,6 @@ def get_user_balance(cursor, user_id):
     return row[0] if row else 0
 
 def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amount, game_type):
-    """Devuelve un dict con el tipo de encuentro si se activa."""
-    # --- Cooldown global: 15 jugadas entre encuentros ---
     cursor.execute("""
         SELECT FailedEncounters, LastEncounterAt
         FROM UserPetEncounterState
@@ -161,9 +182,8 @@ def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amo
     cd_row = cursor.fetchone()
     
     if cd_row:
-        games_since = cd_row[0]  # Usamos FailedEncounters como contador de jugadas
+        games_since = cd_row[0]
         if games_since < 15:
-            # Incrementar contador y salir — aún en cooldown
             cursor.execute("""
                 UPDATE UserPetEncounterState
                 SET FailedEncounters = FailedEncounters + 1
@@ -171,14 +191,12 @@ def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amo
             """, (user_id,))
             return None
     
-    # --- Chances reducidas (V2) ---
     chances = {
         "hot_streak": {5: 0.08, 8: 0.15, 12: 0.25},
         "cold_streak": {5: 0.08, 8: 0.15, 12: 0.22}
     }
     
     encounter = None
-    
     if hot_streak in chances["hot_streak"]:
         if random.random() < chances["hot_streak"][hot_streak]:
             encounter = {"type": "hot_streak"}
@@ -187,12 +205,10 @@ def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amo
         if random.random() < chances["cold_streak"][cold_streak]:
             encounter = {"type": "cold_streak"}
             
-    # Flat chance reducida: 5% → 1.5%
     if not encounter and random.random() < 0.015:
         encounter = {"type": random.choice(["volume", "specialized", "wealth"])}
     
     if encounter:
-        # Resetear cooldown al encontrar mascota
         cursor.execute("""
             INSERT INTO UserPetEncounterState (UserID, EncounterType, FailedEncounters, LastEncounterAt)
             VALUES (%s, '_global_cooldown', 0, CURRENT_TIMESTAMP)
@@ -201,7 +217,6 @@ def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amo
         """, (user_id,))
         return encounter
     else:
-        # Sin encuentro: incrementar contador de jugadas
         cursor.execute("""
             INSERT INTO UserPetEncounterState (UserID, EncounterType, FailedEncounters, LastEncounterAt)
             VALUES (%s, '_global_cooldown', 1, NULL)
@@ -211,7 +226,6 @@ def evaluate_encounters(cursor, user_id, level, hot_streak, cold_streak, bet_amo
         return None
 
 def get_random_pet_by_encounter(cursor, encounter_type, level):
-    # Determinar Rareza según Nivel (Simplificado)
     r = random.random()
     if level < 10:
         rarity = "Normal" if r < 0.85 else "Rara"
@@ -239,7 +253,6 @@ def get_random_pet_by_encounter(cursor, encounter_type, level):
     """, (encounter_type, rarity))
     row = cursor.fetchone()
     
-    # Fallback si no hay pet exacta de ese tipo/rareza, buscar cualquier pet de esa rareza
     if not row:
         cursor.execute("""
             SELECT PetID, Name, Emoji, Rarity, CaptureType, CaptureConfig, FlavorText
@@ -256,30 +269,23 @@ def get_random_pet_by_encounter(cursor, encounter_type, level):
         }
     return None
 
-# --- Funciones de Interfaz (Discord) ---
-
 async def send_proc_message(interaction, emoji, name, amount, effect_type):
     try:
-        if effect_type == "multiplier":
-            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** aumentó tus ganancias en **{amount:,}** monedas!*")
-        elif effect_type == "refund":
-            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** recuperó **{amount:,}** monedas de tus pérdidas!*")
-        else:
-            await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** encontró **{amount:,}** monedas extra!*")
+        await interaction.channel.send(f"🐾 *¡Tu {emoji} **{name}** activó su habilidad y te otorgó **{amount:,}** monedas!*")
     except Exception as e:
-        logger.warning(f"No se pudo enviar mensaje de proc de mascota: {e}")
+        logger.warning(f"Error mensaje proc: {e}")
 
 async def send_escape_message(interaction, emoji, name):
     try:
-        await interaction.channel.send(f"💔 *Tu {emoji} **{name}** te mira con decepción tras tus fracasos... y te abandona.*")
+        await interaction.channel.send(f"💔 *Tu {emoji} **{name}** te mira con decepción tras tus fracasos y se marchó permanentemente.*")
     except Exception as e:
-        logger.warning(f"No se pudo enviar mensaje de escape de mascota: {e}")
+        logger.warning(f"Error mensaje escape: {e}")
 
 async def send_revive_message(interaction, emoji, name):
     try:
         await interaction.channel.send(f"🔥 *Tu {emoji} **{name}** arde en cenizas y resurge, negándose a abandonarte.*")
     except Exception as e:
-        logger.warning(f"No se pudo enviar mensaje de resurrección de mascota: {e}")
+        logger.warning(f"Error mensaje revive: {e}")
 
 async def send_encounter_ui(interaction, user_id, pet_data):
     try:
@@ -288,19 +294,10 @@ async def send_encounter_ui(interaction, user_id, pet_data):
             description=f"Una criatura salvaje te observa en la distancia.\n\n{pet_data['emoji']} **{pet_data['name']}**\n🌟 Rareza: **{pet_data['rarity']}**\n\n_{pet_data['flavor']}_",
             color=discord.Color.gold()
         )
-        
         view = CaptureView(user_id, pet_data)
-        
-        if pet_data['cap_type'] == "pay":
-            embed.add_field(name="Requisito", value=f"Pide **{pet_data['cap_cost']:,}** monedas como ofrenda.")
-        elif pet_data['cap_type'] == "auto":
-            embed.add_field(name="Requisito", value="Se ve muy amigable. No pide nada.")
-        else:
-            embed.add_field(name="Requisito", value="Requiere que demuestres tu valor (Condición especial).")
-            
         await interaction.channel.send(content=f"<@{user_id}>", embed=embed, view=view)
     except Exception as e:
-        logger.warning(f"No se pudo enviar interfaz de encuentro de mascota: {e}")
+        logger.warning(f"Error enviar encounter UI: {e}")
 
 class CaptureView(discord.ui.View):
     def __init__(self, user_id, pet_data):
@@ -314,11 +311,9 @@ class CaptureView(discord.ui.View):
             await inter.response.send_message("¡Esta criatura no te está mirando a ti!", ephemeral=True)
             return
             
-        # Evaluar costo
         success = False
-        if self.pet_data['cap_type'] == "pay" or self.pet_data['cap_type'] == "pay_and_survive":
+        if self.pet_data['cap_type'] in ["pay", "pay_and_survive"]:
             cost = self.pet_data['cap_cost']
-            from src.db import deduct_balance
             has_money = await asyncio.to_thread(deduct_balance, self.user_id, cost)
             if has_money[0]:
                 success = True
@@ -326,24 +321,21 @@ class CaptureView(discord.ui.View):
                 await inter.response.send_message(f"❌ No tienes las {cost:,} monedas que exige esta criatura.", ephemeral=True)
                 return
         else:
-            success = True # Auto o especial simplificado
+            success = True
             
         if success:
-            # Guardar en DB
-            from src.db import db_cursor
             def _save_pet():
                 with db_cursor() as c:
-                    c.execute("INSERT INTO UserPets (UserID, PetID) VALUES (%s, %s)", (self.user_id, self.pet_data['id']))
+                    c.execute("INSERT INTO UserPets (UserID, PetID, Level, XP, Loyalty) VALUES (%s, %s, 1, 0, 100)", (self.user_id, self.pet_data['id']))
             await asyncio.to_thread(_save_pet)
             
-            # Deshabilitar botones
             for child in self.children:
                 child.disabled = True
             
             embed = inter.message.embeds[0]
             embed.color = discord.Color.green()
             embed.title = "🎉 ¡Captura Exitosa!"
-            embed.description = f"¡Has atrapado a {self.pet_data['emoji']} **{self.pet_data['name']}**!\nUsa `/pets` para ver tu colección.\nUsa `/pet_nombre` para darle un nombre."
+            embed.description = f"¡Has atrapado a {self.pet_data['emoji']} **{self.pet_data['name']}**!\nUsa `/pets` para ver tu colección."
             embed.clear_fields()
             
             await inter.response.edit_message(embed=embed, view=self)
@@ -352,201 +344,150 @@ class CaptureView(discord.ui.View):
     async def btn_leave(self, inter: discord.Interaction, button: discord.ui.Button):
         if inter.user.id != self.user_id:
             return
-        
         for child in self.children:
             child.disabled = True
-            
         embed = inter.message.embeds[0]
         embed.color = discord.Color.dark_grey()
         embed.title = "💨 Se ha marchado"
-        embed.description = "Decidiste dejar ir a la criatura. Rápidamente desaparece entre las sombras."
+        embed.description = "Decidiste dejar ir a la criatura."
         embed.clear_fields()
-        
         await inter.response.edit_message(embed=embed, view=self)
 
-# Cogs de Comandos
-
 def _format_loyalty_bar(loyalty, size=10):
-    """Barra visual de lealtad."""
     filled = min(size, int((loyalty / 100) * size))
     return "█" * filled + "░" * (size - filled)
 
 def _get_mood_from_loyalty(loyalty):
-    """Devuelve emoji y texto de ánimo basado en la lealtad."""
-    if loyalty >= 75:
-        return "😊", "Feliz"
-    elif loyalty >= 50:
-        return "🙂", "Contenta"
-    elif loyalty >= 25:
-        return "😐", "Neutral"
-    else:
-        return "😢", "Triste"
+    if loyalty >= 75: return "😊", "Feliz"
+    elif loyalty >= 50: return "🙂", "Contenta"
+    elif loyalty >= 25: return "😐", "Neutral"
+    else: return "😢", "Triste"
 
-def _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favorite_game):
-    """Convierte los datos técnicos del efecto en una descripción legible."""
-    pct_chance = int((effect_chance or 0) * 100) if effect_chance else None
-    cap_text = f" (máx {effect_cap:,})" if effect_cap and effect_cap > 0 else ""
-    
-    descriptions = {
-        "multiplier": f"Multiplica tus ganancias x{effect_value:.2f} en cada victoria{cap_text}",
-        "refund": f"Recupera el {int((effect_value or 0) * 100)}% de tu apuesta al perder{cap_text}",
-        "proc_universal": f"{pct_chance}% de encontrar x{effect_value:.1f} de tu apuesta como bonus{cap_text}",
-        "proc_derrota": f"{pct_chance}% de recuperar x{effect_value:.1f} de tu apuesta al perder{cap_text}",
-        "proc_derrota_y_revive": f"{pct_chance}% de recuperar x{effect_value:.1f} al perder + renace si llega a 0 lealtad{cap_text}",
-        "proc_juego": f"{pct_chance}% de bonus x{effect_value:.1f} jugando **{favorite_game or '???'}**{cap_text}",
-        "proc_juego_y_mult": f"{pct_chance}% de bonus x{effect_value:.1f} en **{favorite_game or '???'}**{cap_text}",
-        "proc_high_roller": f"{pct_chance}% de bonus x{effect_value:.1f} en apuestas ≥10% de tu saldo{cap_text}",
-    }
-    return descriptions.get(effect_type, "Habilidad desconocida")
+# --- VISTA PAGINADA DEL CATÁLOGO DE MASCOTAS ---
 
-
-# --- Vistas de Fusión ---
-
-class FusionSelectView(discord.ui.View):
-    """Muestra botones para elegir qué especie fusionar."""
-    def __init__(self, user_id, fusionables):
-        super().__init__(timeout=120)
+class PetsCatalogPaginatorView(discord.ui.View):
+    """Vista interactiva con botones Anterior (◀️) y Siguiente (▶️) para explorar las mascotas (5 por página)."""
+    def __init__(self, all_pets: list[dict], user_id: int):
+        super().__init__(timeout=180)
+        self.all_pets = all_pets
         self.user_id = user_id
-        # Limitar a 5 botones (límite de Discord por fila)
-        for i, f in enumerate(fusionables[:5]):
-            button = discord.ui.Button(
-                label=f"{f['name']} ({f['count']}x)",
-                emoji=f['emoji'],
-                style=discord.ButtonStyle.primary,
-                custom_id=f"fuse_{f['pet_id']}",
-                row=i // 5
-            )
-            button.callback = self._make_callback(f)
-            self.add_item(button)
-    
-    def _make_callback(self, fuse_data):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("¡Esta fusión no es tuya!", ephemeral=True)
-                return
-            
-            # Confirmar la fusión
-            rarity_upgrade_map = {
-                "Normal": "Rara", "Rara": "Épica", "Épica": "Legendaria",
-                "Legendaria": "Mítica", "Mítica": "Mítica ✦"
-            }
-            target = rarity_upgrade_map.get(fuse_data['rarity'], fuse_data['rarity'])
-            
-            confirm_embed = discord.Embed(
-                title="⚠️ Confirmar Fusión",
-                description=(
-                    f"Vas a sacrificar **5x {fuse_data['emoji']} {fuse_data['name']}** ({fuse_data['rarity']})\n"
-                    f"para obtener **1 mascota aleatoria** de rareza **{target}**.\n\n"
-                    f"⚠️ **Esta acción es irreversible.** Las 5 mascotas se eliminarán permanentemente.\n"
-                    f"Se sacrificarán las de menor lealtad primero."
-                ),
-                color=discord.Color.orange()
-            )
-            
-            confirm_view = FusionConfirmView(self.user_id, fuse_data)
-            
-            # Deshabilitar botones del menú original
-            for child in self.children:
-                child.disabled = True
-            await interaction.response.edit_message(embed=confirm_embed, view=confirm_view)
-        
-        return callback
+        self.current_page = 0
+        self.page_size = 5
+        self.total_pages = max(1, math.ceil(len(all_pets) / self.page_size))
+        self._update_buttons()
 
-
-class FusionConfirmView(discord.ui.View):
-    """Confirmación final antes de fusionar."""
-    def __init__(self, user_id, fuse_data):
-        super().__init__(timeout=60)
-        self.user_id = user_id
-        self.fuse_data = fuse_data
-    
-    @discord.ui.button(label="✨ Fusionar", style=discord.ButtonStyle.success, emoji="⚗️")
-    async def btn_confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("¡Esta fusión no es tuya!", ephemeral=True)
-            return
-        
-        # Deshabilitar botones inmediatamente
-        for child in self.children:
-            child.disabled = True
-        
-        # Ejecutar la fusión
-        success, result = await asyncio.to_thread(fuse_pets, self.user_id, self.fuse_data['pet_id'])
-        
-        if not success:
-            error_embed = discord.Embed(
-                title="❌ Fusión Fallida",
-                description=f"No se pudo completar la fusión: {result}",
-                color=discord.Color.red()
-            )
-            await interaction.response.edit_message(embed=error_embed, view=self)
-            return
-        
-        # Colores según rareza resultante
-        rarity_colors = {
-            "Normal": discord.Color.light_grey(),
-            "Rara": discord.Color.blue(),
-            "Épica": discord.Color.purple(),
-            "Legendaria": discord.Color.gold(),
-            "Mítica": discord.Color.red(),
-        }
-        result_color = rarity_colors.get(result['new_rarity'], discord.Color.blurple())
-        
-        # Títulos y descripciones especiales
-        if result['is_mythic_boost']:
-            title = "🌌 ¡FUSIÓN MÍTICA SUPREMA!"
-            desc = (
-                f"Las cinco criaturas míticas se unen en una explosión de energía cósmica...\n\n"
-                f"De las cenizas nace:\n"
-                f"# {result['new_pet_emoji']} {result['new_pet_name']}\n"
-                f"🌟 Rareza: **{result['new_rarity']} ✦** (Potenciada)\n"
-                f"❤️ Lealtad inicial: **75/100**\n\n"
-                f"*{result['flavor_text'] or 'Una criatura de poder inconmensurable.'}*"
-            )
-        else:
-            rarity_reactions = {
-                "Rara": ("✨ ¡Fusión Exitosa!", "Las cinco criaturas se combinan en una luz brillante..."),
-                "Épica": ("💎 ¡Fusión Épica!", "Una energía poderosa envuelve a las criaturas mientras se fusionan..."),
-                "Legendaria": ("🔥 ¡FUSIÓN LEGENDARIA!", "Un estallido de poder sacude el campo de batalla..."),
-                "Mítica": ("🌌 ¡FUSIÓN MÍTICA!", "El cielo se oscurece mientras una fuerza ancestral despierta..."),
-            }
-            title, intro = rarity_reactions.get(result['new_rarity'], ("✨ ¡Fusión Exitosa!", "Las criaturas se fusionan..."))
-            desc = (
-                f"{intro}\n\n"
-                f"**5x {self.fuse_data['emoji']} {self.fuse_data['name']}** ({result['old_rarity']}) → \n"
-                f"# {result['new_pet_emoji']} {result['new_pet_name']}\n"
-                f"🌟 Rareza: **{result['new_rarity']}**\n"
-                f"❤️ Lealtad inicial: **50/100**\n"
-                f"🆔 ID: `{result['new_user_pet_id']}`\n\n"
-                f"*{result['flavor_text'] or 'Una criatura misteriosa.'}*"
-            )
-        
-        result_embed = discord.Embed(title=title, description=desc, color=result_color)
-        result_embed.set_footer(text="Usa /pets para ver tu colección · /pet_equipar para equiparla")
-        
-        await interaction.response.edit_message(embed=result_embed, view=self)
-    
-    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.danger)
-    async def btn_cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return
-        
-        for child in self.children:
-            child.disabled = True
-        
-        cancel_embed = discord.Embed(
-            title="❌ Fusión Cancelada",
-            description="Tus mascotas siguen a salvo.",
-            color=discord.Color.dark_grey()
+    def _build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"📖 Catálogo de Mascotas (Página {self.current_page + 1}/{self.total_pages})",
+            description=f"Explora las **{len(self.all_pets)}** mascotas disponibles. Cada lista muestra 5 mascotas con sus efectos.",
+            color=discord.Color.gold()
         )
-        await interaction.response.edit_message(embed=cancel_embed, view=self)
+        embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/3062/3062634.png")
 
+        start = self.current_page * self.page_size
+        end = start + self.page_size
+        page_items = self.all_pets[start:end]
+
+        rarity_colors = {
+            "Normal": "⚪", "Rara": "🔵", "Épica": "🟣", "Legendaria": "🟡", "Mítica": "🔴"
+        }
+
+        for pet in page_items:
+            r_badge = rarity_colors.get(pet['rarity'], '🌟')
+            name_header = f"{pet['emoji']} {pet['name']} — {r_badge} **{pet['rarity']}**"
+            
+            effect_desc = _describe_effect(pet['effect_type'], pet['effect_value'], pet['effect_chance'], pet['effect_cap'], pet['favorite_game'])
+            
+            value_str = (
+                f"👪 **Familia:** {pet['family'] or 'N/A'} | 🎭 **Temperamento:** {pet['temperament'] or 'N/A'}\n"
+                f"✨ **Lo que hace:** {effect_desc}\n"
+                f"📜 *{pet['flavor'] or 'Sin descripción disponible.'}*"
+            )
+            embed.add_field(name=name_header, value=value_str, inline=False)
+
+        embed.set_footer(text=f"Página {self.current_page + 1} de {self.total_pages} · Usa ◀️ y ▶️ para navegar")
+        return embed
+
+    def _update_buttons(self):
+        self.btn_prev.disabled = (self.current_page == 0)
+        self.btn_next.disabled = (self.current_page >= self.total_pages - 1)
+        self.btn_page.label = f"Página {self.current_page + 1}/{self.total_pages}"
+
+    @discord.ui.button(label="◀️ Anterior", style=discord.ButtonStyle.primary, custom_id="btn_catalog_prev")
+    async def btn_prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Esta sesión de catálogo no es tuya.", ephemeral=True)
+            return
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._update_buttons()
+            embed = self._build_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True, custom_id="btn_catalog_page")
+    async def btn_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="▶️ Siguiente", style=discord.ButtonStyle.primary, custom_id="btn_catalog_next")
+    async def btn_next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Esta sesión de catálogo no es tuya.", ephemeral=True)
+            return
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self._update_buttons()
+            embed = self._build_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
 
 class PetsMasterCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="pets", description="Muestra tu colección de mascotas con sus características y lealtad.")
+    @app_commands.command(name="catalogo_mascotas", description="Muestra el catálogo interactivo de mascotas (5 por página) con botones ◀️ y ▶️.")
+    async def catalogo_mascotas_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        def _fetch_catalog():
+            with db_cursor() as c:
+                c.execute("""
+                    SELECT PetID, Name, Rarity, Emoji, Family, Temperament, EffectType, EffectValue, EffectChance, EffectCap, FavoriteGame, FlavorText
+                    FROM PetsCatalog
+                    WHERE Enabled = 1
+                    ORDER BY 
+                        CASE Rarity 
+                            WHEN 'Normal' THEN 1 
+                            WHEN 'Rara' THEN 2 
+                            WHEN 'Épica' THEN 3 
+                            WHEN 'Legendaria' THEN 4 
+                            WHEN 'Mítica' THEN 5 
+                        END ASC, PetID ASC
+                """)
+                rows = c.fetchall()
+                return [
+                    {
+                        "id": r[0], "name": r[1], "rarity": r[2], "emoji": r[3],
+                        "family": r[4], "temperament": r[5], "effect_type": r[6],
+                        "effect_value": r[7], "effect_chance": r[8], "effect_cap": r[9],
+                        "favorite_game": r[10], "flavor": r[11]
+                    }
+                    for r in rows
+                ]
+
+        all_pets = await asyncio.to_thread(_fetch_catalog)
+        
+        if not all_pets:
+            await interaction.followup.send("❌ No hay mascotas registradas en el catálogo en este momento.", ephemeral=True)
+            return
+
+        view = PetsCatalogPaginatorView(all_pets, interaction.user.id)
+        embed = view._build_embed()
+        await interaction.followup.send(embed=embed, view=view)
+
+    @app_commands.command(name="pets_catalogo", description="Muestra el catálogo interactivo de mascotas (5 por página). (Alias de /catalogo_mascotas)")
+    async def pets_catalogo_cmd(self, interaction: discord.Interaction):
+        await self.catalogo_mascotas_cmd(interaction)
+
+    @app_commands.command(name="pets", description="Muestra tu colección de mascotas con sus 3 slots, nivel (1-15) y habilidades.")
     async def pets_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id
@@ -554,13 +495,14 @@ class PetsMasterCog(commands.Cog):
         def _get_pets():
             with db_cursor() as c:
                 c.execute("""
-                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.IsActive, up.Loyalty, up.Nickname,
+                    SELECT up.UserPetID, p.Name, p.Emoji, p.Rarity, up.EquippedSlot, up.Loyalty, up.Nickname,
                            p.EffectType, p.EffectValue, p.EffectChance, p.EffectCap, p.FavoriteGame,
                            p.Family, p.Temperament, p.FlavorText,
-                           up.GamesWithOwner, up.WinsWithOwner, up.LossesWithOwner
+                           up.GamesWithOwner, up.WinsWithOwner, up.LossesWithOwner,
+                           COALESCE(up.Level, 1), COALESCE(up.XP, 0)
                     FROM UserPets up JOIN PetsCatalog p ON up.PetID = p.PetID
                     WHERE up.UserID = %s AND up.Status != 'Escapó'
-                    ORDER BY up.IsActive DESC, p.Rarity DESC
+                    ORDER BY up.EquippedSlot IS NOT NULL DESC, p.Rarity DESC
                 """, (user_id,))
                 return c.fetchall()
                 
@@ -569,40 +511,30 @@ class PetsMasterCog(commands.Cog):
         if not pets:
             embed_empty = discord.Embed(
                 title="🐾 Tu Colección",
-                description=(
-                    "No tienes ninguna mascota en tu colección.\n"
-                    "¡Juega en el casino para encontrar una!\n\n"
-                    "**¿Cómo conseguir mascotas?**\n"
-                    "• Juega cualquier juego de casino\n"
-                    "• Mantén rachas de victorias o derrotas\n"
-                    "• Las mascotas aparecen como encuentros aleatorios"
-                ),
+                description="No tienes ninguna mascota en tu colección.\n¡Usa `/catalogo_mascotas` para explorar todas las mascotas disponibles!",
                 color=discord.Color.greyple()
             )
             await interaction.followup.send(embed=embed_empty, ephemeral=True)
             return
         
         embeds = []
-        
-        # Embed principal con resumen
         embed_main = discord.Embed(
-            title=f"🐾 Colección de {interaction.user.display_name}",
+            title=f"🐾 Colección de Mascotas de {interaction.user.display_name}",
             description=f"Tienes **{len(pets)}** mascota(s) en tu colección.",
             color=discord.Color.blurple()
         )
         embeds.append(embed_main)
         
-        for (up_id, p_name, p_emoji, p_rarity, is_active, loyalty, nickname,
+        for (up_id, p_name, p_emoji, p_rarity, slot, loyalty, nickname,
              effect_type, effect_value, effect_chance, effect_cap, favorite_game,
              family, temperament, flavor_text,
-             games_with, wins_with, losses_with) in pets:
+             games_with, wins_with, losses_with, p_level, p_xp) in pets[:9]:
             
-            status = "🟢 **Activa**" if is_active == 1 else "⚪ Guardada"
+            slot_badge = f" 🏆 **[SLOT {slot.upper()}]**" if slot else " ⚪ Guardada"
             d_name = display_pet_name(p_name, nickname)
             mood_emoji, mood_text = _get_mood_from_loyalty(loyalty or 50)
             loyalty_bar = _format_loyalty_bar(loyalty or 50)
             
-            # Colores según rareza
             rarity_colors = {
                 "Normal": discord.Color.light_grey(),
                 "Rara": discord.Color.blue(),
@@ -613,41 +545,21 @@ class PetsMasterCog(commands.Cog):
             embed_color = rarity_colors.get(p_rarity, discord.Color.blurple())
             
             pet_embed = discord.Embed(
-                title=f"{p_emoji} {d_name}",
-                description=f"*{flavor_text or 'Una criatura misteriosa.'}*",
+                title=f"{p_emoji} {d_name} (Nv. {p_level}/15){slot_badge}",
+                description=f"*{flavor_text or 'Una criatura leal.'}*",
                 color=embed_color
             )
             
-            # Info básica
-            info_lines = [f"🌟 Rareza: **{p_rarity}**", f"📌 Estado: {status}", f"🆔 ID: `{up_id}`"]
-            if nickname and str(nickname).strip():
-                info_lines.insert(0, f"🏷️ Especie: **{p_name}**")
-            if family:
-                info_lines.append(f"👪 Familia: **{family}**")
-            if temperament:
-                info_lines.append(f"🎭 Temperamento: **{temperament}**")
-            pet_embed.add_field(name="📋 Info", value="\n".join(info_lines), inline=False)
+            xp_needed = get_xp_for_level(p_level)
+            info_text = f"🌟 Rareza: **{p_rarity}** | 🆔 ID: `{up_id}`\n⚡ XP: **{p_xp}/{xp_needed}**"
+            pet_embed.add_field(name="📋 Datos Básicos", value=info_text, inline=False)
             
-            # Habilidad
-            if effect_type:
-                ability_desc = _describe_effect(effect_type, effect_value, effect_chance, effect_cap, favorite_game)
-                pet_embed.add_field(name="✨ Habilidad", value=ability_desc, inline=False)
+            h1 = "🔓 **Nv.5 (Pasiva):** +5% efectividad de bonificación" if p_level >= 5 else "🔒 **Nv.5:** Se desbloquea en Nivel 5"
+            h2 = "🔓 **Nv.10 (Reacción/Activa):** Activación autónoma de emergencia" if p_level >= 10 else "🔒 **Nv.10:** Se desbloquea en Nivel 10"
+            h3 = "🔓 **Nv.15 (Definitiva):** Habilidad Definitiva Mítica" if p_level >= 15 else "🔒 **Nv.15:** Se desbloquea en Nivel 15"
             
-            if favorite_game:
-                pet_embed.add_field(name="🎮 Juego Favorito", value=f"**{favorite_game}**", inline=True)
+            pet_embed.add_field(name="✨ Habilidades Desbloqueadas", value=f"{h1}\n{h2}\n{h3}", inline=False)
             
-            # Estadísticas
-            games = games_with or 0
-            wins = wins_with or 0
-            losses = losses_with or 0
-            winrate = f"{(wins / games * 100):.0f}%" if games > 0 else "N/A"
-            pet_embed.add_field(
-                name="📊 Estadísticas",
-                value=f"Partidas: **{games:,}** · Wins: **{wins:,}** · Losses: **{losses:,}** · WR: **{winrate}**",
-                inline=False
-            )
-            
-            # Lealtad con barra visual y mood
             loyalty_val = loyalty or 50
             pet_embed.add_field(
                 name=f"{mood_emoji} Lealtad — {mood_text}",
@@ -655,156 +567,153 @@ class PetsMasterCog(commands.Cog):
                 inline=False
             )
             
-            # Tips de lealtad
-            tips = (
-                "❤️ **Ganar lealtad:** Gana partidas con esta pet equipada (+1 por victoria)\n"
-                "💔 **Perder lealtad:** Pierde partidas con esta pet equipada (-2 por derrota)\n"
-            )
-            if effect_type == "proc_derrota_y_revive":
-                tips += "🔥 **Especial:** Si llega a 0, esta mascota renace con 50 de lealtad"
-            else:
-                tips += "⚠️ **Abandono:** Si llega a 0, tu mascota te abandona para siempre"
-            
-            pet_embed.add_field(name="💡 Cómo Ganar/Perder Lealtad", value=tips, inline=False)
-            
             embeds.append(pet_embed)
         
-        # Discord permite hasta 10 embeds por mensaje
-        if len(embeds) <= 10:
-            await interaction.followup.send(embeds=embeds)
-        else:
-            # Si hay más de 9 pets, enviar en lotes
-            await interaction.followup.send(embeds=embeds[:10])
-            for i in range(10, len(embeds), 10):
-                await interaction.channel.send(embeds=embeds[i:i+10])
+        await interaction.followup.send(embeds=embeds[:10])
 
-
-    @app_commands.command(name="pet_equipar", description="Equipa una mascota de tu colección usando su ID.")
-    async def pet_equipar_cmd(self, interaction: discord.Interaction, pet_id: int):
+    @app_commands.command(name="pet_equipar", description="Equipa una mascota en uno de los 3 slots (casino, robar, raid).")
+    @app_commands.describe(pet_id="ID de la mascota", slot="Slot de equipamiento (casino, robar, raid)")
+    @app_commands.choices(slot=[
+        app_commands.Choice(name="Casino 🎰", value="casino"),
+        app_commands.Choice(name="Robar 🥷", value="robar"),
+        app_commands.Choice(name="Raid ⚔️", value="raid")
+    ])
+    async def pet_equipar_cmd(self, interaction: discord.Interaction, pet_id: int, slot: str):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
         
+        if slot not in SLOTS_PERMITIDOS:
+            await interaction.followup.send("❌ Slot no válido. Elige entre `casino`, `robar` o `raid`.", ephemeral=True)
+            return
+
         def _equip():
             with db_cursor() as c:
                 c.execute("SELECT UserPetID FROM UserPets WHERE UserPetID = %s AND UserID = %s AND Status != 'Escapó'", (pet_id, user_id))
                 if not c.fetchone():
                     return False
-                c.execute("UPDATE UserPets SET IsActive = 0 WHERE UserID = %s", (user_id,))
-                c.execute("UPDATE UserPets SET IsActive = 1 WHERE UserPetID = %s", (pet_id,))
+                c.execute("UPDATE UserPets SET EquippedSlot = NULL WHERE UserID = %s AND EquippedSlot = %s", (user_id, slot))
+                c.execute("UPDATE UserPets SET EquippedSlot = %s, IsActive = 1 WHERE UserPetID = %s", (slot, pet_id))
                 return True
                 
         success = await asyncio.to_thread(_equip)
         if success:
-            await interaction.followup.send(f"✅ Has equipado la mascota ID `{pet_id}` exitosamente.", ephemeral=True)
+            await interaction.followup.send(f"✅ Mascota ID `{pet_id}` equipada exitosamente en el **Slot [{slot.upper()}]**.", ephemeral=True)
         else:
             await interaction.followup.send("❌ No se encontró esa mascota en tu colección.", ephemeral=True)
 
-    @app_commands.command(name="pets_equipar", description="Equipa una mascota de tu colección usando su ID. (Alias de /pet_equipar)")
-    async def pets_equipar_cmd(self, interaction: discord.Interaction, pet_id: int):
-        await self.pet_equipar_cmd(interaction, pet_id)
-
-    @app_commands.command(name="pet_nombre", description="Ponle un nombre personalizado a una de tus mascotas.")
-    @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
-    async def pet_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
+    @app_commands.command(name="pet_liberar", description="Libera una mascota de tu colección a cambio de un reembolso en Balance.")
+    @app_commands.describe(pet_id="ID de la mascota a liberar")
+    async def pet_liberar_cmd(self, interaction: discord.Interaction, pet_id: int):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
-
-        if quitar:
-            success, result = await asyncio.to_thread(rename_user_pet, user_id, pet_id, None)
-            if success:
-                await interaction.followup.send("✅ Se quitó el nombre personalizado de la mascota.", ephemeral=True)
-            else:
-                await interaction.followup.send(f"❌ {result}", ephemeral=True)
-            return
-
-        if not nombre:
-            await interaction.followup.send("❌ Debes indicar un nombre o marcar la opción **quitar**.", ephemeral=True)
-            return
-
-        success, result = await asyncio.to_thread(rename_user_pet, user_id, pet_id, nombre)
+        
+        def _liberar():
+            with db_cursor() as c:
+                c.execute("""
+                    SELECT up.UserPetID, p.Name, p.Rarity, p.Emoji
+                    FROM UserPets up JOIN PetsCatalog p ON up.PetID = p.PetID
+                    WHERE up.UserPetID = %s AND up.UserID = %s AND up.Status != 'Escapó'
+                """, (pet_id, user_id))
+                row = c.fetchone()
+                if not row:
+                    return False, "Mascota no encontrada."
+                
+                up_id, name, rarity, emoji = row
+                reembolso = REEMBOLSO_RAREZA.get(rarity, 5000)
+                
+                c.execute("DELETE FROM UserPets WHERE UserPetID = %s", (up_id,))
+                c.execute("UPDATE Users SET Balance = Balance + %s WHERE UserID = %s", (reembolso, user_id))
+                return True, (name, rarity, emoji, reembolso)
+                
+        success, res = await asyncio.to_thread(_liberar)
         if success:
-            await interaction.followup.send(f"✅ Tu mascota ahora se llama **{result}**.", ephemeral=True)
+            name, rarity, emoji, reembolso = res
+            await interaction.followup.send(f"🕊️ Has liberado a {emoji} **{name}** ({rarity}). Recibiste **{reembolso:,}** 🪙 Balance de reembolso.", ephemeral=True)
         else:
-            await interaction.followup.send(f"❌ {result}", ephemeral=True)
+            await interaction.followup.send(f"❌ {res}", ephemeral=True)
 
-    @app_commands.command(name="pets_nombre", description="Ponle un nombre personalizado a una de tus mascotas. (Alias de /pet_nombre)")
-    @app_commands.describe(pet_id="ID de la mascota (visible en /pets)", nombre="Nombre personalizado (máx. 32 caracteres)", quitar="Quita el nombre personalizado y vuelve al nombre de la especie")
-    async def pets_nombre_cmd(self, interaction: discord.Interaction, pet_id: int, nombre: Optional[str] = None, quitar: bool = False):
-        await self.pet_nombre_cmd(interaction, pet_id, nombre, quitar)
-
-    @app_commands.command(name="pet_fusionar", description="Fusiona 5 mascotas repetidas para obtener una de rareza superior.")
-    async def pet_fusionar_cmd(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        user_id = interaction.user.id
-        
-        fusionables = await asyncio.to_thread(get_fusionable_pets, user_id)
-        
-        if not fusionables:
-            embed = discord.Embed(
-                title="⚗️ Fusión de Mascotas",
-                description=(
-                    "No tienes suficientes mascotas repetidas para fusionar.\n\n"
-                    "**¿Cómo funciona?**\n"
-                    "• Necesitas **5 mascotas de la misma especie**\n"
-                    "• Se sacrifican las 5 y obtienes **1 de rareza superior**\n"
-                    "• Normal → Rara → Épica → Legendaria → Mítica\n\n"
-                    "¡Sigue jugando y capturando para conseguir duplicados!"
-                ),
-                color=discord.Color.dark_grey()
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            return
-        
-        rarity_upgrade_map = {
-            "Normal": "Rara", "Rara": "Épica", "Épica": "Legendaria",
-            "Legendaria": "Mítica", "Mítica": "Mítica ✦"
-        }
-        
-        embed = discord.Embed(
-            title="⚗️ Fusión de Mascotas",
-            description="Tienes las siguientes mascotas listas para fusionar.\nSelecciona una especie con el botón correspondiente.",
-            color=discord.Color.purple()
-        )
-        
-        for f in fusionables:
-            target_rarity = rarity_upgrade_map.get(f['rarity'], f['rarity'])
-            embed.add_field(
-                name=f"{f['emoji']} {f['name']}",
-                value=(
-                    f"📦 Tienes: **{f['count']}** duplicados\n"
-                    f"🌟 Rareza actual: **{f['rarity']}**\n"
-                    f"⬆️ Resultado: **{target_rarity}** (aleatoria)"
-                ),
-                inline=False
-            )
-        
-        view = FusionSelectView(user_id, fusionables)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-    @app_commands.command(name="pets_fusionar", description="Fusiona 5 mascotas repetidas para obtener una de rareza superior. (Alias de /pet_fusionar)")
-    async def pets_fusionar_cmd(self, interaction: discord.Interaction):
-        await self.pet_fusionar_cmd(interaction)
-
-    @app_commands.command(name="apostador", description="Muestra tu progreso y Nivel de Apostador.")
-    async def apostador_cmd(self, interaction: discord.Interaction):
+    @app_commands.command(name="abrir_caja", description="Abre una Caja de Mascotas Sellada de tu inventario (Costo: 15,000 Balance, Pity de 35).")
+    async def abrir_caja_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer()
         user_id = interaction.user.id
         
-        def _get_level():
+        def _check_and_consume():
             with db_cursor() as c:
-                c.execute("SELECT GamblerLevel, GamblerXP FROM GamblerProgress WHERE UserID = %s", (user_id,))
-                return c.fetchone()
+                c.execute("SELECT Quantity FROM UserItems WHERE UserID = %s AND ItemID = 20 AND Quantity > 0 AND Used = 0", (user_id,))
+                row_caja = c.fetchone()
+                if not row_caja:
+                    return False, "no_box"
                 
-        prog = await asyncio.to_thread(_get_level)
-        level = prog[0] if prog else 1
-        xp = prog[1] if prog else 0
-        req_xp = 40 + (level - 1) * 15
-        
-        embed = discord.Embed(title=f"🎲 Perfil de Apostador de {interaction.user.display_name}", color=discord.Color.purple())
-        embed.add_field(name="Nivel", value=f"**{level}** / 50")
-        embed.add_field(name="Experiencia", value=f"{xp} / {req_xp} XP")
-        
-        await interaction.followup.send(embed=embed)
+                c.execute("SELECT Balance FROM Users WHERE UserID = %s", (user_id,))
+                bal = c.fetchone()
+                if not bal or bal[0] < 15000:
+                    return False, "no_balance"
+                
+                c.execute("UPDATE Users SET Balance = Balance - 15000 WHERE UserID = %s", (user_id,))
+                usar_item_usuario(user_id, 20)
+                
+                c.execute("SELECT UnluckyBoxesCount FROM UserPityState WHERE UserID = %s", (user_id,))
+                pity_row = c.fetchone()
+                pity_count = pity_row[0] if pity_row else 0
+                
+                force_high_rarity = pity_count >= 35
+                
+                if force_high_rarity:
+                    rarity = random.choice(["Legendaria", "Mítica"])
+                    c.execute("UPDATE UserPityState SET UnluckyBoxesCount = 0 WHERE UserID = %s", (user_id,))
+                else:
+                    r = random.random()
+                    if r < 0.50: rarity = "Normal"
+                    elif r < 0.80: rarity = "Rara"
+                    elif r < 0.95: rarity = "Épica"
+                    elif r < 0.99: rarity = "Legendaria"
+                    else: rarity = "Mítica"
+                    
+                    if rarity in ["Legendaria", "Mítica"]:
+                        c.execute("INSERT INTO UserPityState (UserID, UnluckyBoxesCount) VALUES (%s, 0) ON CONFLICT (UserID) DO UPDATE SET UnluckyBoxesCount = 0", (user_id,))
+                    else:
+                        c.execute("INSERT INTO UserPityState (UserID, UnluckyBoxesCount) VALUES (%s, 1) ON CONFLICT (UserID) DO UPDATE SET UnluckyBoxesCount = UserPityState.UnluckyBoxesCount + 1", (user_id,))
+
+                c.execute("SELECT PetID, Name, Emoji, Rarity, FlavorText FROM PetsCatalog WHERE Rarity = %s AND Enabled = 1 ORDER BY RANDOM() LIMIT 1", (rarity,))
+                chosen_pet = c.fetchone()
+                
+                c.execute("INSERT INTO UserPets (UserID, PetID, Level, XP, Loyalty) VALUES (%s, %s, 1, 0, 100) RETURNING UserPetID", (user_id, chosen_pet[0]))
+                new_up_id = c.fetchone()[0]
+                
+                return True, (chosen_pet, force_high_rarity, pity_count)
+
+        success, res = await asyncio.to_thread(_check_and_consume)
+        if not success:
+            if res == "no_box":
+                await interaction.followup.send("❌ No tienes una **Caja de Mascotas Sellada (ID: 20)** en tu inventario.", ephemeral=True)
+            elif res == "no_balance":
+                await interaction.followup.send("❌ Requieres **15,000 Balance** para cubrir la tasa de apertura de esta caja.", ephemeral=True)
+            return
+
+        chosen_pet, force_high_rarity, pity_count = res
+        pet_id, pet_name, pet_emoji, pet_rarity, flavor = chosen_pet
+
+        reel_emojis = ["🐱", "🐶", "🦊", "🦄", "🐉", "🦅", "🦁", "🐺", "🐼"]
+        msg = await interaction.followup.send("🎰 **[ ABRIENDO CAJA DE MASCOTAS ]**\n`[ ❓ | ❓ | ❓ | ❓ | ❓ ]`\n⏱️ Girando el carrete...")
+
+        delays = [0.6, 0.8, 1.2, 1.8]
+        for delay in delays:
+            await asyncio.sleep(delay)
+            random.shuffle(reel_emojis)
+            reel_str = " | ".join(reel_emojis[:5])
+            await msg.edit(content=f"🎰 **[ ABRIENDO CAJA DE MASCOTAS ]**\n`[ {reel_str} ]`\n⏱️ Desacelerando ruleta...")
+
+        await asyncio.sleep(2.0)
+
+        pity_text = " *(✨ ¡GARANTÍA DE PITY DE 35 CAJAS ACTIVADA!)*" if force_high_rarity else f" *(Pity acumulado: {pity_count+1}/35)*"
+        embed = discord.Embed(
+            title="🎉 ¡CAJA ABIERTA CON ÉXITO!",
+            description=f"¡Has obtenido a {pet_emoji} **{pet_name}**!\n\n🌟 Rareza: **{pet_rarity}**{pity_text}\n_{flavor}_",
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text="Usa /pets para ver a tu nueva mascota.")
+        await msg.edit(content="🎰 **[ REEL DETENIDO ]**", embed=embed)
 
 async def setup(bot):
     await bot.add_cog(PetsMasterCog(bot))
+    print("PetsMasterCog loaded successfully.")

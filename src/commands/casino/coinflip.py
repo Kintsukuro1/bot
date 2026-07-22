@@ -4,10 +4,9 @@ from discord import app_commands
 import random
 import asyncio
 from typing import Optional
-from src.db import get_balance, set_balance, deduct_balance, add_balance, ensure_user, usuario_tiene_item, usuario_tiene_mejora, registrar_transaccion, record_game_result
+from src.db import get_balance, ensure_user, usuario_tiene_mejora
 from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
-from src.commands.shop.black_market_items import BLACK_MARKET
 from src.utils.dynamic_difficulty import DynamicDifficulty
 from src.utils.cooldowns import CASINO_COOLDOWN
 
@@ -190,8 +189,6 @@ class CoinflipDuelView(discord.ui.View):
                     embed.title = "⚔️ Duelo Cancelado"
                     embed.description += "\n\n⌛ **El duelo ha expirado.** Las monedas del retador han sido devueltas."
                     await self.message.edit(embed=embed, view=self)
-            except Exception:
-                pass
             except Exception:
                 pass
 
@@ -464,4 +461,3 @@ class Coinflip(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Coinflip(bot))
-    print("Coinflip cog loaded successfully.")

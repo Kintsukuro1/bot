@@ -1,5 +1,6 @@
 import asyncio
 import random
+import logging
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -8,6 +9,8 @@ from src.db import ensure_user
 from src.services.casino_service import CasinoService
 from src.commands.economy.pets import process_post_game_events
 from src.utils.dynamic_difficulty import DynamicDifficulty
+
+logger = logging.getLogger(__name__)
 
 RED_NUMBERS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
 BLACK_NUMBERS = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35]
@@ -184,11 +187,11 @@ class RouletteView(discord.ui.View):
                     pass
 
         except Exception as e:
-            print(f"Error crítico en Ruleta (process_spin): {e}")
+            logger.error(f"Error crítico en Ruleta (process_spin): {e}")
             try:
                 await CasinoService.refund_bet(self.user_id, self.bet_amount, 'roulette', 'Error de sistema')
             except Exception as db_err:
-                print(f"Error al intentar reembolsar tras fallo en Ruleta: {db_err}")
+                logger.error(f"Error al intentar reembolsar tras fallo en Ruleta: {db_err}")
 
             embed.color = discord.Color.orange()
             embed.title = "⚠️ Ruleta - Mesa Cerrada"
@@ -252,9 +255,8 @@ class Roulette(commands.Cog):
         try:
             view.message = await interaction.original_response()
         except Exception as e:
-            print(f"Error al obtener original_response en roulette: {e}")
+            logger.warning(f"Error al obtener original_response en roulette: {e}")
 
 
 async def setup(bot):
     await bot.add_cog(Roulette(bot))
-    print("Roulette cog cargado con éxito.")

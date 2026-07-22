@@ -8,3 +8,4 @@ bot.log
 *.sqlite3
 .vscode/
 casinobot_backup.dump
+scratch/

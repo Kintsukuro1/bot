@@ -81,4 +81,3 @@ class CasinoInfo(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(CasinoInfo(bot))
-    print("Casino Info cog loaded successfully.")

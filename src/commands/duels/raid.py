@@ -688,6 +688,13 @@ class RaidCombatView(discord.ui.View):
                         target_player.blinded_turns = 2
                         logs.append(f"🌀 **Espectro Debilitante:** Aplica Ceguera (50% probabilidad de fallo) a {target_player.user.display_name} por 2 turnos.")
 
+        # --- IA Automática de Mascotas de Raid ---
+        for p in alive:
+            b_pct = (self.boss.hp / self.boss.max_hp) if self.boss.max_hp > 0 else 1.0
+            pet_msg = p.execute_pet_raid_ai(b_pct, getattr(self.boss, "fury_phase_triggered", False))
+            if pet_msg:
+                logs.append(pet_msg)
+
         # 4. Procesar acciones de jugadores
         for pl in self.players:
             pl.pre_hit_hp = pl.hp
