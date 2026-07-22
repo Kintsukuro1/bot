@@ -76,6 +76,18 @@ class PlinkoSettings(discord.ui.Modal, title="Configurar Plinko"):
         
         await self.view.actualizar_menu(interaction)
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        from src.services.casino_service import CasinoCircuitBreakerError
+        msg = str(error) if isinstance(error, CasinoCircuitBreakerError) else "❌ Ocurrió un error inesperado al procesar tu configuración."
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+        except Exception:
+            pass
+
+
 class PlinkoView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=120)
