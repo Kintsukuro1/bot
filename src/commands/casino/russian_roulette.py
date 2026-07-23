@@ -338,9 +338,8 @@ class RussianRoulette(commands.Cog):
         self.bot = bot
         self.active_lobbies = set() # channel_id
 
-    @app_commands.command(name="russian_roulette", description="Organiza un juego de Ruleta Rusa de Apuestas.")
-    @app_commands.describe(entrada="Cantidad de monedas para entrar al juego")
     async def russian_roulette(self, interaction: discord.Interaction, entrada: int):
+
         channel_id = interaction.channel_id
         if channel_id in self.active_lobbies:
             await interaction.response.send_message("❌ Ya hay un lobby activo en este canal.", ephemeral=True)

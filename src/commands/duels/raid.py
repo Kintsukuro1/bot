@@ -290,9 +290,11 @@ class RaidCombatView(discord.ui.View):
                 class_tag = f" [{p.combat_class}]"
             else:
                 class_tag = ""
+            res_disp = p.resource.format_display()
+            res_text = f"\n{res_disp}" if res_disp else ""
             embed.add_field(
                 name=f"{rank_emoji} {p.user.display_name}{class_tag} (Nv.{p.level}){status}{action_status}",
-                value=f"{hp_bar}\n⚔️ {p.atk} ATK · 🛡️ {p.def_stat} DEF",
+                value=f"{hp_bar}{res_text}\n⚔️ {p.atk} ATK · 🛡️ {p.def_stat} DEF",
                 inline=True
             )
 

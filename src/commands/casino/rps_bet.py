@@ -219,12 +219,8 @@ class RPSBet(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="rps_bet", description="Reta a otro usuario a un duelo de Piedra, Papel o Tijera por dinero.")
-    @app_commands.describe(
-        oponente="Usuario al que quieres retar",
-        apuesta="Cantidad de monedas a apostar"
-    )
     async def rps_bet(self, interaction: discord.Interaction, oponente: discord.Member, apuesta: int):
+
         retador = interaction.user
         
         if oponente.id == retador.id:

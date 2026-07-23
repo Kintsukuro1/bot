@@ -1,6 +1,7 @@
 import discord
 import random
 from src.utils.combat_config import SKILLS_CONFIG
+from src.utils.combat import ClassResource
 from src.utils.combat_progression import (
     calc_base_stats, calc_equipment_bonus, get_effective_bonus,
     apply_subclass_equipment_conversion, get_equipped_set_pieces,
@@ -16,6 +17,7 @@ class RaidCombatant:
         self.combat_class = combat_class
         self.combat_subclass = combat_subclass
         self.equipment = equipment
+        self.resource = ClassResource(combat_class)
 
         # Stats base + equipo
         base = calc_base_stats(level)

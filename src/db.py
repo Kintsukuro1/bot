@@ -2982,6 +2982,16 @@ def init_db():
             """)
             # ─── FIN MIGRACIÓN CIRCUIT BREAKER ───
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS UserCampaignProgress (
+                    UserID BIGINT NOT NULL,
+                    ChapterID INT NOT NULL,
+                    IsCompleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    CompletedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (UserID, ChapterID)
+                )
+            """)
+
 
         logger.info("Todas las tablas de la base de datos se han inicializado/verificado correctamente.")
     except Exception as e:
@@ -3090,6 +3100,29 @@ def update_combat_stats_after_duel(user_id, xp_gained, is_win, money_change):
         xp_result['win_streak'] = win_streak
         xp_result['best_win_streak'] = best_streak
         return xp_result
+
+
+def get_user_max_unlocked_chapter(user_id: int) -> int:
+    """Retorna el número máximo de Capítulo desbloqueado para el usuario (por defecto 1)."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT MAX(ChapterID) FROM UserCampaignProgress
+            WHERE UserID = %s AND IsCompleted = TRUE
+        """, (user_id,))
+        row = cursor.fetchone()
+        max_completed = row[0] if row and row[0] is not None else 0
+        return min(10, max_completed + 1)
+
+
+def complete_user_chapter(user_id: int, chapter_id: int):
+    """Marca un Capítulo como completado para el usuario."""
+    with db_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO UserCampaignProgress (UserID, ChapterID, IsCompleted, CompletedAt)
+            VALUES (%s, %s, TRUE, CURRENT_TIMESTAMP)
+            ON CONFLICT (UserID, ChapterID) DO UPDATE
+            SET IsCompleted = TRUE, CompletedAt = CURRENT_TIMESTAMP
+        """, (user_id, chapter_id))
 
 
 def log_duel(challenger_id, rival_id, winner_id, bet, turns, c_level, r_level):

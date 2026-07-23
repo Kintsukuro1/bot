@@ -400,8 +400,8 @@ class HorseRace(commands.Cog):
         self.bot = bot
         self.active_races = {} # channel_id -> HorseRaceView
 
-    @app_commands.command(name="horse_race", description="Organiza una carrera de caballos multijugador.")
     async def horse_race(self, interaction: discord.Interaction):
+
         channel_id = interaction.channel_id
         if channel_id in self.active_races:
             await interaction.response.send_message("❌ Ya hay una carrera activa en este canal.", ephemeral=True)

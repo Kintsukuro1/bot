@@ -11,9 +11,9 @@ import math
 # CONSTANTES GLOBALES
 # ──────────────────────────────────────────────
 
-MAX_COMBAT_LEVEL = 30
-COMBAT_XP_BASE = 500
-COMBAT_XP_FACTOR = 1.25
+MAX_COMBAT_LEVEL = 100
+COMBAT_XP_BASE = 400
+COMBAT_XP_FACTOR = 1.18
 
 DUEL_COOLDOWN_BASE_MINUTES = 5   # Cooldown base (nivel 1)
 DUEL_COOLDOWN_MIN_MINUTES = 1    # Cooldown mínimo (niveles altos)
@@ -38,27 +38,31 @@ ALL_STATS = ("atk", "mag", "def", "hp")
 # ──────────────────────────────────────────────
 
 COMBAT_RANKS = (
-    (1,  "Novato"),
-    (3,  "Aprendiz de Duelo"),
-    (6,  "Combatiente"),
-    (9,  "Guerrero"),
-    (13, "Veterano de Arena"),
-    (17, "Campeón"),
-    (21, "Maestro de Armas"),
-    (25, "Gladiador"),
-    (29, "Leyenda del Combate"),
+    (1,   "Novato"),
+    (10,  "Aprendiz de Duelo"),
+    (20,  "Combatiente"),
+    (30,  "Guerrero de Élite"),
+    (40,  "Veterano de Arena"),
+    (50,  "Campeón de la Trama"),
+    (60,  "Maestro de Armas"),
+    (70,  "Gladiador"),
+    (80,  "Conquistador Astral"),
+    (90,  "Divinidad del Combate"),
+    (100, "Leyenda Suprema"),
 )
 
 COMBAT_RANK_EMOJIS = {
     "Novato": "🗡️",
     "Aprendiz de Duelo": "⚔️",
     "Combatiente": "🛡️",
-    "Guerrero": "💪",
+    "Guerrero de Élite": "💪",
     "Veterano de Arena": "🏟️",
-    "Campeón": "🏆",
+    "Campeón de la Trama": "🏆",
     "Maestro de Armas": "⚜️",
     "Gladiador": "👑",
-    "Leyenda del Combate": "🌟",
+    "Conquistador Astral": "🌌",
+    "Divinidad del Combate": "✨",
+    "Leyenda Suprema": "🌟",
 }
 
 

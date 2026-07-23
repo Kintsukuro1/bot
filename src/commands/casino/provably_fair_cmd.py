@@ -8,8 +8,8 @@ class ProvablyFair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="provably_fair", description="Verifica la transparencia de tus juegos de casino.")
     async def provably_fair_cmd(self, interaction: discord.Interaction):
+
         seeds = get_provably_fair_seeds(interaction.user.id)
         
         server_hash = hash_server_seed(seeds["server_seed"])
