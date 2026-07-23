@@ -10,12 +10,15 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import random
+from typing import Optional
 from src.db import db_cursor, ensure_user, get_user_combat_level, add_poblado_resources, record_poblado_contribution
 from src.commands.duels.raid.combatant import RaidCombatant
 from src.utils.combat.mobs import generate_mob, Mob
 from src.utils.combat.adventure_nodes import (
-    CHAPTERS_CONFIG, NARRATIVE_EVENTS, AdventureNode, generate_chapter_nodes
+    CHAPTERS_CONFIG, NARRATIVE_EVENTS, AdventureNode, generate_chapter_nodes, get_chapter_thematic_material
 )
+from src.utils.combat_progression import format_hp_bar, get_combat_rank_emoji
+from src.utils.subclass_config import get_subclass_skills
 
 class AventuraView(discord.ui.View):
     """Vista interactiva para navegar por los Nodos del Capítulo de Aventura."""
@@ -495,33 +498,65 @@ class AventuraNodeCombatView(discord.ui.View):
     def _build_embed(self) -> discord.Embed:
         p = self.adv.p
         m = self.mob
+        rank_emoji = get_combat_rank_emoji(p.level)
 
-        # Barra HP del Jugador
-        p_pct = max(0, int((p.hp / p.max_hp) * 10))
-        p_hp_bar = "█" * p_pct + "░" * (10 - p_pct)
-        res_str = p.resource.format_display()
-        res_line = f"\n{res_str}" if res_str else ""
-
-        # Barra HP del Mob
-        m_pct = max(0, int((m.hp / m.max_hp) * 10))
-        m_hp_bar = "█" * m_pct + "░" * (10 - m_pct)
-        shield_str = f" 🛡️ ({m.shield})" if m.shield > 0 else ""
-        affix_str = f" · *{m.affix.title()}*" if m.affix else ""
-
-        desc = (
-            f"📍 **Nodo {self.adv.current_node_idx + 1}/10** · Turno {self.turn}\n\n"
-            f"👹 **{m.emoji} {m.name}**{affix_str}\n"
-            f"`[{m_hp_bar}]` **{m.hp}/{m.max_hp} HP**{shield_str} | ⚔️ ATK: `{m.atk}` | 🛡️ DEF: `{m.def_stat}`\n\n"
-            f"👤 **{p.user.display_name}** ({p.combat_class})\n"
-            f"`[{p_hp_bar}]` **{p.hp}/{p.max_hp} HP** | ⚔️ ATK: `{p.atk}` | 🛡️ DEF: `{p.def_stat}`{res_line}\n\n"
-            f"📜 **Combate en Vivo:**\n" + "\n".join(self.logs[-4:])
+        header_desc = (
+            f"📍 **Nodo {self.adv.current_node_idx + 1}/10** · *Capítulo {self.adv.chapter_id}*\n"
+            f"⚔️ **Ronda {self.turn}** · Combate en tiempo real"
         )
+        if self.is_boss:
+            header_desc += f"\n👑 **¡ENFRENTAMIENTO CONTRA EL JEFE DEL CAPÍTULO!**"
 
         embed = discord.Embed(
-            title=f"⚔️ COMBATE EN CURSO: {m.emoji} {m.name}",
-            description=desc,
-            color=discord.Color.dark_red() if self.is_boss else discord.Color.orange()
+            title=f"{m.emoji} Aventura PvE — {m.name}",
+            description=header_desc,
+            color=discord.Color.dark_red() if self.is_boss else discord.Color.gold()
         )
+
+        # Campo del Enemigo (estilo Raid Boss)
+        m_status = ""
+        if m.shield > 0:
+            m_status += f" 🛡️({m.shield})"
+        if m.affix:
+            m_status += f" · *{m.affix.title()}*"
+
+        m_hp_bar = format_hp_bar(max(0, m.hp), m.max_hp, size=20)
+
+        embed.add_field(
+            name=f"{m.emoji} {m.name} — Nv. {m.level}{m_status}",
+            value=(
+                f"{m_hp_bar}\n"
+                f"⚔️ **{m.atk}** ATK · 🛡️ **{m.def_stat}** DEF"
+            ),
+            inline=False
+        )
+
+        # Campo del Jugador (estilo Raid Combatant)
+        p_status = ""
+        res_display = p.resource.format_display()
+        if res_display:
+            p_status += f"\n{res_display}"
+
+        subclass_str = f" · *{p.combat_subclass}*" if p.combat_subclass else ""
+        p_hp_bar = format_hp_bar(max(0, p.hp), p.max_hp, size=15)
+
+        embed.add_field(
+            name=f"{rank_emoji} {p.user.display_name} ({p.combat_class}{subclass_str})",
+            value=(
+                f"{p_hp_bar}\n"
+                f"⚔️ **{p.atk}** ATK · 🛡️ **{p.def_stat}** DEF{p_status}"
+            ),
+            inline=False
+        )
+
+        # Campo de Registro de Batalla
+        logs_str = "\n".join(self.logs[-5:]) if self.logs else "_Preparando el primer asalto..._"
+        embed.add_field(
+            name="📜 Registro de Batalla",
+            value=logs_str,
+            inline=False
+        )
+
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -561,18 +596,33 @@ class AventuraNodeCombatView(discord.ui.View):
         p = self.adv.p
         m = self.mob
 
-        # Potenciamiento por recurso
+        # Buscar habilidades de subclase disponibles para el jugador
+        avail_skills = get_subclass_skills(p.combat_subclass, p.level) if p.combat_subclass else []
+        active_skill = avail_skills[-1] if avail_skills else None
+
+        # Potenciamiento por recurso de clase
         mult, boost_log = p.resource.try_consume_and_boost()
         if boost_log:
             self.logs.append(f"   {boost_log}")
 
-        raw_dmg = int(max(1, p.atk * 1.6 * mult) - (m.def_stat * 0.2))
+        if active_skill:
+            skill_name = active_skill["name"]
+            skill_emoji = active_skill.get("emoji", "✨")
+            base_mult = active_skill.get("damage_mult", 1.8)
+            total_mult = base_mult * mult
+            raw_dmg = int(max(1, p.atk * total_mult) - (m.def_stat * 0.2))
+            skill_title = f"{skill_emoji} {skill_name}"
+        else:
+            total_mult = 1.6 * mult
+            raw_dmg = int(max(1, p.atk * total_mult) - (m.def_stat * 0.2))
+            skill_title = "✨ Habilidad Especial"
+
         res_log = p.resource.on_spell_cast()
         if res_log:
             self.logs.append(f"   {res_log}")
 
         dmg_dealt, event_log = m.take_damage(raw_dmg, is_magic=True)
-        self.logs.append(f"✨ **{p.user.display_name}** usa su **Habilidad Especial** infligiendo **{dmg_dealt}** daño mágico.")
+        self.logs.append(f"✨ **{p.user.display_name}** desata **{skill_title}** ({total_mult:.1f}× ATK) infligiendo **{dmg_dealt}** daño mágico.")
         if event_log:
             self.logs.append(f"   {event_log}")
 

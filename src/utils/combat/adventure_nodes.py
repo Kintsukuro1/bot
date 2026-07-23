@@ -344,3 +344,13 @@ def generate_chapter_nodes(chapter_id: int) -> List[AdventureNode]:
         AdventureNode(10, "boss", f"Nodo 10: {cfg['boss']['name']}", f"La batalla final del capítulo. Rescata al **{cfg['npc_rescue']['name']}**.", "👑"),
     ]
     return nodes
+
+
+def get_chapter_thematic_material(chapter_id: int) -> Tuple[str, str, str]:
+    """Retorna (key, emoji, nombre) según la temática del capítulo."""
+    if chapter_id in [1, 2, 3]:
+        return random.choice([("madera", "🌲", "Madera Ancestral"), ("piedra", "🌋", "Piedra de Cantera")])
+    elif chapter_id in [4, 5, 6]:
+        return ("cristal", "🔮", "Cristal de Sombras")
+    else:
+        return ("solar", "☀️", "Lingote Solar")
