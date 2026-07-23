@@ -98,10 +98,14 @@ class AventuraView(discord.ui.View):
         elif opt["effect_type"] == "buff_atk":
             self.p.atk = int(self.p.atk * (1.0 + opt["val"]))
             self.p.hp = max(1, int(self.p.hp * 0.90))
-        elif opt["effect_type"] == "materials":
-            self.materials_gained["cristal"] += opt["val"]
-        elif opt["effect_type"] == "materials_wood":
-            self.materials_gained["madera"] += opt["val"]
+        elif opt["effect_type"] in ["materials", "materials_wood"]:
+            key, emoji, mat_name = get_chapter_thematic_material(self.chapter_id)
+            amount = random.randint(1, 2)
+            self.materials_gained[key] += amount
+            self.combat_logs.append(f"📜 **{event['title']}:** Extraes recursos valiosos (+{amount} {emoji} {mat_name}).")
+            self.current_node.completed = True
+            self.current_node_idx += 1
+            return
         elif opt["effect_type"] == "heal":
             heal = int(self.p.max_hp * opt["val"])
             self.p.hp = min(self.p.max_hp, self.p.hp + heal)
@@ -155,14 +159,25 @@ class AventuraView(discord.ui.View):
                 progress_icons.append("⚪")
         progress_bar_str = "──".join(progress_icons)
 
+        mat_parts = []
+        if self.materials_gained["madera"] > 0:
+            mat_parts.append(f"🌲 {self.materials_gained['madera']}")
+        if self.materials_gained["piedra"] > 0:
+            mat_parts.append(f"🌋 {self.materials_gained['piedra']}")
+        if self.materials_gained["cristal"] > 0:
+            mat_parts.append(f"🔮 {self.materials_gained['cristal']}")
+        if self.materials_gained["solar"] > 0:
+            mat_parts.append(f"☀️ {self.materials_gained['solar']}")
+        mat_str = " · ".join(mat_parts) if mat_parts else "Ninguno aún"
+
         desc = (
             f"**{self.cfg['title']}**\n"
             f"*{self.cfg['desc']}*\n\n"
             f"📍 **Progreso de la Expedición:**\n`[{progress_bar_str}]` (Nodo {self.current_node_idx + 1}/10)\n\n"
             f"❤️ **HP:** `{self.p.hp}/{self.p.max_hp}` | ⚔️ **ATK:** `{self.p.atk}` | 🛡️ **DEF:** `{self.p.def_stat}`{res_line}\n\n"
             f"💰 **Botín Acumulado:** `{self.total_bronze_gained:,}` Bronce 🥉\n"
-            f"📦 **Materiales:** 🌲 {self.materials_gained['madera']} · 🌋 {self.materials_gained['piedra']} · 🔮 {self.materials_gained['cristal']}\n\n"
-            f"📜 **Últimos Acontecimientos:**\n" +
+            f"📦 **Materiales:** {mat_str}\n\n"
+            f"📜 **Últimos Acontectimientos:**\n" +
             ("\n".join(self.combat_logs[-4:]) if self.combat_logs else "_Presiona **Avanzar al Nodo** para continuar la historia._")
         )
 
@@ -214,10 +229,21 @@ class AventuraView(discord.ui.View):
         if xp_res and xp_res.get('leveled_up'):
             xp_notice += f" 🏆 **¡SUBIDA DE NIVEL!** (Nivel **{xp_res['previous_level']}** ➔ **{xp_res['level']}** — *{xp_res['rank']}*)"
 
+        mat_summary = []
+        if self.materials_gained["madera"] > 0:
+            mat_summary.append(f"🌲 {self.materials_gained['madera']} Madera")
+        if self.materials_gained["piedra"] > 0:
+            mat_summary.append(f"🌋 {self.materials_gained['piedra']} Piedra")
+        if self.materials_gained["cristal"] > 0:
+            mat_summary.append(f"🔮 {self.materials_gained['cristal']} Cristales")
+        if self.materials_gained["solar"] > 0:
+            mat_summary.append(f"☀️ {self.materials_gained['solar']} Lingotes Solares")
+        mat_summary_str = " · ".join(mat_summary) if mat_summary else "Ninguno"
+
         embed.add_field(
             name="💰 Botín y Experiencia Rescatados",
             value=f"**{self.total_bronze_gained:,}** Monedas de Bronce 🥉 · {xp_notice}\n"
-                  f"🌲 {self.materials_gained['madera']} Madera · 🌋 {self.materials_gained['piedra']} Piedra · 🔮 {self.materials_gained['cristal']} Cristales",
+                  f"📦 **Materiales de Expedición:** {mat_summary_str}",
             inline=False
         )
 
@@ -579,12 +605,24 @@ class AventuraNodeCombatView(discord.ui.View):
 
             round_bronze = int(35 * self.adv.chapter_id * (2.5 if self.is_boss else (1.5 if m.is_elite else 1.0)))
             self.adv.total_bronze_gained += round_bronze
-            self.adv.materials_gained["madera"] += random.randint(1, 3)
-            self.adv.materials_gained["piedra"] += random.randint(1, 2)
-            if self.is_boss:
-                self.adv.materials_gained["solar"] += 2
 
-            self.adv.combat_logs.append(f"⚔️ **Nodo {self.adv.current_node_idx + 1}:** Derrotado {m.emoji} **{m.name}** (+{round_bronze:,} Bronce 🥉).")
+            # Otorgamiento dinámico de materiales temáticos por capítulo (máximo ~5-9 por campaña)
+            key, emoji, mat_name = get_chapter_thematic_material(self.adv.chapter_id)
+            mat_dropped = 0
+            if self.is_boss:
+                mat_dropped = random.randint(2, 3)
+            elif m.is_elite:
+                mat_dropped = 1
+            elif random.random() < 0.50:
+                mat_dropped = 1
+
+            if mat_dropped > 0:
+                self.adv.materials_gained[key] += mat_dropped
+                mat_text = f", +{mat_dropped} {emoji} {mat_name}"
+            else:
+                mat_text = ""
+
+            self.adv.combat_logs.append(f"⚔️ **Nodo {self.adv.current_node_idx + 1}:** Derrotado {m.emoji} **{m.name}** (+{round_bronze:,} Bronce 🥉{mat_text}).")
             self.adv.current_node.completed = True
             self.adv.current_node_idx += 1
 
