@@ -80,8 +80,42 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
         usar_item_usuario(user_id, 3)
         return "energy_used", nueva_energia
 
-    if articulo_id == 4:
-        return "focus_auto", None
+    if articulo_id == 14:
+        from src.db import db_cursor
+        from src.commands.economy.pets import display_pet_name, get_xp_for_level
+        with db_cursor() as c:
+            c.execute("""
+                SELECT up.UserPetID, p.Name, p.Emoji, up.Loyalty, up.Level, up.XP, up.Nickname
+                FROM UserPets up JOIN PetsCatalog p ON up.PetID = p.PetID
+                WHERE up.UserID = %s AND up.Status != 'Escapó'
+                ORDER BY up.EquippedSlot IS NOT NULL DESC, up.Loyalty ASC
+                LIMIT 1
+            """, (user_id,))
+            pet = c.fetchone()
+            if not pet:
+                return "no_pet", None
+
+            up_id, p_name, p_emoji, loyalty, p_level, p_xp, nickname = pet
+            d_name = display_pet_name(p_name, nickname)
+
+            new_xp = (p_xp or 0) + 150
+            new_level = p_level or 1
+            xp_needed = get_xp_for_level(new_level)
+            if new_xp >= xp_needed and new_level < 15:
+                new_level += 1
+                new_xp -= xp_needed
+
+            c.execute("""
+                UPDATE UserPets
+                SET Loyalty = 100, Level = %s, XP = %s
+                WHERE UserPetID = %s
+            """, (new_level, new_xp, up_id))
+
+            usar_item_usuario(user_id, 14)
+            return "pet_fed", (d_name, p_emoji, new_level, new_xp)
+
+    if articulo_id == 15:
+        return "spy_item", None
 
     if articulo_id == 16:
         if usar_item_usuario(user_id, 16):
@@ -95,6 +129,7 @@ def _usar_articulo_db(user_id, user_name, articulo_id):
         return "auto_item", None
 
     return "unsupported", None
+
 
 class ShopHubView(discord.ui.View):
     """Vista del Panel Hub Efímero de Comercio y Mercado."""
@@ -338,8 +373,21 @@ class Tienda(commands.Cog):
             await interaction.response.send_message(f"🥤 **¡Consumiste una Bebida Energética!** Recuperaste +50 de energía. Energía actual: **{data}/100**", ephemeral=True)
             return
 
-        if status == "focus_auto":
-            await interaction.response.send_message("🧪 **La Poción de Enfoque se consume automáticamente** en tu próximo trabajo (+50% XP).", ephemeral=True)
+        if status == "no_pet":
+            await interaction.response.send_message("❌ No tienes ninguna mascota en tu colección a la cual alimentar.", ephemeral=True)
+            return
+
+        if status == "pet_fed":
+            d_name, p_emoji, new_level, new_xp = data
+            await interaction.response.send_message(
+                f"🥩 **¡Alimentaste a tu mascota!** {p_emoji} **{d_name}** ha comido Comida Gourmet.\n"
+                f"💖 Lealtad restaurada al **100%** | ⚡ XP: **+150** (Nivel {new_level})",
+                ephemeral=True
+            )
+            return
+
+        if status == "spy_item":
+            await interaction.response.send_message("🔍 **La Lupa de Rastreo** te permite ver el saldo y cooldowns de otro usuario. Úsala especificando un objetivo con `/espiar`.", ephemeral=True)
             return
 
         if status == "shield_activated":
@@ -351,6 +399,7 @@ class Tienda(commands.Cog):
             return
 
         await interaction.response.send_message("❌ Este artículo no se puede usar directamente con este comando.", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Tienda(bot))
