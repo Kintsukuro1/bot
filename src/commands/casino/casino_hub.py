@@ -113,6 +113,76 @@ class QuickBetModal(discord.ui.Modal):
             else:
                 await interaction.response.send_message("❌ Módulo de ruleta no disponible.", ephemeral=True)
 
+        elif self.game_key == "casino_war":
+            cw_cog = self.cog.bot.get_cog("CasinoWarCog")
+            if cw_cog:
+                await cw_cog.casino_war_cmd(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de Casino War no disponible.", ephemeral=True)
+
+        elif self.game_key == "higher_lower":
+            hl_cog = self.cog.bot.get_cog("HigherLower")
+            if hl_cog:
+                await hl_cog.higher_lower(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de Higher or Lower no disponible.", ephemeral=True)
+
+        elif self.game_key == "liars_dice":
+            ld_cog = self.cog.bot.get_cog("LiarsDiceCog")
+            if ld_cog:
+                await ld_cog.liars_dice_cmd(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de Dados de Mentiroso no disponible.", ephemeral=True)
+
+        elif self.game_key == "russian_roulette":
+            rr_cog = self.cog.bot.get_cog("RussianRoulette")
+            if rr_cog:
+                await rr_cog.russian_roulette(interaction, apuesta)
+            else:
+                await interaction.response.send_message("❌ Módulo de Ruleta Rusa no disponible.", ephemeral=True)
+
+class RPSBetModal(discord.ui.Modal, title="⚔️ Duelo Piedra, Papel o Tijera"):
+    oponente_input = discord.ui.TextInput(
+        label="ID o Mención del Oponente",
+        placeholder="Ej: 1234567890 o @Usuario",
+        required=True
+    )
+    apuesta_input = discord.ui.TextInput(
+        label="Monto de la Apuesta 🪙",
+        placeholder="Ej: 1000",
+        required=True
+    )
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        oponent_str = self.oponente_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+        if not oponent_str.isdigit():
+            await interaction.response.send_message("❌ Ingresa una ID numérica válida del oponente.", ephemeral=True)
+            return
+        try:
+            apuesta = int(self.apuesta_input.value.strip())
+            if apuesta <= 0:
+                await interaction.response.send_message("❌ La apuesta debe ser mayor a 0.", ephemeral=True)
+                return
+        except ValueError:
+            await interaction.response.send_message("❌ Monto de apuesta inválido.", ephemeral=True)
+            return
+
+        oponente = interaction.guild.get_member(int(oponent_str)) if interaction.guild else None
+        if not oponente:
+            await interaction.response.send_message("❌ No se encontró a ese usuario en el servidor.", ephemeral=True)
+            return
+
+        rps_cog = self.cog.bot.get_cog("RPSBet")
+        if rps_cog:
+            await rps_cog.rps_bet(interaction, oponente, apuesta)
+        else:
+            await interaction.response.send_message("❌ Módulo de Piedra, Papel o Tijeras no disponible.", ephemeral=True)
+
+
 
 class RobarModal(discord.ui.Modal):
     """Modal para realizar un robo especificando ID de usuario o mención."""
@@ -211,13 +281,21 @@ class CasinoGamesSelectView(discord.ui.View):
         self.cog = cog
 
         options = [
-            discord.SelectOption(label="🎰 Tragamonedas", value="slots", description="Lanzar tragamonedas"),
-            discord.SelectOption(label="🃏 Blackjack", value="blackjack", description="Lanzar partidas de 21"),
-            discord.SelectOption(label="🎲 Ruleta", value="roulette", description="Lanzar ruleta europea"),
-            discord.SelectOption(label="📈 Crash / Cohete", value="crash", description="Lanzar cohete multiplicador"),
-            discord.SelectOption(label="💣 Minas", value="mines", description="Lanzar campo minado"),
-            discord.SelectOption(label="🟢 Plinko", value="plinko", description="Lanzar bola de plinko"),
-            discord.SelectOption(label="🪙 Coinflip", value="coinflip", description="Lanzar moneda de la suerte"),
+            discord.SelectOption(label="🎰 Tragamonedas", value="slots", description="Tragamonedas clásico de 3 carretes"),
+            discord.SelectOption(label="🃏 Blackjack", value="blackjack", description="Partidas de 21 contra la banca"),
+            discord.SelectOption(label="🎲 Ruleta Europea", value="roulette", description="Ruleta de apuestas de números y colores"),
+            discord.SelectOption(label="📈 Crash / Cohete", value="crash", description="Cohete multiplicador con retiro a tiempo"),
+            discord.SelectOption(label="💣 Buscaminas", value="mines", description="Campo minado con multiplicador progresivo"),
+            discord.SelectOption(label="🟢 Plinko", value="plinko", description="Pelota rebotante con multiplicadores"),
+            discord.SelectOption(label="🪙 Coinflip", value="coinflip", description="Lanzamiento de moneda cara o cruz"),
+            discord.SelectOption(label="⚔️ Casino War", value="casino_war", description="Guerra de cartas de mayor valor"),
+            discord.SelectOption(label="🎴 Higher or Lower", value="higher_lower", description="Adivina si la siguiente carta es mayor o menor"),
+            discord.SelectOption(label="🏇 Carrera de Caballos", value="horse_race", description="Pista de carreras de 60s con apuestas"),
+            discord.SelectOption(label="🎲 Dados de Mentiroso", value="liars_dice", description="Mesa multijugador de faroleo con dados"),
+            discord.SelectOption(label="🔫 Ruleta Rusa", value="russian_roulette", description="Juego de tensión multijugador con cargador"),
+            discord.SelectOption(label="✂️ Piedra, Papel o Tijeras", value="rps_bet", description="Duelo PvP directo por dinero"),
+            discord.SelectOption(label="🎟️ Lotería / Loto", value="loto", description="Pozo acumulado diario y boletos"),
+            discord.SelectOption(label="🛡️ Provably Fair", value="provably_fair", description="Verificador criptográfico de transparencia"),
         ]
         self.select = discord.ui.Select(placeholder="🎮 Selecciona un juego para apostar...", options=options)
         self.select.callback = self.select_callback
@@ -229,6 +307,35 @@ class CasinoGamesSelectView(discord.ui.View):
             return
 
         val = self.select.values[0]
+
+        if val == "horse_race":
+            hr_cog = self.cog.bot.get_cog("HorseRace")
+            if hr_cog:
+                await hr_cog.horse_race(interaction)
+            else:
+                await interaction.response.send_message("❌ Módulo de carreras no disponible.", ephemeral=True)
+            return
+
+        if val == "rps_bet":
+            await interaction.response.send_modal(RPSBetModal(self.cog))
+            return
+
+        if val == "loto":
+            loto_cog = self.cog.bot.get_cog("Loto")
+            if loto_cog:
+                await loto_cog.loto(interaction)
+            else:
+                await interaction.response.send_message("❌ Módulo de loto no disponible.", ephemeral=True)
+            return
+
+        if val == "provably_fair":
+            pf_cog = self.cog.bot.get_cog("ProvablyFair")
+            if pf_cog:
+                await pf_cog.provably_fair_cmd(interaction)
+            else:
+                await interaction.response.send_message("❌ Módulo Provably Fair no disponible.", ephemeral=True)
+            return
+
         names = {
             "slots": "Tragamonedas",
             "blackjack": "Blackjack",
@@ -236,11 +343,16 @@ class CasinoGamesSelectView(discord.ui.View):
             "crash": "Crash / Cohete",
             "mines": "Buscaminas",
             "plinko": "Plinko",
-            "coinflip": "Coinflip"
+            "coinflip": "Coinflip",
+            "casino_war": "Casino War",
+            "higher_lower": "Higher or Lower",
+            "liars_dice": "Dados de Mentiroso",
+            "russian_roulette": "Ruleta Rusa"
         }
         name = names.get(val, "Juego")
         modal = QuickBetModal(val, name, self.cog)
         await interaction.response.send_modal(modal)
+
 
 
 class RobarBandaModal(discord.ui.Modal):

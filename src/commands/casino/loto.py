@@ -57,9 +57,8 @@ class Loto(commands.Cog):
         except Exception as e:
             logger.error(f"Error en sorteo automático de lotería: {e}")
 
-    @app_commands.command(name="loto", description="Muestra el pozo acumulado del loto del casino y tus boletos comprados hoy.")
     async def loto(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         user_id = interaction.user.id
         await asyncio.to_thread(ensure_user, user_id, interaction.user.name)
@@ -68,11 +67,9 @@ class Loto(commands.Cog):
         pool = state['pool']
         next_draw = state['next_draw']
         
-        # Límite dinámico según Prestigio
         prestige_lvl = await asyncio.to_thread(get_user_prestige_level, user_id)
         ticket_limit = 6 if prestige_lvl >= 1 else 5
         
-        # Obtener boletos activos del usuario
         tickets = await asyncio.to_thread(get_active_tickets)
         user_tickets = [t[1] for t in tickets if t[0] == user_id]
         
@@ -82,7 +79,6 @@ class Loto(commands.Cog):
             timestamp=discord.utils.utcnow() if hasattr(discord.utils, 'utcnow') else datetime.now()
         )
         
-        # Próxima fecha formateada
         next_draw_str = "Hoy a medianoche"
         if next_draw:
             next_draw_str = next_draw.strftime("%d/%m/%Y a las 00:00")
@@ -92,18 +88,15 @@ class Loto(commands.Cog):
             f"💰 **Pozo Acumulado Actual:** `{pool:,}` monedas\n"
             f"📅 **Próximo Sorteo:** `{next_draw_str}`\n"
             f"🎟️ **Precio del Boleto:** `500` monedas\n"
-
             f"⚠️ **Límite diario:** `{ticket_limit}` boletos por usuario{prestige_note}"
         )
         
-        # Mostrar boletos del usuario
         if user_tickets:
             tickets_list = "\n".join(f"🎫 Boleto: `[{t.replace(',', ', ')}]`" for t in user_tickets)
             embed.add_field(name=f"Tus Boletos Hoy ({len(user_tickets)}/{ticket_limit})", value=tickets_list, inline=False)
         else:
-            embed.add_field(name=f"Tus Boletos Hoy (0/{ticket_limit})", value="No tienes boletos para el sorteo de hoy.\n¡Usa `/loto_comprar` para participar!", inline=False)
+            embed.add_field(name=f"Tus Boletos Hoy (0/{ticket_limit})", value="No tienes boletos para el sorteo de hoy.\n¡Usa el botón de abajo para comprar uno!", inline=False)
 
-            
         embed.add_field(
             name="🏆 Tabla de Premios", 
             value=(
@@ -116,16 +109,9 @@ class Loto(commands.Cog):
         )
         
         embed.set_footer(text="¡2% de todas las apuestas en juegos individuales se añaden al pozo!")
-        await interaction.followup.send(embed=embed)
+        view = LotoView(self, user_id)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-    @app_commands.command(name="loto_comprar", description="Compra un boleto de loto. Selecciona 4 números del 1 al 25.")
-    @app_commands.describe(
-        num1="Primer número (1-25) - Dejar vacío para autocompletar aleatoriamente",
-        num2="Segundo número (1-25) - Dejar vacío para autocompletar aleatoriamente",
-        num3="Tercer número (1-25) - Dejar vacío para autocompletar aleatoriamente",
-        num4="Cuarto número (1-25) - Dejar vacío para autocompletar aleatoriamente"
-    )
-    @ECONOMY_COOLDOWN
     async def loto_comprar(
         self, 
         interaction: discord.Interaction, 
@@ -134,6 +120,7 @@ class Loto(commands.Cog):
         num3: Optional[int] = None, 
         num4: Optional[int] = None
     ):
+
         await interaction.response.defer()
         user_id = interaction.user.id
         can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
@@ -190,19 +177,32 @@ class Loto(commands.Cog):
         embed.add_field(name="Tu saldo actual", value=f"{new_balance:,} monedas", inline=True)
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="loto_draw", description="[ADMIN] Fuerza el sorteo del loto de forma manual e inmediata.")
+class LotoView(discord.ui.View):
+    def __init__(self, cog, user_id: int):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.user_id = user_id
+
+    @discord.ui.button(label="🎟️ Comprar Boleto (500)", style=discord.ButtonStyle.success)
+    async def buy_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
+            return
+        await self.cog.loto_comprar(interaction)
+
     async def loto_draw(self, interaction: discord.Interaction):
         if not await self.bot.is_owner(interaction.user):
             await interaction.response.send_message("❌ No tienes permisos para usar este comando.", ephemeral=True)
             return
             
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(ephemeral=True)
         try:
             results = await LotteryService.draw_lottery()
             await self.announce_draw_results(results, manual_ctx=interaction)
         except Exception as e:
             logger.error(f"Error en sorteo manual de loto: {e}")
             await interaction.followup.send(f"❌ Ocurrió un error al realizar el sorteo: {e}", ephemeral=True)
+
 
     async def announce_draw_results(self, results: dict, manual_ctx=None):
         """Anuncia los resultados del sorteo en el canal de logs y en los canales públicos de los servidores."""

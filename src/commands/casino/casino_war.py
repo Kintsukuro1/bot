@@ -252,8 +252,7 @@ class CasinoWarCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="casino_war", description="Juega Casino War. Si hay empate, decide si rendirte o ir a la Guerra.")
-    async def casino_war_cmd(self, interaction: discord.Interaction):
+    async def casino_war_cmd(self, interaction: discord.Interaction, apuesta: int = None):
         user_id = interaction.user.id
         can_play, lockout_msg = await CasinoService.check_casino_lockout(user_id)
         if not can_play:
@@ -261,12 +260,20 @@ class CasinoWarCog(commands.Cog):
             return
 
         view = CasinoWarView(user_id)
+        if apuesta and apuesta > 0:
+            view.apuesta = apuesta
+            view.configurado = True
+            desc = f"**Apuesta Activa:** {apuesta:,} monedas.\n¡Haz clic en Repartir Cartas para jugar contra la banca!"
+        else:
+            desc = "Haz clic en Configurar Apuesta para empezar."
+
         embed = discord.Embed(
             title="⚔️ Casino War",
-            description="Haz clic en Configurar Apuesta para empezar.",
+            description=desc,
             color=discord.Color.blue()
         )
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(CasinoWarCog(bot))

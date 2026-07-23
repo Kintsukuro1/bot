@@ -400,14 +400,9 @@ class HigherLower(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="higherlow", description="Juega Higher or Lower: predice si la siguiente carta será mayor o menor")
-    @app_commands.describe(apuesta="Cantidad de monedas a apostar")
-    async def higher_lower_slash(self, interaction: discord.Interaction, apuesta: int):
+    async def higher_lower(self, interaction: discord.Interaction, apuesta: int):
         await self._higher_lower_game(interaction, apuesta, is_slash=True)
 
-    @commands.command(name="higherlow", help="Juega Higher or Lower: predice si la siguiente carta será mayor o menor. Uso: !higherlow <apuesta>")
-    async def higher_lower(self, ctx, apuesta: int):
-        await self._higher_lower_game(ctx, apuesta, is_slash=False)
 
     async def _higher_lower_game(self, ctx_or_interaction, apuesta: int, is_slash: bool = False):
         if is_slash:

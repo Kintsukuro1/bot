@@ -355,9 +355,8 @@ class LiarsDiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="liars_dice", description="Abre una mesa de Dados de Mentiroso (Multijugador).")
-    @app_commands.describe(apuesta="Cantidad a apostar para entrar a la mesa")
     async def liars_dice_cmd(self, interaction: discord.Interaction, apuesta: int):
+
         if apuesta <= 0:
             await interaction.response.send_message("❌ Apuesta inválida.", ephemeral=True)
             return
