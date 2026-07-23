@@ -169,7 +169,7 @@ class BankTransactionModal(discord.ui.Modal):
             return
 
         monto = int(val_str)
-        banco_cog = self.cog.bot.get_cog("Banco")
+        banco_cog = self.cog.bot.get_cog("BancoCog") or self.cog.bot.get_cog("Banco")
         if banco_cog:
             if self.is_deposit:
                 await banco_cog.depositar(interaction, monto)
@@ -177,6 +177,7 @@ class BankTransactionModal(discord.ui.Modal):
                 await banco_cog.retirar(interaction, monto)
         else:
             await interaction.response.send_message("❌ Módulo de banco no disponible.", ephemeral=True)
+
 
 
 class BankActionsView(discord.ui.View):
