@@ -732,13 +732,14 @@ class AventuraNodeCombatView(discord.ui.View):
             if qty > 0:
                 c_info = next((item for item in catalog if item['consumable_key'] == key), None)
                 c_name = c_info['name'] if c_info else key
-                c_emoji = c_info['emoji'] if c_info else "🧪"
+                c_desc = c_info['description'] if (c_info and c_info.get('description')) else f"Disponible: {qty} en inventario"
+                c_emoji = c_info.get('emoji', '🧪') if c_info else "🧪"
                 options.append(
                     discord.SelectOption(
-                        label=f"{c_name} (x{qty})",
+                        label=f"{c_name} (Tienes: {qty})",
                         value=key,
                         emoji=c_emoji,
-                        description=f"Disponible: {qty} en inventario"
+                        description=c_desc[:100]
                     )
                 )
 
