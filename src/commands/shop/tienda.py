@@ -186,7 +186,10 @@ class ShopHubView(discord.ui.View):
             return
         bm_cog = self.cog.bot.get_cog("BlackMarket")
         if bm_cog:
-            await bm_cog.blackmarket(interaction)
+            if hasattr(bm_cog.blackmarket, "callback"):
+                await bm_cog.blackmarket.callback(bm_cog, interaction)
+            else:
+                await bm_cog.blackmarket(interaction)
         else:
             await interaction.response.send_message("❌ Módulo de Mercado Negro no cargado.", ephemeral=True)
 
@@ -197,7 +200,10 @@ class ShopHubView(discord.ui.View):
             return
         um_cog = self.cog.bot.get_cog("UserMarket")
         if um_cog:
-            await um_cog.mercado(interaction)
+            if hasattr(um_cog.mercado, "callback"):
+                await um_cog.mercado.callback(um_cog, interaction)
+            else:
+                await um_cog.mercado(interaction)
         else:
             await interaction.response.send_message("❌ Módulo de Mercado P2P no cargado.", ephemeral=True)
 
@@ -208,12 +214,11 @@ class ShopHubView(discord.ui.View):
             return
         embed = discord.Embed(
             title="🔨 Casa de Subastas Central",
-            description="Aquí puedes ver la lista de subastas activas del servidor e ingresar tu puja directamente.",
+            description="Las subastas activas se publican en el canal de subastas del servidor. ¡Usa `/subastar_item` o `/subastar_mascota` para iniciar una subasta!",
             color=discord.Color.dark_gold()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class Tienda(commands.Cog):
