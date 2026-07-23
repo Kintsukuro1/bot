@@ -1259,36 +1259,47 @@ class Robar(commands.Cog):
             else:
                 await ctx_or_interaction.send(respuesta)
 
-    @app_commands.command(name="robar_banda", description="Invita a un cómplice para robar juntos a una víctima")
-    @app_commands.describe(
-        complice="Usuario que será tu cómplice en el robo",
-        victima="Usuario al que intentarán robar"
-    )
+    async def _send_safe_interaction(self, interaction: discord.Interaction, message: str = None, embed: discord.Embed = None, ephemeral: bool = True):
+        """Envía un mensaje o embed a la interacción de forma segura sin causar InteractionResponded o NotFound."""
+        try:
+            if not interaction.response.is_done():
+                if embed:
+                    await interaction.response.send_message(content=message, embed=embed, ephemeral=ephemeral)
+                else:
+                    await interaction.response.send_message(content=message, ephemeral=ephemeral)
+            else:
+                if embed:
+                    await interaction.followup.send(content=message, embed=embed, ephemeral=ephemeral)
+                else:
+                    await interaction.followup.send(content=message, ephemeral=ephemeral)
+        except Exception as e:
+            logger.warning(f"No se pudo enviar mensaje de interacción: {e}")
+
     @ECONOMY_COOLDOWN
     async def robar_banda_slash(self, interaction: discord.Interaction, complice: discord.Member, victima: discord.Member):
         ladron = interaction.user
         
         # Validaciones de elegibilidad
         if complice.bot or victima.bot:
-            await interaction.response.send_message("❌ No puedes robar con o a un bot.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ No puedes robar con o a un bot.")
             return
 
         if complice.id == ladron.id:
-            await interaction.response.send_message("❌ No puedes ser tu propio cómplice.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ No puedes ser tu propio cómplice.")
             return
 
         if victima.id == ladron.id:
-            await interaction.response.send_message("❌ No puedes robarte a ti mismo.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ No puedes robarte a ti mismo.")
             return
 
         if complice.id == victima.id:
-            await interaction.response.send_message("❌ El cómplice y la víctima no pueden ser la misma persona.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ El cómplice y la víctima no pueden ser la misma persona.")
             return
 
         # Responder de forma efímera confirmando el envío de la invitación
-        await interaction.response.send_message(
-            f"🕵️ Se ha enviado la invitación a {complice.mention} de forma privada. Esperando su respuesta...",
-            ephemeral=True
+        await self._send_safe_interaction(
+            interaction,
+            f"🕵️ Se ha enviado la invitación a {complice.mention} de forma privada. Esperando su respuesta..."
         )
 
         # Crear y enviar la invitación vía DM al cómplice
@@ -1302,9 +1313,9 @@ class Robar(commands.Cog):
             )
             view.message = msg
         except discord.Forbidden:
-            await interaction.followup.send(
-                f"❌ No se pudo enviar la invitación a {complice.mention} porque tiene los mensajes privados desactivados.",
-                ephemeral=True
+            await self._send_safe_interaction(
+                interaction,
+                f"❌ No se pudo enviar la invitación a {complice.mention} porque tiene los mensajes privados desactivados."
             )
             return
 
@@ -1312,7 +1323,11 @@ class Robar(commands.Cog):
         await view.wait()
 
         if not view.accepted:
-            return  # Cancelado, rechazado o expirado (ya notificado en la vista)
+            await self._send_safe_interaction(
+                interaction,
+                f"❌ El robo en banda fue cancelado porque {complice.mention} no aceptó la invitación."
+            )
+            return
 
         # Si aceptó, ejecutar lógica en BD en un hilo secundario
         try:
@@ -1326,7 +1341,7 @@ class Robar(commands.Cog):
                 tr = data['tiempo_restante']
                 tiempo_str = _format_timedelta(tr, show_seconds=True)
                 who = "tú" if data['user'] == 'iniciador' else complice.display_name
-                await interaction.followup.send(f"❌ El robo no se pudo realizar porque {who} tiene cooldown activo ({tiempo_str} restantes).", ephemeral=True)
+                await self._send_safe_interaction(interaction, f"❌ El robo no se pudo realizar porque {who} tiene cooldown activo ({tiempo_str} restantes).")
                 try:
                     await complice.send(f"❌ El robo falló porque alguien tiene cooldown activo.")
                 except Exception:
@@ -1336,7 +1351,7 @@ class Robar(commands.Cog):
             if status == 'shield_active':
                 tr = data['tiempo_restante']
                 tiempo_str = _format_timedelta(tr, show_seconds=False)
-                await interaction.followup.send(f"🛡️ {victima.mention} tiene un **Escudo Total** activo ({tiempo_str} restantes).", ephemeral=True)
+                await self._send_safe_interaction(interaction, f"🛡️ {victima.mention} tiene un **Escudo Total** activo ({tiempo_str} restantes).")
                 try:
                     await complice.send(f"🛡️ {victima.mention} tiene un **Escudo Total** activo.")
                 except Exception:
@@ -1346,7 +1361,7 @@ class Robar(commands.Cog):
             if status == 'protection':
                 tr = data['tiempo_restante']
                 tiempo_str = _format_timedelta(tr, show_seconds=False)
-                await interaction.followup.send(f"🛡️ {victima.mention} tiene protección contra robos ({tiempo_str} restantes).", ephemeral=True)
+                await self._send_safe_interaction(interaction, f"🛡️ {victima.mention} tiene protección contra robos ({tiempo_str} restantes).")
                 try:
                     await complice.send(f"🛡️ {victima.mention} tiene protección contra robos.")
                 except Exception:
@@ -1354,7 +1369,7 @@ class Robar(commands.Cog):
                 return
 
             if status == 'no_money':
-                await interaction.followup.send(f"❌ {victima.mention} no tiene suficiente dinero (mínimo {VICTIMA_MIN_SALDO:,} monedas).", ephemeral=True)
+                await self._send_safe_interaction(interaction, f"❌ {victima.mention} no tiene suficiente dinero (mínimo {VICTIMA_MIN_SALDO:,} monedas).")
                 try:
                     await complice.send(f"❌ {victima.mention} no tiene suficiente dinero.")
                 except Exception:
@@ -1363,11 +1378,9 @@ class Robar(commands.Cog):
 
             # Si es success o fail, notificar de forma privada detallada
             if status == 'success':
-                # Mensajes privados de éxito
                 init_data = data['iniciador']
                 comp_data = data['complice']
 
-                # Detalle para iniciador
                 embed_init = discord.Embed(
                     title=f"💰 ¡{data['tier_emoji']} {data['tier_nombre']} Exitoso!",
                     description=f"El golpe conjunto contra {victima.mention} ha funcionado.",
@@ -1385,7 +1398,6 @@ class Robar(commands.Cog):
                 except Exception:
                     pass
 
-                # Detalle para complice
                 embed_comp = discord.Embed(
                     title=f"💰 ¡{data['tier_emoji']} {data['tier_nombre']} Exitoso!",
                     description=f"El golpe conjunto contra {victima.mention} ha funcionado.",
@@ -1403,20 +1415,22 @@ class Robar(commands.Cog):
                 except Exception:
                     pass
 
-                # Mensaje público
                 embed_public = discord.Embed(
                     title="🚨 ¡Golpe en Banda Exitoso!",
                     description=f"🥷 {ladron.mention} y {complice.mention} unieron fuerzas para robar a {victima.mention}.\n"
                                 f"💸 **Total sustraído:** {data['cantidad_total_robada']:,} monedas.",
                     color=discord.Color.green()
                 )
-                await interaction.channel.send(content=f"🔔 {victima.mention}", embed=embed_public)
+                if interaction.channel and hasattr(interaction.channel, "send"):
+                    try:
+                        await interaction.channel.send(content=f"🔔 {victima.mention}", embed=embed_public)
+                    except Exception as e:
+                        logger.warning(f"Error enviando mensaje público de robo en banda: {e}")
 
             else:  # status == 'fail'
                 init_data = data['iniciador']
                 comp_data = data['complice']
 
-                # Detalle para iniciador
                 embed_init = discord.Embed(
                     title="🚨 ¡Robo en Banda Fallido!",
                     description=f"Fueron descubiertos robando a {victima.mention}.",
@@ -1430,7 +1444,6 @@ class Robar(commands.Cog):
                 except Exception:
                     pass
 
-                # Detalle para complice
                 embed_comp = discord.Embed(
                     title="🚨 ¡Robo en Banda Fallido!",
                     description=f"Fueron descubiertos robando a {victima.mention}.",
@@ -1444,17 +1457,21 @@ class Robar(commands.Cog):
                 except Exception:
                     pass
 
-                # Mensaje público
                 embed_public = discord.Embed(
                     title="🚨 ¡Golpe en Banda Frustrado!",
                     description=f"🥷 {ladron.mention} y {complice.mention} intentaron robar a {victima.mention} pero fueron atrapados por las autoridades.",
                     color=discord.Color.red()
                 )
-                await interaction.channel.send(embed=embed_public)
+                if interaction.channel and hasattr(interaction.channel, "send"):
+                    try:
+                        await interaction.channel.send(embed=embed_public)
+                    except Exception as e:
+                        logger.warning(f"Error enviando mensaje público de robo en banda fallido: {e}")
 
         except Exception as e:
             logger.error("Error en robar_banda", exc_info=True)
-            await interaction.followup.send("❌ Ocurrió un error inesperado al procesar el robo en banda.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ Ocurrió un error inesperado al procesar el robo en banda.")
+
 
     @app_commands.command(name="robar_banco", description="Ejecuta un intento de robo al Banco Central (Nivel 10+ requerido)")
     @app_commands.describe(
@@ -1473,25 +1490,25 @@ class Robar(commands.Cog):
 
         init_lvl = await asyncio.to_thread(_check_db_level, ladron.id)
         if init_lvl < 10:
-            await interaction.response.send_message("❌ Requieres nivel de ladrón 10+ para intentar robar al Banco Central.", ephemeral=True)
+            await self._send_safe_interaction(interaction, "❌ Requieres nivel de ladrón 10+ para intentar robar al Banco Central.")
             return
 
         if complice:
             if complice.bot:
-                await interaction.response.send_message("❌ No puedes robar el banco con un bot.", ephemeral=True)
+                await self._send_safe_interaction(interaction, "❌ No puedes robar el banco con un bot.")
                 return
             if complice.id == ladron.id:
-                await interaction.response.send_message("❌ No puedes ser tu propio cómplice.", ephemeral=True)
+                await self._send_safe_interaction(interaction, "❌ No puedes ser tu propio cómplice.")
                 return
             comp_lvl = await asyncio.to_thread(_check_db_level, complice.id)
             if comp_lvl < 10:
-                await interaction.response.send_message(f"❌ {complice.mention} no tiene nivel de ladrón 10+ requerido.", ephemeral=True)
+                await self._send_safe_interaction(interaction, f"❌ {complice.mention} no tiene nivel de ladrón 10+ requerido.")
                 return
 
             # Responder efímeramente y mandar invitación
-            await interaction.response.send_message(
-                f"🕵️ Se ha enviado la invitación a {complice.mention} para robar el Banco Central. Esperando su respuesta...",
-                ephemeral=True
+            await self._send_safe_interaction(
+                interaction,
+                f"🕵️ Se ha enviado la invitación a {complice.mention} para robar el Banco Central. Esperando su respuesta..."
             )
 
             view = RoboBandaInvitationView(initiator=ladron, accomplice=complice, target="Banco Central")
@@ -1504,19 +1521,27 @@ class Robar(commands.Cog):
                 )
                 view.message = msg
             except discord.Forbidden:
-                await interaction.followup.send(
-                    f"❌ No se pudo enviar la invitación a {complice.mention} porque tiene los mensajes privados desactivados.",
-                    ephemeral=True
+                await self._send_safe_interaction(
+                    interaction,
+                    f"❌ No se pudo enviar la invitación a {complice.mention} porque tiene los mensajes privados desactivados."
                 )
                 return
 
             await view.wait()
             if not view.accepted:
-                return  # Cancelado, rechazado o expirado
+                await self._send_safe_interaction(
+                    interaction,
+                    f"❌ El golpe al Banco Central fue cancelado porque {complice.mention} no aceptó la invitación."
+                )
+                return
 
         else:
-            # Defer la respuesta para dar tiempo a procesar
-            await interaction.response.defer(ephemeral=False)
+            # Defer la respuesta si no hay cómplice
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.defer(ephemeral=False)
+            except Exception:
+                pass
 
         # Ejecutar lógica en BD
         try:
@@ -1530,30 +1555,20 @@ class Robar(commands.Cog):
             if status == 'level_low':
                 who = "Tú" if data['user'] == 'iniciador' else complice.display_name
                 resp = f"❌ {who} no tiene el nivel de ladrón 10+ requerido."
-                if complice:
-                    await interaction.followup.send(resp, ephemeral=True)
-                else:
-                    await interaction.followup.send(resp)
+                await self._send_safe_interaction(interaction, resp)
                 return
 
             if status == 'cooldown':
                 tr = data['tiempo_restante']
-                # Formatear el cooldown de 24 horas (horas y minutos)
                 tiempo_str = _format_timedelta(tr, show_seconds=False)
                 who = "Tú" if data['user'] == 'iniciador' else complice.display_name
                 resp = f"⏰ {who} debe esperar {tiempo_str} para volver a intentar el asalto al banco."
-                if complice:
-                    await interaction.followup.send(resp, ephemeral=True)
-                else:
-                    await interaction.followup.send(resp)
+                await self._send_safe_interaction(interaction, resp)
                 return
 
             if status == 'no_bank_reserves':
                 resp = "❌ El Banco no tiene fondos que valga la pena robar ahora mismo."
-                if complice:
-                    await interaction.followup.send(resp, ephemeral=True)
-                else:
-                    await interaction.followup.send(resp)
+                await self._send_safe_interaction(interaction, resp)
                 return
 
             # Success / Fail notifications
@@ -1598,7 +1613,11 @@ class Robar(commands.Cog):
                                     f"💸 **Botín sustraído:** {data['botin_robado']:,} monedas divididas entre ambos.",
                         color=discord.Color.green()
                     )
-                    await interaction.channel.send(embed=embed_pub)
+                    if interaction.channel and hasattr(interaction.channel, "send"):
+                        try:
+                            await interaction.channel.send(embed=embed_pub)
+                        except Exception as e:
+                            logger.warning(f"Error enviando mensaje público de asalto al banco: {e}")
                 else:
                     # Individual
                     init_data = data['iniciador']
@@ -1611,7 +1630,7 @@ class Robar(commands.Cog):
                     )
                     if init_data['leveled_up']:
                         embed_pub.add_field(name="🎉 ¡Subiste de Nivel!", value=f"Pasaste al nivel **{init_data['level']}**", inline=False)
-                    await interaction.followup.send(embed=embed_pub)
+                    await self._send_safe_interaction(interaction, embed=embed_pub, ephemeral=False)
 
             else:  # status == 'fail'
                 if complice:
@@ -1648,17 +1667,20 @@ class Robar(commands.Cog):
                                     f"💰 Cada uno ha tenido que pagar una multa de **50,000** monedas, las cuales se reintegraron a las reservas.",
                         color=discord.Color.red()
                     )
-                    await interaction.channel.send(embed=embed_pub)
+                    if interaction.channel and hasattr(interaction.channel, "send"):
+                        try:
+                            await interaction.channel.send(embed=embed_pub)
+                        except Exception as e:
+                            logger.warning(f"Error enviando mensaje público de asalto fallido al banco: {e}")
                 else:
                     init_data = data['iniciador']
                     embed_pub = discord.Embed(
                         title="🏛️🚨 ¡ASALTO FRUSTRADO AL BANCO CENTRAL!",
-                        description=f"🥷 **{ladron.mention}** fue atrapado intentando burlar las alarmas de seguridad.\n"
-                                    f"💸 Ha sido multado con **{init_data['penalizacion']:,}** monedas, que vuelven a las reservas.\n"
-                                    f"📉 **XP Perdida:** -{init_data['xp_perdida']:,}",
+                        description=f"🥷 **{ladron.mention}** fue capturado en la bóveda principal del Banco Central.\n"
+                                    f"💰 Ha tenido que pagar una multa de **50,000** monedas.",
                         color=discord.Color.red()
                     )
-                    await interaction.followup.send(embed=embed_pub)
+                    await self._send_safe_interaction(interaction, embed=embed_pub, ephemeral=False)
 
         except Exception as e:
             logger.error("Error en robar_banco", exc_info=True)
