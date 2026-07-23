@@ -142,26 +142,18 @@ class QuickBetModal(discord.ui.Modal):
                 await interaction.response.send_message("❌ Módulo de Ruleta Rusa no disponible.", ephemeral=True)
 
 class RPSBetModal(discord.ui.Modal, title="⚔️ Duelo Piedra, Papel o Tijera"):
-    oponente_input = discord.ui.TextInput(
-        label="ID o Mención del Oponente",
-        placeholder="Ej: 1234567890 o @Usuario",
-        required=True
-    )
     apuesta_input = discord.ui.TextInput(
         label="Monto de la Apuesta 🪙",
         placeholder="Ej: 1000",
         required=True
     )
 
-    def __init__(self, cog):
+    def __init__(self, oponente: discord.Member, cog):
         super().__init__()
+        self.oponente = oponente
         self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction):
-        oponent_str = self.oponente_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-        if not oponent_str.isdigit():
-            await interaction.response.send_message("❌ Ingresa una ID numérica válida del oponente.", ephemeral=True)
-            return
         try:
             apuesta = int(self.apuesta_input.value.strip())
             if apuesta <= 0:
@@ -171,50 +163,55 @@ class RPSBetModal(discord.ui.Modal, title="⚔️ Duelo Piedra, Papel o Tijera")
             await interaction.response.send_message("❌ Monto de apuesta inválido.", ephemeral=True)
             return
 
-        oponente = interaction.guild.get_member(int(oponent_str)) if interaction.guild else None
-        if not oponente:
-            await interaction.response.send_message("❌ No se encontró a ese usuario en el servidor.", ephemeral=True)
-            return
-
         rps_cog = self.cog.bot.get_cog("RPSBet")
         if rps_cog:
-            await rps_cog.rps_bet(interaction, oponente, apuesta)
+            await rps_cog.rps_bet(interaction, self.oponente, apuesta)
         else:
             await interaction.response.send_message("❌ Módulo de Piedra, Papel o Tijeras no disponible.", ephemeral=True)
 
-
-
-class RobarModal(discord.ui.Modal):
-    """Modal para realizar un robo especificando ID de usuario o mención."""
-    def __init__(self, cog):
-        super().__init__(title="🥷 Ejecutar Robo")
+class RPSUserSelectView(discord.ui.View):
+    """Vista con desplegable nativo de miembros para seleccionar oponente de RPS."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=60)
+        self.user = user
         self.cog = cog
-        self.target_input = discord.ui.TextInput(
-            label="ID o Nombre del Usuario Objetivo",
-            placeholder="Ingresa la ID del usuario a robar...",
-            min_length=3,
-            max_length=30,
-            required=True
-        )
-        self.add_item(self.target_input)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        target_str = self.target_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-        if not target_str.isdigit():
-            await interaction.response.send_message("❌ Ingresa una ID de usuario numérica válida.", ephemeral=True)
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="⚔️ Selecciona al oponente a retar de la lista...")
+    async def select_oponent(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta opción no es para ti.", ephemeral=True)
             return
 
-        target_id = int(target_str)
-        target_user = interaction.guild.get_member(target_id) if interaction.guild else None
-        if not target_user:
-            await interaction.response.send_message("❌ No se encontró a ese usuario en el servidor.", ephemeral=True)
+        oponente = select.values[0]
+        if not isinstance(oponente, discord.Member) and interaction.guild:
+            oponente = interaction.guild.get_member(oponente.id) or oponente
+
+        modal = RPSBetModal(oponente, self.cog)
+        await interaction.response.send_modal(modal)
+
+class RobarUserSelectView(discord.ui.View):
+    """Vista con menú desplegable nativo de miembros para seleccionar la víctima."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=60)
+        self.user = user
+        self.cog = cog
+
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="🥷 Selecciona a la víctima de la lista...")
+    async def select_victim(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta opción no es para ti.", ephemeral=True)
             return
+
+        victim = select.values[0]
+        if not isinstance(victim, discord.Member) and interaction.guild:
+            victim = interaction.guild.get_member(victim.id) or victim
 
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog:
-            await robar_cog._robar_logica(interaction, target_user, is_slash=True)
+            await robar_cog._robar_logica(interaction, victim, is_slash=True)
         else:
             await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
+
 
 
 
@@ -317,7 +314,13 @@ class CasinoGamesSelectView(discord.ui.View):
             return
 
         if val == "rps_bet":
-            await interaction.response.send_modal(RPSBetModal(self.cog))
+            view = RPSUserSelectView(self.user, self.cog)
+            embed = discord.Embed(
+                title="⚔️ Duelo: Piedra, Papel o Tijeras",
+                description="Selecciona al oponente que deseas retar de la lista de miembros:",
+                color=discord.Color.blue()
+            )
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             return
 
         if val == "loto":
@@ -355,51 +358,52 @@ class CasinoGamesSelectView(discord.ui.View):
 
 
 
-class RobarBandaModal(discord.ui.Modal):
-    """Modal para realizar un robo en banda especificando Cómplice y Víctima."""
-    def __init__(self, cog):
-        super().__init__(title="👥 Robo en Banda (Golpe Conjunto)")
+class RobarBandaSelectView(discord.ui.View):
+    """Vista con menús desplegables nativos de miembros para Cómplice y Víctima."""
+    def __init__(self, user: discord.Member, cog):
+        super().__init__(timeout=60)
+        self.user = user
         self.cog = cog
+        self.complice = None
 
-        self.complice_input = discord.ui.TextInput(
-            label="ID o Nombre del Cómplice",
-            placeholder="Ingresa la ID del compañero...",
-            min_length=3,
-            max_length=30,
-            required=True
-        )
-        self.target_input = discord.ui.TextInput(
-            label="ID o Nombre de la Víctima",
-            placeholder="Ingresa la ID de la víctima...",
-            min_length=3,
-            max_length=30,
-            required=True
-        )
-        self.add_item(self.complice_input)
-        self.add_item(self.target_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        c_str = self.complice_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-        t_str = self.target_input.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-
-        if not c_str.isdigit() or not t_str.isdigit():
-            await interaction.response.send_message("❌ Ingresa IDs numéricas válidas para el cómplice y la víctima.", ephemeral=True)
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="🤝 1. Selecciona a tu Cómplice de la lista...", row=0)
+    async def select_complice(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta opción no es para ti.", ephemeral=True)
             return
 
-        c_id, t_id = int(c_str), int(t_str)
-        c_user = interaction.guild.get_member(c_id) if interaction.guild else None
-        t_user = interaction.guild.get_member(t_id) if interaction.guild else None
+        c = select.values[0]
+        if not isinstance(c, discord.Member) and interaction.guild:
+            c = interaction.guild.get_member(c.id) or c
+        self.complice = c
 
-        if not c_user or not t_user:
-            await interaction.response.send_message("❌ No se encontró a uno de los usuarios en el servidor.", ephemeral=True)
+        embed = discord.Embed(
+            title="👥 Golpe Conjunto en Banda",
+            description=f"✅ **Cómplice seleccionado:** {self.complice.mention}\n\nAhora selecciona a la **Víctima** en el menú de abajo:",
+            color=discord.Color.dark_purple()
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="🎯 2. Selecciona a tu Víctima de la lista...", row=1)
+    async def select_victim(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Esta opción no es para ti.", ephemeral=True)
             return
+
+        if not self.complice:
+            await interaction.response.send_message("⚠️ Primero debes seleccionar a tu Cómplice en el primer menú.", ephemeral=True)
+            return
+
+        victim = select.values[0]
+        if not isinstance(victim, discord.Member) and interaction.guild:
+            victim = interaction.guild.get_member(victim.id) or victim
 
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog:
             if hasattr(robar_cog.robar_banda_slash, "callback"):
-                await robar_cog.robar_banda_slash.callback(robar_cog, interaction, c_user, t_user)
+                await robar_cog.robar_banda_slash.callback(robar_cog, interaction, self.complice, victim)
             else:
-                await robar_cog.robar_banda_slash(interaction, c_user, t_user)
+                await robar_cog.robar_banda_slash(interaction, self.complice, victim)
         else:
             await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
 
@@ -416,14 +420,27 @@ class RobarSelectionView(discord.ui.View):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
-        await interaction.response.send_modal(RobarModal(self.cog))
+        view = RobarUserSelectView(self.user, self.cog)
+        embed = discord.Embed(
+            title="🥷 Robo Individual",
+            description="Selecciona a la **víctima** de la lista desplegable de miembros para ejecutar el asalto:",
+            color=discord.Color.dark_red()
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="👥 Robo en Banda", style=discord.ButtonStyle.primary, emoji="🥷")
     async def rob_banda(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ Esta interfaz no es tuya.", ephemeral=True)
             return
-        await interaction.response.send_modal(RobarBandaModal(self.cog))
+        view = RobarBandaSelectView(self.user, self.cog)
+        embed = discord.Embed(
+            title="👥 Golpe Conjunto en Banda",
+            description="1. Selecciona a tu **Cómplice** de la lista.\n2. Selecciona a la **Víctima** de la lista.",
+            color=discord.Color.dark_purple()
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
     @discord.ui.button(label="🏦 Robo al Banco Central", style=discord.ButtonStyle.secondary, emoji="💰")
     async def rob_banco(self, interaction: discord.Interaction, button: discord.ui.Button):
