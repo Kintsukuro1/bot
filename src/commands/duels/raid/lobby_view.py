@@ -238,19 +238,26 @@ def get_combatant_available_skills(combatant: RaidCombatant) -> list[tuple[str, 
     available = []
     for skill_id, skill in SKILLS_CONFIG.items():
         if skill.get("class") is None:
-            # ceguera is only for classless
-            if combatant.combat_class is None:
+            # ceguera ("Tierra a los ojos") está disponible para sin clase o nivel < 5
+            if combatant.combat_class is None or combatant.level < 5:
                 available.append((skill_id, skill))
         else:
-            # Class-specific skill
+            # Habilidad específica de clase
             if combatant.combat_class == skill["class"]:
                 req_subclass = skill.get("subclass")
                 if req_subclass:
-                    # Subclass skill
+                    # Habilidad de subclase
                     if combatant.combat_subclass == req_subclass and combatant.level >= skill["min_level"]:
                         available.append((skill_id, skill))
                 else:
-                    # Base class skill
+                    # Habilidad de clase base
                     if combatant.level >= skill["min_level"]:
                         available.append((skill_id, skill))
+
+    # Fallback de seguridad: si no tiene habilidades unlocked (ej: nivel 1-4 con clase elegida), incluir ceguera
+    if not available:
+        ceguera_skill = SKILLS_CONFIG.get("ceguera")
+        if ceguera_skill:
+            available.append(("ceguera", ceguera_skill))
+
     return available

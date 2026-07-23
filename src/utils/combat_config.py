@@ -73,6 +73,116 @@ SKILLS_CONFIG = {
         "drain_pct": 0.15,        # Roba el 15% del HP actual del oponente
         "desc": "Clérigo: Roba 15% HP actual y disipa debuffs propios."
     },
+    "disparo_certero_base": {
+        "id": "disparo_certero_base",
+        "name": "Disparo Certero",
+        "emoji": "🏹",
+        "class": "Arquero",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.8,
+        "damage_stat": "atk",
+        "desc": "Arquero: Daño 1.8×ATK e ignora 30% DEF enemiga."
+    },
+    "palma_chi_base": {
+        "id": "palma_chi_base",
+        "name": "Palma del Chi",
+        "emoji": "☯️",
+        "class": "Monje",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "atk",
+        "desc": "Monje: Golpe marcial de 1.7×ATK que genera +2 Chi."
+    },
+    "bomba_acida_base": {
+        "id": "bomba_acida_base",
+        "name": "Bomba Ácida",
+        "emoji": "🧪",
+        "class": "Alquimista",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.8,
+        "damage_stat": "mag",
+        "desc": "Alquimista: Explosión química de 1.8×MAG que reduce DEF."
+    },
+    "invocar_espectro_base": {
+        "id": "invocar_espectro_base",
+        "name": "Invocar Espectro",
+        "emoji": "👹",
+        "class": "Invocador",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "mag",
+        "desc": "Invocador: Daño 1.7×MAG y genera +25 Esencia."
+    },
+    "descarga_electrica_base": {
+        "id": "descarga_electrica_base",
+        "name": "Descarga Eléctrica",
+        "emoji": "⚙️",
+        "class": "Ingeniero",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "atk",
+        "desc": "Ingeniero: Impacto electrostático de 1.7×ATK y genera +25 Energía."
+    },
+    "choque_elemental_base": {
+        "id": "choque_elemental_base",
+        "name": "Choque Elemental",
+        "emoji": "⭐",
+        "class": "Chamán",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "mag",
+        "desc": "Chamán: Golpe elemental 1.7×MAG y genera +1 Tótem."
+    },
+    "cancion_combate_base": {
+        "id": "cancion_combate_base",
+        "name": "Canción de Combate",
+        "emoji": "🎭",
+        "class": "Bardo",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.6,
+        "damage_stat": "mag",
+        "desc": "Bardo: Armonía de guerra 1.6×MAG y genera +25 Inspiración."
+    },
+    "orbe_sombras_base": {
+        "id": "orbe_sombras_base",
+        "name": "Orbe de Sombras",
+        "emoji": "🌑",
+        "class": "Brujo",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.9,
+        "damage_stat": "mag",
+        "desc": "Brujo: Hechicería de 1.9×MAG drenando 5% HP propio."
+    },
+    "pulso_temporal_base": {
+        "id": "pulso_temporal_base",
+        "name": "Pulso Temporal",
+        "emoji": "⏳",
+        "class": "Cronomante",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "mag",
+        "desc": "Cronomante: Onda temporal de 1.7×MAG y genera +1 Flujo Temporal."
+    },
+    "mordisco_sanguineo_base": {
+        "id": "mordisco_sanguineo_base",
+        "name": "Mordisco Sanguíneo",
+        "emoji": "🩸",
+        "class": "Vampiro",
+        "min_level": 5,
+        "cooldown": 3,
+        "damage_mult": 1.7,
+        "damage_stat": "atk",
+        "desc": "Vampiro: Estocada 1.7×ATK con 25% Robo de Vida."
+    },
 
     # ══════════════════════════════════════════════
     # HABILIDADES DE SUBCLASE — Nv.10
