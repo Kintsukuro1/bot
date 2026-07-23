@@ -1822,10 +1822,13 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS GuildEdificios (
                     GuildID BIGINT NOT NULL,
                     NombreEdificio VARCHAR(50) NOT NULL,
-                    Nivel INT DEFAULT 1,
+                    Nivel INT DEFAULT 0,
+                    FinConstruccion TIMESTAMP DEFAULT NULL,
                     PRIMARY KEY (GuildID, NombreEdificio)
                 )
             """)
+            cursor.execute("ALTER TABLE GuildEdificios ADD COLUMN IF NOT EXISTS FinConstruccion TIMESTAMP DEFAULT NULL;")
+
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS PobladoContribuciones (
@@ -4438,8 +4441,20 @@ def check_game_circuit_breaker_db(game_key: str) -> tuple:
 # POBLADO COMUNITARIO HELPERS
 # ══════════════════════════════════════════════
 
+def check_and_update_construction(guild_id: int):
+    """Comprueba si algún edificio en construcción ya completó sus 4 horas y lo sube de nivel."""
+    if not guild_id:
+        return
+    with db_cursor() as cursor:
+        cursor.execute("""
+            UPDATE GuildEdificios
+            SET Nivel = Nivel + 1,
+                FinConstruccion = NULL
+            WHERE GuildID = %s AND FinConstruccion IS NOT NULL AND FinConstruccion <= NOW()
+        """, (guild_id,))
+
 def ensure_guild_poblado(guild_id: int):
-    """Asegura que el servidor tenga registro en GuildPoblado y sus 6 edificios iniciales."""
+    """Asegura que el servidor tenga registro en GuildPoblado y sus 6 edificios iniciales en Nivel 0."""
     if not guild_id:
         return
     with db_cursor() as cursor:
@@ -4459,13 +4474,14 @@ def ensure_guild_poblado(guild_id: int):
         for ed in edificios:
             cursor.execute("""
                 INSERT INTO GuildEdificios (GuildID, NombreEdificio, Nivel)
-                VALUES (%s, %s, 1)
+                VALUES (%s, %s, 0)
                 ON CONFLICT (GuildID, NombreEdificio) DO NOTHING
             """, (guild_id, ed))
 
 def get_guild_poblado(guild_id: int) -> dict:
     """Obtiene los recursos y estado del Poblado del servidor."""
     ensure_guild_poblado(guild_id)
+    check_and_update_construction(guild_id)
     with db_cursor() as cursor:
         cursor.execute("""
             SELECT RecursoMadera, RecursoPiedra, RecursoCristal, RecursoSolar,
@@ -4487,22 +4503,50 @@ def get_guild_poblado(guild_id: int) -> dict:
         }
 
 def get_guild_buildings(guild_id: int) -> dict:
-    """Devuelve los niveles de todos los edificios construidos en el servidor."""
+    """Devuelve los niveles y fin de construcción de todos los edificios del servidor."""
     ensure_guild_poblado(guild_id)
+    check_and_update_construction(guild_id)
     with db_cursor() as cursor:
-        cursor.execute("SELECT NombreEdificio, Nivel FROM GuildEdificios WHERE GuildID = %s", (guild_id,))
+        cursor.execute("SELECT NombreEdificio, Nivel, FinConstruccion FROM GuildEdificios WHERE GuildID = %s", (guild_id,))
         rows = cursor.fetchall()
-        return {r[0]: r[1] for r in rows}
+        return {r[0]: {"nivel": r[1], "fin_construccion": r[2]} for r in rows}
 
 def get_building_level(guild_id: int, building_name: str) -> int:
     """Obtiene el nivel de un edificio específico en el servidor."""
     if not guild_id:
         return 0
     ensure_guild_poblado(guild_id)
+    check_and_update_construction(guild_id)
     with db_cursor() as cursor:
         cursor.execute("SELECT Nivel FROM GuildEdificios WHERE GuildID = %s AND NombreEdificio = %s", (guild_id, building_name))
         row = cursor.fetchone()
-        return row[0] if row else 1
+        return row[0] if row else 0
+
+def start_building_construction(guild_id: int, building_name: str) -> tuple[bool, str]:
+    """Inicia el temporizador de 4 horas de construcción para subir un edificio de nivel."""
+    if not guild_id:
+        return False, "Servidor inválido."
+    ensure_guild_poblado(guild_id)
+    check_and_update_construction(guild_id)
+    with db_cursor() as cursor:
+        cursor.execute("SELECT Nivel, FinConstruccion FROM GuildEdificios WHERE GuildID = %s AND NombreEdificio = %s", (guild_id, building_name))
+        row = cursor.fetchone()
+        current_lvl = row[0] if row else 0
+        fin_const = row[1] if row else None
+
+        if current_lvl >= 5:
+            return False, f"El edificio **{building_name}** ya alcanzó el Nivel Máximo (5)."
+        if fin_const is not None:
+            return False, f"El edificio **{building_name}** ya está en proceso de construcción."
+
+        cursor.execute("""
+            UPDATE GuildEdificios
+            SET FinConstruccion = NOW() + INTERVAL '4 hours'
+            WHERE GuildID = %s AND NombreEdificio = %s
+        """, (guild_id, building_name))
+        return True, f"🔨 ¡La obra de **{building_name}** ha comenzado! Tardará **4 horas** en construirse y habilitar el Nivel {current_lvl + 1}."
+
+
 
 def add_poblado_resources(guild_id: int, madera: int = 0, piedra: int = 0, cristal: int = 0, solar: int = 0, puntos: int = 0):
     """Suma recursos y puntos semanales al Poblado del servidor."""
