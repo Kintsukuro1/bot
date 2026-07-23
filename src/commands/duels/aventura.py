@@ -51,13 +51,15 @@ class AventuraView(discord.ui.View):
         node = self.current_node
 
         if node.node_type in ["combat", "combat_elite"]:
-            await self._handle_combat_node(is_elite=(node.node_type == "combat_elite"))
+            await self._handle_combat_node(interaction, is_elite=(node.node_type == "combat_elite"))
+            return
         elif node.node_type == "event":
             await self._handle_event_node()
         elif node.node_type == "camp":
             await self._handle_camp_node()
         elif node.node_type == "boss":
-            await self._handle_boss_node()
+            await self._handle_boss_node(interaction)
+            return
 
         if self.p.hp <= 0:
             await self._finish_adventure(interaction, victory=False)
@@ -80,53 +82,16 @@ class AventuraView(discord.ui.View):
 
     # ── MANEJADORES DE NODOS ──
 
-    async def _handle_combat_node(self, is_elite: bool = False):
+    async def _handle_combat_node(self, interaction: discord.Interaction, is_elite: bool = False):
         mob = generate_mob(self.chapter_id, round_num=self.current_node_idx + 1, is_elite=is_elite)
-        
-        # Ejecutar acción de mascota
-        pet_log = self.p.execute_pet_raid_ai(0.5, False)
-        if pet_log:
-            self.combat_logs.append(f"   {pet_log}")
-
-        # Daño infligido por el jugador
-        p_dmg = max(1, self.p.atk - mob.def_stat)
-        is_crit = random.random() < self.p.subclass_extras.get("crit_chance_bonus", 0.05)
-        if is_crit:
-            p_dmg = int(p_dmg * 1.5)
-
-        # Evento de Recurso de Clase al atacar
-        res_log = self.p.resource.on_attack_dealt(p_dmg, is_crit)
-        if res_log:
-            self.combat_logs.append(f"   {res_log}")
-
-        mob_dmg_taken, mob_event = mob.take_damage(p_dmg)
-        if mob_event:
-            self.combat_logs.append(f"   {mob_event}")
-
-        # Daño infligido por el mob si sobrevive
-        if mob.hp > 0:
-            mob_log = mob.perform_action(self.p)
-            self.combat_logs.append(f"   {mob_log}")
-            # Recibir daño otorga Furia / Fe
-            res_dmg_log = self.p.resource.on_damage_taken(mob.atk)
-            if res_dmg_log:
-                self.combat_logs.append(f"   {res_dmg_log}")
-
-        # Recompensas de la ronda
-        round_bronze = int(35 * self.chapter_id * (1.5 if is_elite else 1.0))
-        self.total_bronze_gained += round_bronze
-        self.materials_gained["madera"] += random.randint(1, 3)
-        self.materials_gained["piedra"] += random.randint(1, 2)
-
-        self.combat_logs.append(f"**Nodo {self.current_node_idx + 1}:** Derrotado {mob.emoji} **{mob.name}** (+{round_bronze} Bronce 🥉)")
-        self.current_node.completed = True
-        self.current_node_idx += 1
+        combat_view = AventuraNodeCombatView(self, mob, is_boss=False)
+        embed = combat_view._build_embed()
+        await interaction.edit_original_response(embed=embed, view=combat_view)
 
     async def _handle_event_node(self):
         event = random.choice(NARRATIVE_EVENTS)
         self.current_event_data = event
         
-        # Seleccionar una opción por defecto / aleatoria en la resolución rápida
         opt = random.choice(event["options"])
         if opt["effect_type"] == "resource":
             self.p.resource.add(opt["val"])
@@ -153,10 +118,10 @@ class AventuraView(discord.ui.View):
         self.current_node.completed = True
         self.current_node_idx += 1
 
-    async def _handle_boss_node(self):
+    async def _handle_boss_node(self, interaction: discord.Interaction):
         boss_info = self.cfg["boss"]
         boss_mob = Mob(
-            name=f"👑 {boss_info['name']}",
+            name=f"{boss_info['name']}",
             emoji=boss_info["emoji"],
             archetype="guerrero",
             level=self.chapter_id * 10,
@@ -166,20 +131,9 @@ class AventuraView(discord.ui.View):
             is_elite=True,
             affix="bastion"
         )
-
-        p_dmg = max(1, self.p.atk - boss_mob.def_stat)
-        boss_mob.take_damage(p_dmg)
-
-        if boss_mob.hp > 0:
-            b_log = boss_mob.perform_action(self.p)
-            self.combat_logs.append(f"   {b_log}")
-
-        reward = boss_info["reward_bronze"]
-        self.total_bronze_gained += reward
-        self.materials_gained["solar"] += 2
-        
-        self.combat_logs.append(f"👑 **¡JEFE DERROTADO!** Has derrotado a {boss_info['emoji']} **{boss_info['name']}** (+{reward:,} Bronce 🥉).")
-        self.current_node.completed = True
+        combat_view = AventuraNodeCombatView(self, boss_mob, is_boss=True)
+        embed = combat_view._build_embed()
+        await interaction.edit_original_response(embed=embed, view=combat_view)
 
     # ── CONSTRUCCIÓN DEL EMBED ──
 
@@ -499,6 +453,166 @@ FIRST_TIME_CLASSES = [
         "color": discord.Color.dark_red()
     }
 ]
+
+
+class AventuraNodeCombatView(discord.ui.View):
+    """Vista de combate interactiva turno por turno para Nodos de Aventura."""
+
+    def __init__(self, main_adventure_view: "AventuraView", mob: Mob, is_boss: bool = False):
+        super().__init__(timeout=180)
+        self.adv = main_adventure_view
+        self.mob = mob
+        self.is_boss = is_boss
+        self.turn = 1
+        self.logs: list[str] = [f"⚔️ ¡Un {mob.emoji} **{mob.name}** ha aparecido! Prepárate para combatir."]
+
+    def _build_embed(self) -> discord.Embed:
+        p = self.adv.p
+        m = self.mob
+
+        # Barra HP del Jugador
+        p_pct = max(0, int((p.hp / p.max_hp) * 10))
+        p_hp_bar = "█" * p_pct + "░" * (10 - p_pct)
+        res_str = p.resource.format_display()
+        res_line = f"\n{res_str}" if res_str else ""
+
+        # Barra HP del Mob
+        m_pct = max(0, int((m.hp / m.max_hp) * 10))
+        m_hp_bar = "█" * m_pct + "░" * (10 - m_pct)
+        shield_str = f" 🛡️ ({m.shield})" if m.shield > 0 else ""
+        affix_str = f" · *{m.affix.title()}*" if m.affix else ""
+
+        desc = (
+            f"📍 **Nodo {self.adv.current_node_idx + 1}/10** · Turno {self.turn}\n\n"
+            f"👹 **{m.emoji} {m.name}**{affix_str}\n"
+            f"`[{m_hp_bar}]` **{m.hp}/{m.max_hp} HP**{shield_str} | ⚔️ ATK: `{m.atk}` | 🛡️ DEF: `{m.def_stat}`\n\n"
+            f"👤 **{p.user.display_name}** ({p.combat_class})\n"
+            f"`[{p_hp_bar}]` **{p.hp}/{p.max_hp} HP** | ⚔️ ATK: `{p.atk}` | 🛡️ DEF: `{p.def_stat}`{res_line}\n\n"
+            f"📜 **Combate en Vivo:**\n" + "\n".join(self.logs[-4:])
+        )
+
+        embed = discord.Embed(
+            title=f"⚔️ COMBATE EN CURSO: {m.emoji} {m.name}",
+            description=desc,
+            color=discord.Color.dark_red() if self.is_boss else discord.Color.orange()
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.adv.user_id:
+            await interaction.response.send_message("❌ Este combate pertenece a otro jugador.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Atacar", style=discord.ButtonStyle.danger, emoji="⚔️", row=0)
+    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        p = self.adv.p
+        m = self.mob
+
+        # 1. Turno del Jugador: Ataque básico
+        raw_dmg = max(1, p.atk - m.def_stat)
+        is_crit = random.random() < p.subclass_extras.get("crit_chance_bonus", 0.05)
+        if is_crit:
+            raw_dmg = int(raw_dmg * 1.5)
+
+        # Evento de Recurso
+        res_log = p.resource.on_attack_dealt(raw_dmg, is_crit)
+        if res_log:
+            self.logs.append(f"   {res_log}")
+
+        dmg_dealt, event_log = m.take_damage(raw_dmg)
+        crit_txt = " **¡CRÍTICO!**" if is_crit else ""
+        self.logs.append(f"⚔️ **{p.user.display_name}** ataca a {m.emoji} {m.name}{crit_txt} infligiendo **{dmg_dealt}** daño.")
+        if event_log:
+            self.logs.append(f"   {event_log}")
+
+        await self._resolve_turn(interaction)
+
+    @discord.ui.button(label="Habilidad", style=discord.ButtonStyle.primary, emoji="✨", row=0)
+    async def btn_skill(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        p = self.adv.p
+        m = self.mob
+
+        # Potenciamiento por recurso
+        mult, boost_log = p.resource.try_consume_and_boost()
+        if boost_log:
+            self.logs.append(f"   {boost_log}")
+
+        raw_dmg = int(max(1, p.atk * 1.6 * mult) - (m.def_stat * 0.2))
+        res_log = p.resource.on_spell_cast()
+        if res_log:
+            self.logs.append(f"   {res_log}")
+
+        dmg_dealt, event_log = m.take_damage(raw_dmg, is_magic=True)
+        self.logs.append(f"✨ **{p.user.display_name}** usa su **Habilidad Especial** infligiendo **{dmg_dealt}** daño mágico.")
+        if event_log:
+            self.logs.append(f"   {event_log}")
+
+        await self._resolve_turn(interaction)
+
+    @discord.ui.button(label="Defender", style=discord.ButtonStyle.secondary, emoji="🛡️", row=0)
+    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        p = self.adv.p
+        heal = max(1, int(p.max_hp * 0.10))
+        p.hp = min(p.max_hp, p.hp + heal)
+        p.resource.add(15)
+
+        self.logs.append(f"🛡️ **{p.user.display_name}** se defiende, recupera **+{heal} HP** y gana recarga de recurso.")
+        await self._resolve_turn(interaction, is_defending=True)
+
+    @discord.ui.button(label="Huir", style=discord.ButtonStyle.grey, emoji="🏃", row=0)
+    async def btn_flee(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.adv._finish_adventure(interaction, victory=False, retreated=True)
+
+    async def _resolve_turn(self, interaction: discord.Interaction, is_defending: bool = False):
+        p = self.adv.p
+        m = self.mob
+
+        # 2. Verificación si el Mob murió
+        if m.hp <= 0:
+            for child in self.children:
+                child.disabled = True
+
+            round_bronze = int(35 * self.adv.chapter_id * (2.5 if self.is_boss else (1.5 if m.is_elite else 1.0)))
+            self.adv.total_bronze_gained += round_bronze
+            self.adv.materials_gained["madera"] += random.randint(1, 3)
+            self.adv.materials_gained["piedra"] += random.randint(1, 2)
+            if self.is_boss:
+                self.adv.materials_gained["solar"] += 2
+
+            self.adv.combat_logs.append(f"⚔️ **Nodo {self.adv.current_node_idx + 1}:** Derrotado {m.emoji} **{m.name}** (+{round_bronze:,} Bronce 🥉).")
+            self.adv.current_node.completed = True
+            self.adv.current_node_idx += 1
+
+            if self.adv.current_node_idx >= len(self.adv.nodes):
+                await self.adv._finish_adventure(interaction, victory=True)
+            else:
+                embed = self.adv._build_embed()
+                await interaction.edit_original_response(embed=embed, view=self.adv)
+            return
+
+        # 3. Turno del Mob (si sigue vivo)
+        m_log = m.perform_action(p)
+        if is_defending:
+            m_log += " *(Daño reducido por postura defensiva)*"
+        self.logs.append(f"   {m_log}")
+
+        res_dmg_log = p.resource.on_damage_taken(m.atk)
+        if res_dmg_log:
+            self.logs.append(f"   {res_dmg_log}")
+
+        # 4. Verificación si el Jugador murió
+        if p.hp <= 0:
+            await self.adv._finish_adventure(interaction, victory=False)
+            return
+
+        self.turn += 1
+        embed = self._build_embed()
+        await interaction.edit_original_response(embed=embed, view=self)
 
 
 class ClassSelectionCarouselView(discord.ui.View):
