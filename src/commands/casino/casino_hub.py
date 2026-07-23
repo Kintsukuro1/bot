@@ -142,9 +142,10 @@ class RobarModal(discord.ui.Modal):
 
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog:
-            await robar_cog.robar(interaction, target_user)
+            await robar_cog._robar_logica(interaction, target_user, is_slash=True)
         else:
             await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
+
 
 
 class BankTransactionModal(discord.ui.Modal):
@@ -283,7 +284,10 @@ class RobarBandaModal(discord.ui.Modal):
 
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog:
-            await robar_cog.robar_banda_slash(interaction, c_user, t_user)
+            if hasattr(robar_cog.robar_banda_slash, "callback"):
+                await robar_cog.robar_banda_slash.callback(robar_cog, interaction, c_user, t_user)
+            else:
+                await robar_cog.robar_banda_slash(interaction, c_user, t_user)
         else:
             await interaction.response.send_message("❌ Módulo de robos no disponible.", ephemeral=True)
 
@@ -316,7 +320,10 @@ class RobarSelectionView(discord.ui.View):
             return
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog and hasattr(robar_cog, "robar_banco_slash"):
-            await robar_cog.robar_banco_slash(interaction, None)
+            if hasattr(robar_cog.robar_banco_slash, "callback"):
+                await robar_cog.robar_banco_slash.callback(robar_cog, interaction, None)
+            else:
+                await robar_cog.robar_banco_slash(interaction, None)
         else:
             await interaction.response.send_message("❌ Módulo de robo al banco no disponible.", ephemeral=True)
 
@@ -327,9 +334,10 @@ class RobarSelectionView(discord.ui.View):
             return
         robar_cog = self.cog.bot.get_cog("Robar")
         if robar_cog:
-            await robar_cog.perfil_ladron_cmd(interaction)
+            await robar_cog._perfil_ladron_logica(interaction)
         else:
             await interaction.response.send_message("❌ Módulo de perfil de ladrón no disponible.", ephemeral=True)
+
 
 
 class CasinoHubView(discord.ui.View):
@@ -399,9 +407,13 @@ class CasinoHubView(discord.ui.View):
 
         bolsa_cog = self.cog.bot.get_cog("BolsaCog")
         if bolsa_cog:
-            await bolsa_cog.bolsa(interaction)
+            if hasattr(bolsa_cog.bolsa, "callback"):
+                await bolsa_cog.bolsa.callback(bolsa_cog, interaction)
+            else:
+                await bolsa_cog.bolsa(interaction)
         else:
             await interaction.response.send_message("❌ Módulo de bolsa no disponible.", ephemeral=True)
+
 
 
     @discord.ui.button(label="🐾 Mascota", style=discord.ButtonStyle.secondary, row=1)
