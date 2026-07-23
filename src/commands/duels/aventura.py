@@ -11,7 +11,10 @@ from discord import app_commands
 import asyncio
 import random
 from typing import Optional
-from src.db import db_cursor, ensure_user, get_user_combat_level, add_poblado_resources, record_poblado_contribution
+from src.db import (
+    db_cursor, ensure_user, get_user_combat_level, add_poblado_resources, record_poblado_contribution,
+    get_user_consumables, use_consumable, get_consumable_catalog
+)
 from src.commands.duels.raid.combatant import RaidCombatant
 from src.utils.combat.mobs import generate_mob, Mob
 from src.utils.combat.adventure_nodes import (
@@ -19,6 +22,8 @@ from src.utils.combat.adventure_nodes import (
 )
 from src.utils.combat_progression import format_hp_bar, get_combat_rank_emoji
 from src.utils.subclass_config import get_subclass_skills
+from src.utils.combat_config import SKILLS_CONFIG
+from src.commands.duels.raid.lobby_view import get_combatant_available_skills
 
 class AventuraView(discord.ui.View):
     """Vista interactiva para navegar por los Nodos del Capítulo de Aventura."""
@@ -484,8 +489,76 @@ FIRST_TIME_CLASSES = [
 ]
 
 
+class AventuraSkillSelectView(discord.ui.View):
+    """Menú efímero de selección de habilidad especial para el combate de Aventura."""
+
+    def __init__(self, combat_view: "AventuraNodeCombatView", options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.combat_view = combat_view
+
+        select = discord.ui.Select(
+            placeholder="✨ Seleccionar Habilidad Especial...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        selected_skill_id = interaction.data["values"][0]
+        skill = SKILLS_CONFIG.get(selected_skill_id)
+        if not skill:
+            await interaction.response.edit_message(content="❌ Habilidad desconocida.", view=self)
+            return
+
+        await interaction.response.edit_message(content=f"✅ Habilidad registrada: **{skill['name']}**", view=self)
+        await self.combat_view._execute_player_skill(interaction, skill)
+
+
+class AventuraConsumableSelectView(discord.ui.View):
+    """Menú efímero de selección de consumible para el combate de Aventura."""
+
+    def __init__(self, combat_view: "AventuraNodeCombatView", options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.combat_view = combat_view
+
+        select = discord.ui.Select(
+            placeholder="🧪 Seleccionar Consumible...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                child.disabled = True
+
+        selected_key = interaction.data["values"][0]
+        user_id = self.combat_view.adv.user_id
+
+        success = await asyncio.to_thread(use_consumable, user_id, selected_key)
+        if not success:
+            await interaction.response.edit_message(content="❌ No tienes suficiente cantidad de este consumible.", view=self)
+            return
+
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        c_info = next((item for item in catalog if item['consumable_key'] == selected_key), None)
+        c_name = c_info['name'] if c_info else selected_key
+
+        await interaction.response.edit_message(content=f"✅ Consumible registrado: **{c_name}**", view=self)
+        await self.combat_view._execute_player_consumable(interaction, selected_key, c_name)
+
+
 class AventuraNodeCombatView(discord.ui.View):
-    """Vista de combate interactiva turno por turno para Nodos de Aventura."""
+    """Vista de combate interactiva turno por turno para Nodos de Aventura (Estilo Raid)."""
 
     def __init__(self, main_adventure_view: "AventuraView", mob: Mob, is_boss: bool = False):
         super().__init__(timeout=180)
@@ -493,6 +566,7 @@ class AventuraNodeCombatView(discord.ui.View):
         self.mob = mob
         self.is_boss = is_boss
         self.turn = 1
+        self.game_over = False
         self.logs: list[str] = [f"⚔️ ¡Un {mob.emoji} **{mob.name}** ha aparecido! Prepárate para combatir."]
 
     def _build_embed(self) -> discord.Embed:
@@ -500,63 +574,69 @@ class AventuraNodeCombatView(discord.ui.View):
         m = self.mob
         rank_emoji = get_combat_rank_emoji(p.level)
 
-        header_desc = (
-            f"📍 **Nodo {self.adv.current_node_idx + 1}/10** · *Capítulo {self.adv.chapter_id}*\n"
-            f"⚔️ **Ronda {self.turn}** · Combate en tiempo real"
-        )
-        if self.is_boss:
-            header_desc += f"\n👑 **¡ENFRENTAMIENTO CONTRA EL JEFE DEL CAPÍTULO!**"
+        if m.hp <= 0:
+            title = f"🏆 ¡Raid Completada — {m.name} Derrotado!"
+            header_desc = f"¡Los héroes han triunfado sobre {m.emoji} **{m.name}**!"
+            color = discord.Color.gold()
+        elif p.hp <= 0:
+            title = f"💀 Derrota en la Aventura — {m.name}"
+            header_desc = f"Has caído en combate en el **Nodo {self.adv.current_node_idx + 1}**."
+            color = discord.Color.red()
+        else:
+            title = f"⚔️ COMBATE EN CURSO: {m.emoji} {m.name}" if not self.is_boss else f"{m.emoji} Raid — {m.name}"
+            header_desc = (
+                f"📍 **Nodo {self.adv.current_node_idx + 1}/10** · *Capítulo {self.adv.chapter_id}*\n"
+                f"⚔️ **Ronda {self.turn}** · Combate en tiempo real"
+            )
+            if self.is_boss:
+                header_desc += f"\n👑 **¡ENFRENTAMIENTO CONTRA EL JEFE DEL CAPÍTULO!**"
+            color = discord.Color.dark_red() if self.is_boss else discord.Color.orange()
 
         embed = discord.Embed(
-            title=f"{m.emoji} Aventura PvE — {m.name}",
+            title=title,
             description=header_desc,
-            color=discord.Color.dark_red() if self.is_boss else discord.Color.gold()
+            color=color
         )
 
-        # Campo del Enemigo (estilo Raid Boss)
-        m_status = ""
+        # Campo del Enemigo (Estilo Raid Boss)
+        m_status = f" · *{m.affix.title()}*" if m.affix else ""
         if m.shield > 0:
             m_status += f" 🛡️({m.shield})"
-        if m.affix:
-            m_status += f" · *{m.affix.title()}*"
 
         m_hp_bar = format_hp_bar(max(0, m.hp), m.max_hp, size=20)
 
         embed.add_field(
-            name=f"{m.emoji} {m.name} — Nv. {m.level}{m_status}",
-            value=(
-                f"{m_hp_bar}\n"
-                f"⚔️ **{m.atk}** ATK · 🛡️ **{m.def_stat}** DEF"
-            ),
+            name=f"{m.emoji} {m.name}{m_status}",
+            value=f"{m_hp_bar}",
             inline=False
         )
 
-        # Campo del Jugador (estilo Raid Combatant)
-        p_status = ""
-        res_display = p.resource.format_display()
-        if res_display:
-            p_status += f"\n{res_display}"
-
-        subclass_str = f" · *{p.combat_subclass}*" if p.combat_subclass else ""
+        # Campo del Jugador (Estilo Raid Combatant - Image 2 style)
+        p_status = " 🟢" if p.hp > 0 else " 💀"
         p_hp_bar = format_hp_bar(max(0, p.hp), p.max_hp, size=15)
+        res_display = p.resource.format_display()
+        res_line = f"\n{res_display}" if res_display else ""
+
+        class_tag = f" [{p.combat_subclass}]" if p.combat_subclass else (f" [{p.combat_class}]" if p.combat_class else "")
 
         embed.add_field(
-            name=f"{rank_emoji} {p.user.display_name} ({p.combat_class}{subclass_str})",
+            name=f"{p_status} {rank_emoji} **{p.user.display_name}**{class_tag} (Nv. {p.level})",
             value=(
-                f"{p_hp_bar}\n"
-                f"⚔️ **{p.atk}** ATK · 🛡️ **{p.def_stat}** DEF{p_status}"
+                f"{p_hp_bar}{res_line}\n"
+                f"⚔️ {p.atk} ATK · 🛡️ {p.def_stat} DEF"
             ),
             inline=False
         )
 
-        # Campo de Registro de Batalla
-        logs_str = "\n".join(self.logs[-5:]) if self.logs else "_Preparando el primer asalto..._"
+        # Campo de Últimas acciones
+        logs_str = "\n".join(self.logs[-6:]) if self.logs else "_Preparando el primer asalto..._"
         embed.add_field(
-            name="📜 Registro de Batalla",
+            name="📜 Últimas acciones",
             value=logs_str,
             inline=False
         )
 
+        embed.set_footer(text=f"Duración: {self.turn} rondas · Capítulo {self.adv.chapter_id} (Nodo {self.adv.current_node_idx + 1}/10)")
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -565,8 +645,12 @@ class AventuraNodeCombatView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Atacar", style=discord.ButtonStyle.danger, emoji="⚔️", row=0)
+    @discord.ui.button(label="⚔️ Atacar", style=discord.ButtonStyle.danger, row=0)
     async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ El combate ya terminó.", ephemeral=True)
+            return
+
         await interaction.response.defer()
         p = self.adv.p
         m = self.mob
@@ -585,64 +669,134 @@ class AventuraNodeCombatView(discord.ui.View):
         dmg_dealt, event_log = m.take_damage(raw_dmg)
         crit_txt = " **¡CRÍTICO!**" if is_crit else ""
         self.logs.append(f"⚔️ **{p.user.display_name}** ataca a {m.emoji} {m.name}{crit_txt} infligiendo **{dmg_dealt}** daño.")
+        self.logs.append(f"➡️ **Daño al enemigo:** **{dmg_dealt}** daño.")
         if event_log:
             self.logs.append(f"   {event_log}")
 
         await self._resolve_turn(interaction)
 
-    @discord.ui.button(label="Habilidad", style=discord.ButtonStyle.primary, emoji="✨", row=0)
-    async def btn_skill(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🛡️ Defender", style=discord.ButtonStyle.primary, row=0)
+    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ El combate ya terminó.", ephemeral=True)
+            return
+
         await interaction.response.defer()
+        p = self.adv.p
+        heal = max(1, int(p.max_hp * 0.12))
+        p.hp = min(p.max_hp, p.hp + heal)
+        p.resource.add(15)
+
+        self.logs.append(f"🛡️ **{p.user.display_name}** se defiende y recupera **{heal}** HP.")
+        await self._resolve_turn(interaction, is_defending=True)
+
+    @discord.ui.button(label="✨ Habilidad Especial", style=discord.ButtonStyle.secondary, row=1)
+    async def btn_skill_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ El combate ya terminó.", ephemeral=True)
+            return
+
+        p = self.adv.p
+        available_skills = get_combatant_available_skills(p)
+        if not available_skills:
+            await interaction.response.send_message("❌ No tienes habilidades especiales disponibles.", ephemeral=True)
+            return
+
+        options = [
+            discord.SelectOption(
+                label=f"{skill['name']} (Nvl. {skill['min_level']})",
+                value=skill_id,
+                emoji=skill['emoji'],
+                description=skill['desc'][:100]
+            ) for skill_id, skill in available_skills
+        ]
+
+        view = AventuraSkillSelectView(combat_view=self, options=options)
+        await interaction.response.send_message("Elige tu habilidad especial:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🧪 Usar Consumible", style=discord.ButtonStyle.success, row=1)
+    async def btn_consumable_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.game_over:
+            await interaction.response.send_message("❌ El combate ya terminó.", ephemeral=True)
+            return
+
+        user_id = self.adv.user_id
+        inventory = await asyncio.to_thread(get_user_consumables, user_id)
+        if not inventory:
+            await interaction.response.send_message("❌ No tienes consumibles en tu inventario.", ephemeral=True)
+            return
+
+        catalog = await asyncio.to_thread(get_consumable_catalog)
+        options = []
+        for key, qty in inventory.items():
+            if qty > 0:
+                c_info = next((item for item in catalog if item['consumable_key'] == key), None)
+                c_name = c_info['name'] if c_info else key
+                c_emoji = c_info['emoji'] if c_info else "🧪"
+                options.append(
+                    discord.SelectOption(
+                        label=f"{c_name} (x{qty})",
+                        value=key,
+                        emoji=c_emoji,
+                        description=f"Disponible: {qty} en inventario"
+                    )
+                )
+
+        if not options:
+            await interaction.response.send_message("❌ No tienes consumibles disponibles.", ephemeral=True)
+            return
+
+        view = AventuraConsumableSelectView(combat_view=self, options=options)
+        await interaction.response.send_message("Elige tu consumible:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🏃 Huir", style=discord.ButtonStyle.grey, row=2)
+    async def btn_flee(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.adv._finish_adventure(interaction, victory=False, retreated=True)
+
+    async def _execute_player_skill(self, interaction: discord.Interaction, skill: dict):
         p = self.adv.p
         m = self.mob
 
-        # Buscar habilidades de subclase disponibles para el jugador
-        avail_skills = get_subclass_skills(p.combat_subclass, p.level) if p.combat_subclass else []
-        active_skill = avail_skills[-1] if avail_skills else None
-
-        # Potenciamiento por recurso de clase
         mult, boost_log = p.resource.try_consume_and_boost()
         if boost_log:
             self.logs.append(f"   {boost_log}")
 
-        if active_skill:
-            skill_name = active_skill["name"]
-            skill_emoji = active_skill.get("emoji", "✨")
-            base_mult = active_skill.get("damage_mult", 1.8)
-            total_mult = base_mult * mult
-            raw_dmg = int(max(1, p.atk * total_mult) - (m.def_stat * 0.2))
-            skill_title = f"{skill_emoji} {skill_name}"
-        else:
-            total_mult = 1.6 * mult
-            raw_dmg = int(max(1, p.atk * total_mult) - (m.def_stat * 0.2))
-            skill_title = "✨ Habilidad Especial"
+        base_mult = skill.get("damage_mult", 1.8)
+        total_mult = base_mult * mult
+        dmg_stat = skill.get("damage_stat", "mag")
+        stat_val = getattr(p, dmg_stat, p.atk)
 
+        raw_dmg = int(max(1, stat_val * total_mult) - (m.def_stat * 0.25))
         res_log = p.resource.on_spell_cast()
         if res_log:
             self.logs.append(f"   {res_log}")
 
-        dmg_dealt, event_log = m.take_damage(raw_dmg, is_magic=True)
-        self.logs.append(f"✨ **{p.user.display_name}** desata **{skill_title}** ({total_mult:.1f}× ATK) infligiendo **{dmg_dealt}** daño mágico.")
+        dmg_dealt, event_log = m.take_damage(raw_dmg, is_magic=(dmg_stat == "mag"))
+        skill_emoji = skill.get('emoji', '✨')
+        self.logs.append(f"{skill_emoji} **{skill['name']}**: **{p.user.display_name}** causa **{dmg_dealt}** daño e inflige habilidades sobre {m.name}!")
+        self.logs.append(f"➡️ **Daño al enemigo:** **{dmg_dealt}** daño.")
         if event_log:
             self.logs.append(f"   {event_log}")
 
         await self._resolve_turn(interaction)
 
-    @discord.ui.button(label="Defender", style=discord.ButtonStyle.secondary, emoji="🛡️", row=0)
-    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+    async def _execute_player_consumable(self, interaction: discord.Interaction, consumable_key: str, consumable_name: str):
         p = self.adv.p
-        heal = max(1, int(p.max_hp * 0.10))
-        p.hp = min(p.max_hp, p.hp + heal)
-        p.resource.add(15)
 
-        self.logs.append(f"🛡️ **{p.user.display_name}** se defiende, recupera **+{heal} HP** y gana recarga de recurso.")
+        if "salud" in consumable_key or "hp" in consumable_key or "pocion" in consumable_key:
+            heal = int(p.max_hp * 0.35)
+            p.hp = min(p.max_hp, p.hp + heal)
+            self.logs.append(f"🧪 **{p.user.display_name}** usa **{consumable_name}** y recupera **{heal}** HP.")
+        elif "fuerza" in consumable_key or "atk" in consumable_key:
+            p.atk = int(p.atk * 1.25)
+            self.logs.append(f"🧪 **{p.user.display_name}** usa **{consumable_name}** e incrementa su ATK un **+25%**.")
+        else:
+            heal = int(p.max_hp * 0.25)
+            p.hp = min(p.max_hp, p.hp + heal)
+            self.logs.append(f"🧪 **{p.user.display_name}** usa **{consumable_name}** restaurando energía de combate.")
+
         await self._resolve_turn(interaction, is_defending=True)
-
-    @discord.ui.button(label="Huir", style=discord.ButtonStyle.grey, emoji="🏃", row=0)
-    async def btn_flee(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.adv._finish_adventure(interaction, victory=False, retreated=True)
 
     async def _resolve_turn(self, interaction: discord.Interaction, is_defending: bool = False):
         p = self.adv.p
@@ -672,6 +826,11 @@ class AventuraNodeCombatView(discord.ui.View):
             else:
                 mat_text = ""
 
+            self.game_over = True
+            for child in self.children:
+                child.disabled = True
+
+            self.logs.append(f"🎉 **¡{m.name} ha sido derrotado!**")
             self.adv.combat_logs.append(f"⚔️ **Nodo {self.adv.current_node_idx + 1}:** Derrotado {m.emoji} **{m.name}** (+{round_bronze:,} Bronce 🥉{mat_text}).")
             self.adv.current_node.completed = True
             self.adv.current_node_idx += 1
