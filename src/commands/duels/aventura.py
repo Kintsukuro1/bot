@@ -513,8 +513,9 @@ class ClassSelectionCarouselView(discord.ui.View):
 
     def _build_embed(self) -> discord.Embed:
         c_data = FIRST_TIME_CLASSES[self.current_idx]
+        total_cls = len(FIRST_TIME_CLASSES)
         embed = discord.Embed(
-            title=f"⚔️ Bienvenida a la Campaña — Elige tu Clase ({self.current_idx + 1}/5)",
+            title=f"⚔️ Bienvenida a la Campaña — Elige tu Clase ({self.current_idx + 1}/{total_cls})",
             description=(
                 f"¡Bienvenido, aventurero! Antes de emprender la historia, debes seleccionar tu **Clase de Combate Inicial**.\n\n"
                 f"### {c_data['emoji']} **{c_data['name']}**\n"
@@ -526,7 +527,7 @@ class ClassSelectionCarouselView(discord.ui.View):
             ),
             color=c_data["color"]
         )
-        embed.set_footer(text=f"Clase {self.current_idx + 1} de {len(FIRST_TIME_CLASSES)} · {c_data['name']}")
+        embed.set_footer(text=f"Clase {self.current_idx + 1} de {total_cls} · {c_data['name']}")
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -588,6 +589,11 @@ class ClassSelectionCarouselView(discord.ui.View):
         embed.set_author(name=f"¡Has elegido la clase {chosen['name']} {chosen['emoji']}! Comenzando Aventura...")
 
         await interaction.response.edit_message(embed=embed, view=adventure_view)
+
+    @discord.ui.button(label="Siguiente", style=discord.ButtonStyle.secondary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_idx = (self.current_idx + 1) % len(FIRST_TIME_CLASSES)
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
 
 
 class Aventura(commands.Cog):
