@@ -49,6 +49,7 @@ from src.utils.subclass_config import (
     get_subclass_config, get_subclass_skills, get_available_subclasses,
     get_all_subclass_info_for_display,
 )
+from src.utils.combat import ClassResource
 
 
 # ══════════════════════════════════════════════
@@ -65,6 +66,7 @@ class Combatant:
         self.combat_class = combat_class
         self.combat_subclass = combat_subclass
         self.equipment = equipment
+        self.resource = ClassResource(combat_class)
 
         # Stats base
         base = calc_base_stats(level)
@@ -770,9 +772,11 @@ class DuelView(discord.ui.View):
                 class_tag = f" [{p.combat_class}]"
             else:
                 class_tag = ""
+            res_disp = p.resource.format_display()
+            res_text = f"\n{res_disp}" if res_disp else ""
             embed.add_field(
                 name=f"{rank_emoji} {p.user.display_name}{class_tag} (Nv.{p.level}){status_icons}{passive_icons}",
-                value=f"{hp_bar}\n⚔️ {p.atk} ATK · 🔮 {p.mag} MAG · 🛡️ {p.def_stat} DEF",
+                value=f"{hp_bar}{res_text}\n⚔️ {p.atk} ATK · 🔮 {p.mag} MAG · 🛡️ {p.def_stat} DEF",
                 inline=False
             )
 
