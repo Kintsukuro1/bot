@@ -710,6 +710,27 @@ class PetsMasterCog(commands.Cog):
         embed.set_footer(text="Usa /pets para ver a tu nueva mascota.")
         await msg.edit(content="🎰 **[ REEL DETENIDO ]**", embed=embed)
 
+    @app_commands.command(name="pet_alimentar", description="Alimenta a tu mascota activa usando Comida Gourmet 🥩 (ID: 14) de tu inventario.")
+    async def pet_alimentar_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        from src.commands.shop.tienda import _usar_articulo_db
+        status, data = await asyncio.to_thread(_usar_articulo_db, interaction.user.id, interaction.user.name, 14)
+
+        if status == "missing":
+            await interaction.followup.send("❌ No tienes **Comida Gourmet 🥩 (ID: 14)** en tu inventario. ¡Cómprala en `/tienda`!", ephemeral=True)
+        elif status == "no_pet":
+            await interaction.followup.send("❌ No tienes ninguna mascota activa en tu colección a la cual alimentar.", ephemeral=True)
+        elif status == "pet_fed":
+            d_name, p_emoji, new_level, new_xp = data
+            await interaction.followup.send(
+                f"🥩 **¡Alimentaste a tu mascota!** {p_emoji} **{d_name}** ha comido Comida Gourmet.\n"
+                f"💖 Lealtad restaurada al **100%** | ⚡ XP: **+150** (Nivel {new_level})",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send("❌ No se pudo utilizar el alimento.", ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(PetsMasterCog(bot))
     print("PetsMasterCog loaded successfully.")
+
